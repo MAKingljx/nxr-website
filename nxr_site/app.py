@@ -1,11 +1,13 @@
 import os
 import sqlite3
 from pathlib import Path
-from flask import Flask, render_template, request, jsonify, redirect
+from flask import Flask, render_template, request, jsonify, redirect, send_from_directory
 
 SITE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SITE_DIR.parent
-DB_PATH = PROJECT_ROOT / "cards.db"
+DATA_DIR = PROJECT_ROOT / "Data"
+DATA_DIR.mkdir(exist_ok=True)
+DB_PATH = DATA_DIR / "cards.db"
 STATIC_PREFIX = "/static/"
 PLACEHOLDER_IMAGE = f"{STATIC_PREFIX}placeholder.png"
 
@@ -59,6 +61,14 @@ def get_card(cert_id):
 
 
 # ========== 主要页面路由 ==========
+
+@app.route("/favicon.ico")
+def favicon():
+    return send_from_directory(
+        SITE_DIR / "static" / "images",
+        "nxr-logo-circle.png",
+        mimetype="image/png",
+    )
 
 @app.route("/")
 def index():

@@ -17,8 +17,10 @@ from functools import wraps
 # Configuration
 BASE_DIR = Path(__file__).resolve().parent.parent
 ADMIN_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "cards.db"
-TEMP_DB_PATH = ADMIN_DIR / "temp_cards.db"
+DATA_DIR = BASE_DIR / "Data"
+DATA_DIR.mkdir(exist_ok=True)
+DB_PATH = DATA_DIR / "cards.db"
+TEMP_DB_PATH = DATA_DIR / "temp_cards.db"
 
 # Ensure directories exist
 UPLOAD_FOLDER = ADMIN_DIR / "uploads"

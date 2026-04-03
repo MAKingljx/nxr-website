@@ -7,7 +7,7 @@ Work locally first. Do not treat the production server as the primary editing en
 1. Make code and template changes locally in `/Users/phoenix/Documents/Phoenxi/nxr_website`.
 2. Run local validation before touching the server.
 3. Verify the affected routes, templates, and data paths with targeted tests or quick scripts.
-4. Only after local verification passes, sync the changed files to the server at `/root/nxr_website`.
+4. Only after local verification passes, sync the changed files to the server at `/root/nxr_website`, including the `Data/` directory when database changes are part of the fix.
 5. Restart the app on the server and run a live smoke test against `127.0.0.1:8080`.
 6. Keep GitHub in sync after the fix is verified.
 
@@ -33,6 +33,8 @@ Work locally first. Do not treat the production server as the primary editing en
 ## Deployment Notes
 
 - App root on server: `/root/nxr_website`
+- Local sync script: `/Users/phoenix/Documents/Phoenxi/nxr_website/scripts/sync_to_server.sh`
+- Database directory: `/Users/phoenix/Documents/Phoenxi/nxr_website/Data/` -> `/root/nxr_website/Data/`
 - Local main site entrypoint: `/Users/phoenix/Documents/Phoenxi/nxr_website/nxr_site/app.py`
 - Local admin entrypoint: `/Users/phoenix/Documents/Phoenxi/nxr_website/nxr_admin/app_updated.py`
 - Current production start command: `/usr/bin/python3 app.py`

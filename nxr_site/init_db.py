@@ -3,7 +3,9 @@ from pathlib import Path
 
 SITE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SITE_DIR.parent
-DB_PATH = PROJECT_ROOT / "cards.db"
+DATA_DIR = PROJECT_ROOT / "Data"
+DATA_DIR.mkdir(exist_ok=True)
+DB_PATH = DATA_DIR / "cards.db"
 
 conn = sqlite3.connect(DB_PATH)
 c = conn.cursor()
