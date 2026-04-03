@@ -132,7 +132,8 @@
                                         <th>Cert ID</th>
                                         <th>Card Name</th>
                                         <th>Brand</th>
-                                        <th>Player</th>
+                                        <th>Set</th>
+                                        <th>Language</th>
                                         <th>Final Grade</th>
                                         <th>Status</th>
                                         <th>Entry Date</th>
@@ -145,7 +146,8 @@
                                             <td><strong>{{ entry.cert_id }}</strong></td>
                                             <td>{{ entry.card_name }}</td>
                                             <td>{{ entry.brand }}</td>
-                                            <td>{{ entry.player }}</td>
+                                            <td>{{ entry.set_name or '-' }}</td>
+                                            <td>{{ entry.language or '-' }}</td>
                                             <td>{{ entry.final_grade_text }}</td>
                                             <td>
                                                 {% if entry.status == 'pending' %}

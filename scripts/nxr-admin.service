@@ -5,6 +5,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/root/nxr_website
+EnvironmentFile=-/root/nxr_website/.env.admin
 Environment=PORT=8081
 Environment=FLASK_DEBUG=0
 Environment=PYTHONUNBUFFERED=1

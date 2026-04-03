@@ -266,48 +266,6 @@
         calculatePOP();
     });
 
-    // 图片预览功能
-    function previewImage(input, previewId) {
-        const preview = document.getElementById(previewId);
-        const file = input.files[0];
-        
-        if (file) {
-            const reader = new FileReader();
-            
-            reader.onload = function(e) {
-                preview.innerHTML = `
-                    <div class="mt-2">
-                        <img src="${e.target.result}" class="img-thumbnail" style="max-height: 150px;">
-                        <div class="small text-muted mt-1">${file.name} (${(file.size/1024).toFixed(1)} KB)</div>
-                    </div>
-                `;
-            }
-            
-            reader.readAsDataURL(file);
-        } else {
-            preview.innerHTML = '';
-        }
-    }
-    
-    // 初始化图片预览
-    document.addEventListener('DOMContentLoaded', function() {
-        const frontInput = document.getElementById('front_image');
-        const backInput = document.getElementById('back_image');
-        
-        if (frontInput) {
-            frontInput.addEventListener('change', function() {
-                previewImage(this, 'front_preview');
-            });
-        }
-        
-        if (backInput) {
-            backInput.addEventListener('change', function() {
-                previewImage(this, 'back_preview');
-            });
-        }
-    });
-    
-
     // 删除图片功能
     function removeImage(side) {
         if (!confirm('Are you sure you want to remove the ' + side + ' image? This will delete the image file.')) {
@@ -315,7 +273,7 @@
         }
         
         const imageField = document.getElementById(side + '_image');
-        const previewContainer = document.querySelector('.current-image-preview');
+        const previewContainer = document.getElementById('current_' + side + '_preview');
         
         // 创建一个隐藏字段来标记删除
         let deleteField = document.getElementById('delete_' + side + '_image');
@@ -600,7 +558,7 @@
                                         {% if card and card.front_image %}
                                         <div class="mt-2">
                                             <div class="form-text mb-1"><i class="fas fa-image me-1"></i>Current front image:</div>
-                                            <div class="current-image-preview border rounded p-2 bg-light">
+                                            <div id="current_front_preview" class="current-image-preview border rounded p-2 bg-light">
                                                 <div class="text-center">
                                                     <img src="/admin/uploads/{{ card.front_image }}" 
                                                          class="img-thumbnail preview-image" 
@@ -634,7 +592,7 @@
                                         {% if card and card.back_image %}
                                         <div class="mt-2">
                                             <div class="form-text mb-1"><i class="fas fa-image me-1"></i>Current back image:</div>
-                                            <div class="current-image-preview border rounded p-2 bg-light">
+                                            <div id="current_back_preview" class="current-image-preview border rounded p-2 bg-light">
                                                 <div class="text-center">
                                                     <img src="/admin/uploads/{{ card.back_image }}" 
                                                          class="img-thumbnail preview-image" 

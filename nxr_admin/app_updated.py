@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from flask import send_from_directory, send_file, Flask, render_template, request, redirect, url_for, session, flash, jsonify
 from werkzeug.utils import secure_filename
+from werkzeug.security import check_password_hash
 from functools import wraps
 
 # Configuration
@@ -56,8 +57,289 @@ app = Flask(__name__,
             template_folder=str(ADMIN_DIR / 'templates'),
             static_folder=str(ADMIN_DIR / 'static'),
             static_url_path='/admin/static')
-app.secret_key = 'nxr-manual-entry-2026-updated'
+app.secret_key = os.environ.get('ADMIN_SECRET_KEY', 'nxr-manual-entry-2026-updated')
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+
+DEFAULT_ADMIN_ACCOUNTS = {
+    'admin': {'password': 'nxr2026', 'role': 'admin'},
+    'reviewer1': {'password': 'review123', 'role': 'reviewer'},
+    'reviewer2': {'password': 'review456', 'role': 'reviewer'},
+}
+
+LANGUAGE_ALIASES = {
+    'en': 'EN',
+    'english': 'EN',
+    'jp': 'JP',
+    'ja': 'JP',
+    'japanese': 'JP',
+    'ct': 'CT',
+    'traditional chinese': 'CT',
+    'chinese traditional': 'CT',
+    'cs': 'CS',
+    'simplified chinese': 'CS',
+    'chinese simplified': 'CS',
+    'in': 'IN',
+    'indonesian': 'IN',
+    'ko': 'KO',
+    'korean': 'KO',
+    'th': 'TH',
+    'thai': 'TH',
+    'other': 'Other',
+}
+
+LANGUAGE_DB_VARIANTS = {
+    'EN': ['EN', 'English'],
+    'JP': ['JP', 'Japanese'],
+    'CT': ['CT', 'Traditional Chinese', 'Chinese Traditional'],
+    'CS': ['CS', 'Simplified Chinese', 'Chinese Simplified'],
+    'IN': ['IN', 'Indonesian'],
+    'KO': ['KO', 'Korean'],
+    'TH': ['TH', 'Thai'],
+    'Other': ['Other'],
+}
+
+TEMP_LIST_PAGE_SIZE = 25
+
+
+def load_admin_accounts():
+    raw_accounts = os.environ.get('ADMIN_CREDENTIALS_JSON')
+    if not raw_accounts:
+        return DEFAULT_ADMIN_ACCOUNTS
+
+    try:
+        data = json.loads(raw_accounts)
+    except json.JSONDecodeError:
+        app.logger.warning('Invalid ADMIN_CREDENTIALS_JSON; falling back to default accounts')
+        return DEFAULT_ADMIN_ACCOUNTS
+
+    if not isinstance(data, dict):
+        app.logger.warning('ADMIN_CREDENTIALS_JSON must be a JSON object; falling back to default accounts')
+        return DEFAULT_ADMIN_ACCOUNTS
+
+    accounts = {}
+    for username, config in data.items():
+        if not isinstance(config, dict) or 'role' not in config:
+            continue
+        if 'password' not in config and 'password_hash' not in config:
+            continue
+        accounts[username] = config
+
+    return accounts or DEFAULT_ADMIN_ACCOUNTS
+
+
+def verify_admin_password(account, password):
+    password_hash = account.get('password_hash')
+    if password_hash:
+        return check_password_hash(password_hash, password)
+    return password == account.get('password', '')
+
+
+def normalize_language(value):
+    raw_value = (value or '').strip()
+    if not raw_value:
+        return ''
+
+    normalized = LANGUAGE_ALIASES.get(raw_value.lower())
+    if normalized:
+        return normalized
+
+    upper_value = raw_value.upper()
+    if upper_value in LANGUAGE_OPTIONS:
+        return upper_value
+
+    return raw_value
+
+
+def get_language_variants(value):
+    normalized = normalize_language(value)
+    variants = LANGUAGE_DB_VARIANTS.get(normalized, [normalized] if normalized else [])
+    # Preserve order but remove duplicates.
+    return list(dict.fromkeys([variant for variant in variants if variant]))
+
+
+def delete_uploaded_file(filename):
+    if not filename:
+        return
+
+    safe_name = Path(filename).name
+    file_path = Path(app.config['UPLOAD_FOLDER']) / safe_name
+    try:
+        if file_path.exists():
+            file_path.unlink()
+    except OSError:
+        app.logger.warning('Failed to delete uploaded file: %s', file_path)
+
+
+def normalize_language_values(conn, table_name):
+    cursor = conn.cursor()
+    for legacy_value, normalized_value in (
+        ('English', 'EN'),
+        ('Japanese', 'JP'),
+        ('Traditional Chinese', 'CT'),
+        ('Chinese Traditional', 'CT'),
+        ('Simplified Chinese', 'CS'),
+        ('Chinese Simplified', 'CS'),
+        ('Indonesian', 'IN'),
+        ('Korean', 'KO'),
+        ('Thai', 'TH'),
+    ):
+        cursor.execute(
+            f"UPDATE {table_name} SET language = ? WHERE language = ?",
+            (normalized_value, legacy_value),
+        )
+
+
+def initialize_main_database():
+    conn = get_main_db_connection()
+    cursor = conn.cursor()
+
+    has_cards_table = cursor.execute("""
+        SELECT 1 FROM sqlite_master
+        WHERE type = 'table' AND name = 'cards'
+    """).fetchone()
+    if not has_cards_table:
+        conn.close()
+        return
+
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_cards_identity_grade
+        ON cards (card_name, set_name, card_number, language, final_grade_text)
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_cards_updated_at
+        ON cards (updated_at)
+    ''')
+    normalize_language_values(conn, 'cards')
+
+    conn.commit()
+    conn.close()
+
+
+def calculate_population(card_name, set_name, card_number, language, final_grade_text, exclude_entry_id=None):
+    normalized_language = normalize_language(language)
+    language_variants = get_language_variants(normalized_language)
+
+    if not all([card_name, set_name, card_number, normalized_language, final_grade_text]):
+        return 1, normalized_language, 0, 0
+
+    placeholders = ', '.join(['?' for _ in language_variants])
+    temp_query = f'''
+        SELECT COUNT(*) FROM temp_cards
+        WHERE card_name = ? AND set_name = ? AND card_number = ?
+        AND language IN ({placeholders}) AND final_grade_text = ?
+    '''
+    temp_params = [card_name, set_name, card_number, *language_variants, final_grade_text]
+    if exclude_entry_id is not None:
+        temp_query += ' AND id != ?'
+        temp_params.append(exclude_entry_id)
+
+    conn_temp = get_temp_db_connection()
+    temp_count = conn_temp.execute(temp_query, temp_params).fetchone()[0]
+    conn_temp.close()
+
+    conn_main = get_main_db_connection()
+    main_count = conn_main.execute(f'''
+        SELECT COUNT(*) FROM cards
+        WHERE card_name = ? AND set_name = ? AND card_number = ?
+        AND language IN ({placeholders}) AND final_grade_text = ?
+    ''', [card_name, set_name, card_number, *language_variants, final_grade_text]).fetchone()[0]
+    conn_main.close()
+
+    return temp_count + main_count + 1, normalized_language, temp_count, main_count
+
+
+def build_main_card_payload(entry):
+    cert_id = entry['cert_id']
+    front_image = entry['front_image'] or ''
+    back_image = entry['back_image'] or ''
+    created_at = entry['created_at'] or entry['entry_date'] or datetime.now().isoformat()
+    updated_at = entry['updated_at'] or created_at
+
+    return {
+        'cert_id': cert_id,
+        'card_name': entry['card_name'] or '',
+        'grade': entry['final_grade_text'] or '',
+        'year': entry['year'] or '',
+        'brand': entry['brand'] or '',
+        'player': '',
+        'variety': entry['variety'] or '',
+        'image': front_image,
+        'pop': entry['pop'] or '1',
+        'back_image': back_image,
+        'front_image': front_image,
+        'qr_url': f'/card/{cert_id}',
+        'centering': entry['centering'] or 0,
+        'edges': entry['edges'] or 0,
+        'corners': entry['corners'] or 0,
+        'surface': entry['surface'] or 0,
+        'language': normalize_language(entry['language']),
+        'set_name': entry['set_name'] or '',
+        'card_number': entry['card_number'] or '',
+        'grading_phase': 'human_only',
+        'data_version': 1,
+        'created_at': created_at,
+        'updated_at': updated_at,
+        'ai_model_version': '',
+        'ai_confidence': 0,
+        'ai_grade': None,
+        'ai_centering': None,
+        'ai_edges': None,
+        'ai_corners': None,
+        'ai_surface': None,
+        'final_grade': entry['final_grade'] or 0,
+        'decision_method': 'human_only',
+        'decision_notes': entry['entry_notes'] or '',
+        'ai_front_analysis': '',
+        'ai_back_analysis': '',
+        'has_ai_analysis': 0,
+        'final_grade_text': entry['final_grade_text'] or '',
+    }
+
+
+def build_pagination(page, total_pages, endpoint, params):
+    clean_params = {key: value for key, value in params.items() if value not in (None, '', 'all')}
+
+    def make_url(target_page):
+        return url_for(endpoint, page=target_page, **clean_params)
+
+    if total_pages <= 1:
+        return {
+            'page': page,
+            'total_pages': total_pages,
+            'has_prev': False,
+            'has_next': False,
+            'prev_url': None,
+            'next_url': None,
+            'pages': [],
+        }
+
+    window_start = max(1, page - 2)
+    window_end = min(total_pages, page + 2)
+
+    return {
+        'page': page,
+        'total_pages': total_pages,
+        'has_prev': page > 1,
+        'has_next': page < total_pages,
+        'prev_url': make_url(page - 1) if page > 1 else None,
+        'next_url': make_url(page + 1) if page < total_pages else None,
+        'pages': [
+            {'number': page_number, 'url': make_url(page_number), 'current': page_number == page}
+            for page_number in range(window_start, window_end + 1)
+        ],
+    }
+
+
+def resolve_export_file_path(filename):
+    safe_name = secure_filename(filename or '')
+    if not safe_name or safe_name != Path(filename).name or not safe_name.lower().endswith('.xlsx'):
+        return None
+    return ADMIN_DIR / "exports" / safe_name
+
+
+def initialize_databases():
+    init_temp_database()
+    initialize_main_database()
 
 # Initialize temporary database
 def init_temp_database():
@@ -122,6 +404,24 @@ def init_temp_database():
         except sqlite3.OperationalError:
             print(f"Adding {column_name} column to temp_cards table...")
             cursor.execute(f"ALTER TABLE temp_cards ADD COLUMN {column_name} {column_type}")
+
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_temp_cards_status_entry_date
+        ON temp_cards (status, entry_date DESC)
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_temp_cards_identity_grade
+        ON temp_cards (card_name, set_name, card_number, language, final_grade_text)
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_temp_cards_card_name
+        ON temp_cards (card_name)
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_temp_cards_set_name
+        ON temp_cards (set_name)
+    ''')
+    normalize_language_values(conn, 'temp_cards')
 
     conn.commit()
     conn.close()
@@ -234,14 +534,8 @@ def admin_login():
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '').strip()
 
-        # Simple account system with 3 accounts
-        valid_accounts = {
-            'admin': {'password': 'nxr2026', 'role': 'admin'},
-            'reviewer1': {'password': 'review123', 'role': 'reviewer'},
-            'reviewer2': {'password': 'review456', 'role': 'reviewer'}
-        }
-
-        if username in valid_accounts and password == valid_accounts[username]['password']:
+        valid_accounts = load_admin_accounts()
+        if username in valid_accounts and verify_admin_password(valid_accounts[username], password):
             session['admin_logged_in'] = True
             session['username'] = username
             session['role'] = valid_accounts[username]['role']
@@ -269,15 +563,20 @@ def admin_index():
 @login_required
 def dashboard():
     conn = get_temp_db_connection()
+    today = datetime.now().strftime('%Y-%m-%d')
 
     stats = {
         'total_entries': conn.execute('SELECT COUNT(*) FROM temp_cards').fetchone()[0],
         'pending': conn.execute("SELECT COUNT(*) FROM temp_cards WHERE status = 'pending'").fetchone()[0],
         'approved': conn.execute("SELECT COUNT(*) FROM temp_cards WHERE status = 'approved'").fetchone()[0],
+        'today_entries': conn.execute(
+            "SELECT COUNT(*) FROM temp_cards WHERE substr(entry_date, 1, 10) = ?",
+            (today,),
+        ).fetchone()[0],
     }
 
     recent_entries = conn.execute('''
-        SELECT id, cert_id, card_name, brand, final_grade_text, status, entry_date
+        SELECT id, cert_id, card_name, brand, set_name, language, final_grade_text, status, entry_date
         FROM temp_cards
         ORDER BY entry_date DESC
         LIMIT 5
@@ -287,7 +586,10 @@ def dashboard():
 
     return render_template('dashboard.html',
                          stats=stats,
-                         recent_entries=recent_entries,
+                         recent_entries=[
+                             {**dict(entry), 'language': normalize_language(entry['language'])}
+                             for entry in recent_entries
+                         ],
                          username=session.get('username', 'Operator'),
                          role=session.get('role', 'reviewer'),
                          brand_options=BRAND_OPTIONS,
@@ -324,36 +626,9 @@ def new_entry():
         card_name = request.form.get('card_name', '').strip()
         set_name = request.form.get('set_name', '').strip()
         card_number = request.form.get('card_number', '').strip()
-        language = request.form.get('language', 'English').strip()
-
-        # Calculate POP (Population) automatically
-        # Count existing cards with same identity and same grade
-        conn_temp = get_temp_db_connection()
-        cursor_temp = conn_temp.cursor()
-
-        # Count in temporary database
-        cursor_temp.execute('''
-            SELECT COUNT(*) FROM temp_cards
-            WHERE card_name = ? AND set_name = ? AND card_number = ? AND language = ?
-            AND final_grade_text = ?
-        ''', (card_name, set_name, card_number, language, final_grade_text))
-        temp_count = cursor_temp.fetchone()[0]
-
-        # Count in main database
-        conn_main = get_main_db_connection()
-        cursor_main = conn_main.cursor()
-        cursor_main.execute('''
-            SELECT COUNT(*) FROM cards
-            WHERE card_name = ? AND set_name = ? AND card_number = ? AND language = ?
-            AND final_grade_text = ?
-        ''', (card_name, set_name, card_number, language, final_grade_text))
-        main_count = cursor_main.fetchone()[0]
-
-        # Total POP = existing count + 1 (current card)
-        total_pop = temp_count + main_count + 1
-
-        conn_temp.close()
-        conn_main.close()
+        total_pop, language, _, _ = calculate_population(
+            card_name, set_name, card_number, request.form.get('language', ''), final_grade_text
+        )
 
         # Handle file uploads
         front_image_filename = None
@@ -398,6 +673,8 @@ def new_entry():
         required_fields = ['cert_id', 'card_name', 'brand', 'language', 'set_name', 'card_number']
         for field in required_fields:
             if not entry_data[field]:
+                delete_uploaded_file(front_image_filename)
+                delete_uploaded_file(back_image_filename)
                 flash(f'{field.replace("_", " ").title()} is required', 'error')
                 return redirect(url_for('new_entry'))
 
@@ -409,6 +686,8 @@ def new_entry():
             # Check if cert_id already exists
             cursor.execute("SELECT COUNT(*) FROM temp_cards WHERE cert_id = ?", (entry_data['cert_id'],))
             if cursor.fetchone()[0] > 0:
+                delete_uploaded_file(front_image_filename)
+                delete_uploaded_file(back_image_filename)
                 flash(f"Certificate ID {entry_data['cert_id']} already exists", 'error')
                 conn.close()
                 return redirect(url_for('new_entry'))
@@ -427,6 +706,8 @@ def new_entry():
 
         except Exception as e:
             conn.rollback()
+            delete_uploaded_file(front_image_filename)
+            delete_uploaded_file(back_image_filename)
             flash(f"Error saving entry: {str(e)}", 'error')
             conn.close()
             return redirect(url_for('new_entry'))
@@ -451,9 +732,10 @@ def entry_list():
     card_name_filter = request.args.get('card_name', '').strip()
     final_grade_filter = request.args.get('final_grade', '').strip()
     set_name_filter = request.args.get('set_name', '').strip()
-    language_filter = request.args.get('language', '').strip()
+    language_filter = normalize_language(request.args.get('language', '').strip())
     sort_by = request.args.get('sort_by', 'entry_date')
     sort_order = request.args.get('sort_order', 'desc')
+    page = max(request.args.get('page', 1, type=int), 1)
     
     # Validate sort parameters
     valid_sort_columns = ['entry_date', 'card_name', 'final_grade', 'set_name', 'language']
@@ -487,18 +769,25 @@ def entry_list():
         params.append(f"%{set_name_filter}%")
     
     if language_filter:
-        conditions.append("language = ?")
-        params.append(language_filter)
+        language_variants = get_language_variants(language_filter)
+        placeholders = ', '.join(['?' for _ in language_variants])
+        conditions.append(f"language IN ({placeholders})")
+        params.extend(language_variants)
     
-    # Add WHERE clause if there are conditions
-    if conditions:
-        query += " WHERE " + " AND ".join(conditions)
-    
+    where_clause = f" WHERE {' AND '.join(conditions)}" if conditions else ""
+    total_matching = conn.execute(f"SELECT COUNT(*) FROM temp_cards{where_clause}", params).fetchone()[0]
+    total_pages = max((total_matching + TEMP_LIST_PAGE_SIZE - 1) // TEMP_LIST_PAGE_SIZE, 1)
+    if page > total_pages:
+        page = total_pages
+
+    offset = (page - 1) * TEMP_LIST_PAGE_SIZE
+
     # Add ORDER BY clause
-    query += f" ORDER BY {sort_by} {sort_order.upper()}"
-    
+    query += where_clause
+    query += f" ORDER BY {sort_by} {sort_order.upper()} LIMIT ? OFFSET ?"
+
     # Execute query
-    entries = conn.execute(query, params).fetchall()
+    entries = conn.execute(query, [*params, TEMP_LIST_PAGE_SIZE, offset]).fetchall()
     
     # Get available filter options
     # Get unique final grades for filter dropdown
@@ -532,8 +821,24 @@ def entry_list():
 
     conn.close()
 
+    pagination = build_pagination(page, total_pages, 'entry_list', {
+        'status': status_filter,
+        'card_name': card_name_filter,
+        'final_grade': final_grade_filter,
+        'set_name': set_name_filter,
+        'language': language_filter,
+        'sort_by': sort_by,
+        'sort_order': sort_order,
+    })
+
+    page_start = ((page - 1) * TEMP_LIST_PAGE_SIZE) + 1 if total_matching else 0
+    page_end = min(page * TEMP_LIST_PAGE_SIZE, total_matching)
+
     return render_template('entry_list.html',
-                         entries=entries,
+                         entries=[
+                             {**dict(entry), 'language': normalize_language(entry['language'])}
+                             for entry in entries
+                         ],
                          status_filter=status_filter,
                          status_counts=status_counts,
                          brand_options=BRAND_OPTIONS,
@@ -548,7 +853,11 @@ def entry_list():
                          set_options=set_options,
                          # Sort values
                          sort_by=sort_by,
-                         sort_order=sort_order)
+                         sort_order=sort_order,
+                         total_matching=total_matching,
+                         pagination=pagination,
+                         page_start=page_start,
+                         page_end=page_end)
 
 # ========== Entry Detail ==========
 @app.route('/admin/entries/<int:entry_id>')
@@ -562,6 +871,8 @@ def entry_detail(entry_id):
         flash('Entry not found', 'error')
         return redirect(url_for('entry_list'))
 
+    entry = {**dict(entry), 'language': normalize_language(entry['language'])}
+
     return render_template('entry_detail.html',
                          entry=entry,
                          brand_options=BRAND_OPTIONS,
@@ -572,6 +883,12 @@ def entry_detail(entry_id):
 @login_required
 def edit_entry(entry_id):
     conn = get_temp_db_connection()
+    existing_entry = conn.execute("SELECT * FROM temp_cards WHERE id = ?", (entry_id,)).fetchone()
+
+    if not existing_entry:
+        conn.close()
+        flash('Entry not found', 'error')
+        return redirect(url_for('entry_list'))
 
     if request.method == 'POST':
         # Get and validate sub-scores
@@ -600,36 +917,14 @@ def edit_entry(entry_id):
         card_name = request.form.get('card_name', '').strip()
         set_name = request.form.get('set_name', '').strip()
         card_number = request.form.get('card_number', '').strip()
-        language = request.form.get('language', 'English').strip()
-
-        # Calculate POP (Population) automatically
-        # Count existing cards with same identity and same grade
-        conn_temp = get_temp_db_connection()
-        cursor_temp = conn_temp.cursor()
-
-        # Count in temporary database (excluding current entry)
-        cursor_temp.execute('''
-            SELECT COUNT(*) FROM temp_cards
-            WHERE card_name = ? AND set_name = ? AND card_number = ? AND language = ?
-            AND final_grade_text = ? AND id != ?
-        ''', (card_name, set_name, card_number, language, final_grade_text, entry_id))
-        temp_count = cursor_temp.fetchone()[0]
-
-        # Count in main database
-        conn_main = get_main_db_connection()
-        cursor_main = conn_main.cursor()
-        cursor_main.execute('''
-            SELECT COUNT(*) FROM cards
-            WHERE card_name = ? AND set_name = ? AND card_number = ? AND language = ?
-            AND final_grade_text = ?
-        ''', (card_name, set_name, card_number, language, final_grade_text))
-        main_count = cursor_main.fetchone()[0]
-
-        # Total POP = existing count + 1 (current card)
-        total_pop = temp_count + main_count + 1
-
-        conn_temp.close()
-        conn_main.close()
+        total_pop, language, _, _ = calculate_population(
+            card_name,
+            set_name,
+            card_number,
+            request.form.get('language', ''),
+            final_grade_text,
+            exclude_entry_id=entry_id,
+        )
 
         # Handle file uploads
         front_image_filename = None
@@ -644,6 +939,10 @@ def edit_entry(entry_id):
             back_image_file = request.files['back_image']
             if back_image_file and back_image_file.filename != '':
                 back_image_filename = save_uploaded_file(back_image_file, 'back')
+
+        delete_front_image = request.form.get('delete_front_image') == '1'
+        delete_back_image = request.form.get('delete_back_image') == '1'
+        files_to_delete = []
 
         # Update entry
         update_data = {
@@ -668,14 +967,28 @@ def edit_entry(entry_id):
         # Add image filenames if new files were uploaded
         if front_image_filename:
             update_data['front_image'] = front_image_filename
+            if existing_entry['front_image']:
+                files_to_delete.append(existing_entry['front_image'])
+        elif delete_front_image:
+            update_data['front_image'] = ''
+            if existing_entry['front_image']:
+                files_to_delete.append(existing_entry['front_image'])
 
         if back_image_filename:
             update_data['back_image'] = back_image_filename
+            if existing_entry['back_image']:
+                files_to_delete.append(existing_entry['back_image'])
+        elif delete_back_image:
+            update_data['back_image'] = ''
+            if existing_entry['back_image']:
+                files_to_delete.append(existing_entry['back_image'])
 
         # Validate required fields
         required_fields = ['card_name', 'brand', 'language', 'set_name', 'card_number']
         for field in required_fields:
             if not update_data[field]:
+                delete_uploaded_file(front_image_filename)
+                delete_uploaded_file(back_image_filename)
                 flash(f'{field.replace("_", " ").title()} is required', 'error')
                 conn.close()
                 return redirect(url_for('edit_entry', entry_id=entry_id))
@@ -688,24 +1001,25 @@ def edit_entry(entry_id):
 
             conn.execute(f"UPDATE temp_cards SET {set_clause} WHERE id = ?", values)
             conn.commit()
+            conn.close()
+
+            for filename in dict.fromkeys(files_to_delete):
+                delete_uploaded_file(filename)
 
             flash(f"Entry updated successfully. New grade: {final_grade_text}", 'success')
-            conn.close()
             return redirect(url_for('entry_detail', entry_id=entry_id))
 
         except Exception as e:
             conn.rollback()
+            delete_uploaded_file(front_image_filename)
+            delete_uploaded_file(back_image_filename)
             flash(f"Error updating entry: {str(e)}", 'error')
             conn.close()
             return redirect(url_for('edit_entry', entry_id=entry_id))
 
     # GET request - show edit form
-    entry = conn.execute("SELECT * FROM temp_cards WHERE id = ?", (entry_id,)).fetchone()
     conn.close()
-
-    if not entry:
-        flash('Entry not found', 'error')
-        return redirect(url_for('entry_list'))
+    entry = {**dict(existing_entry), 'language': normalize_language(existing_entry['language'])}
 
     return render_template('entry_form_updated.html',
                          title="Edit Card Entry",
@@ -742,29 +1056,35 @@ def export_approved():
     try:
         approved_entries = conn_temp.execute("SELECT * FROM temp_cards WHERE status = 'approved'").fetchall()
 
-        exported = 0
+        inserted = 0
+        updated = 0
         for entry in approved_entries:
-            # Check if exists in main DB
-            cursor = conn_main.cursor()
-            cursor.execute("SELECT COUNT(*) FROM cards WHERE cert_id = ?", (entry['cert_id'],))
+            payload = build_main_card_payload(entry)
+            exists = conn_main.execute(
+                "SELECT 1 FROM cards WHERE cert_id = ?",
+                (entry['cert_id'],),
+            ).fetchone()
 
-            if cursor.fetchone()[0] == 0:
-                # Prepare data for main DB
-                entry_dict = dict(entry)
-                # Remove temp DB specific fields
-                for field in ['id', 'status', 'entry_notes', 'entry_by', 'entry_date']:
-                    entry_dict.pop(field, None)
+            columns = list(payload.keys())
+            placeholders = ', '.join(['?' for _ in columns])
+            update_clause = ', '.join([
+                f"{column} = excluded.{column}" for column in columns if column != 'cert_id'
+            ])
+            values = [payload[column] for column in columns]
 
-                # Insert into main DB
-                columns = ', '.join(entry_dict.keys())
-                placeholders = ', '.join(['?' for _ in entry_dict])
-                values = tuple(entry_dict.values())
+            conn_main.execute(f'''
+                INSERT INTO cards ({', '.join(columns)})
+                VALUES ({placeholders})
+                ON CONFLICT(cert_id) DO UPDATE SET {update_clause}
+            ''', values)
 
-                conn_main.execute(f"INSERT INTO cards ({columns}) VALUES ({placeholders})", values)
-                exported += 1
+            if exists:
+                updated += 1
+            else:
+                inserted += 1
 
         conn_main.commit()
-        flash(f'Exported {exported} entries to main database', 'success')
+        flash(f'Export completed. Inserted {inserted} and updated {updated} entries in main database', 'success')
 
     except Exception as e:
         conn_main.rollback()
@@ -827,7 +1147,7 @@ def api_calculate_pop():
         card_name = data.get('card_name', '').strip()
         set_name = data.get('set_name', '').strip()
         card_number = data.get('card_number', '').strip()
-        language = data.get('language', 'English').strip()
+        language = data.get('language', '').strip()
         final_grade_text = data.get('final_grade_text', '').strip()
         current_entry_id = data.get('current_entry_id')
 
@@ -835,47 +1155,21 @@ def api_calculate_pop():
         if not all([card_name, set_name, card_number, language, final_grade_text]):
             return jsonify({'pop': '1', 'message': 'Incomplete data for POP calculation'})
 
-        # Count in temporary database
-        conn_temp = get_temp_db_connection()
-        cursor_temp = conn_temp.cursor()
-
-        if current_entry_id:
-            # For edit: exclude current entry
-            cursor_temp.execute('''
-                SELECT COUNT(*) FROM temp_cards
-                WHERE card_name = ? AND set_name = ? AND card_number = ? AND language = ?
-                AND final_grade_text = ? AND id != ?
-            ''', (card_name, set_name, card_number, language, final_grade_text, current_entry_id))
-        else:
-            # For new entry
-            cursor_temp.execute('''
-                SELECT COUNT(*) FROM temp_cards
-                WHERE card_name = ? AND set_name = ? AND card_number = ? AND language = ?
-                AND final_grade_text = ?
-            ''', (card_name, set_name, card_number, language, final_grade_text))
-
-        temp_count = cursor_temp.fetchone()[0]
-        conn_temp.close()
-
-        # Count in main database
-        conn_main = get_main_db_connection()
-        cursor_main = conn_main.cursor()
-        cursor_main.execute('''
-            SELECT COUNT(*) FROM cards
-            WHERE card_name = ? AND set_name = ? AND card_number = ? AND language = ?
-            AND final_grade_text = ?
-        ''', (card_name, set_name, card_number, language, final_grade_text))
-        main_count = cursor_main.fetchone()[0]
-        conn_main.close()
-
-        # Total POP = existing count + 1 (current card)
-        total_pop = temp_count + main_count + 1
+        exclude_entry_id = int(current_entry_id) if current_entry_id not in (None, '', 'null') else None
+        total_pop, normalized_language, temp_count, main_count = calculate_population(
+            card_name,
+            set_name,
+            card_number,
+            language,
+            final_grade_text,
+            exclude_entry_id=exclude_entry_id,
+        )
 
         return jsonify({
             'pop': str(total_pop),
             'calculation': f'Temporary DB: {temp_count} + Main DB: {main_count} + 1 = {total_pop}',
             'details': {
-                'card_identity': f'{card_name} / {set_name} / {card_number} / {language}',
+                'card_identity': f'{card_name} / {set_name} / {card_number} / {normalized_language}',
                 'grade': final_grade_text,
                 'temp_count': temp_count,
                 'main_count': main_count
@@ -1276,10 +1570,9 @@ def generate_excel():
 @login_required
 def download_excel(filename):
     """下载Excel文件"""
-    exports_dir = ADMIN_DIR / "exports"
-    file_path = exports_dir / filename
+    file_path = resolve_export_file_path(filename)
 
-    if not file_path.exists():
+    if not file_path or not file_path.exists():
         flash('文件不存在', 'error')
         return redirect(url_for('export_excel_page'))
 
@@ -1318,25 +1611,30 @@ def list_exports():
 @login_required
 def delete_export(filename):
     """删除导出文件"""
-    exports_dir = ADMIN_DIR / "exports"
-    file_path = exports_dir / filename
+    file_path = resolve_export_file_path(filename)
 
-    if file_path.exists():
+    if file_path and file_path.exists():
         try:
             file_path.unlink()
-            flash(f'文件已删除: {filename}', 'success')
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return jsonify({'success': True, 'filename': file_path.name})
+            flash(f'文件已删除: {file_path.name}', 'success')
         except Exception as e:
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return jsonify({'success': False, 'error': str(e)}), 500
             flash(f'删除文件失败: {str(e)}', 'error')
     else:
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return jsonify({'success': False, 'error': 'File not found'}), 404
         flash('文件不存在', 'error')
 
     return redirect(url_for('export_excel_page'))
 
 
-if __name__ == '__main__':
-    # Initialize temporary database
-    init_temp_database()
+initialize_databases()
 
+
+if __name__ == '__main__':
     port = int(os.environ.get('PORT', '8081'))
     debug = os.environ.get('FLASK_DEBUG') == '1'
 
@@ -1344,7 +1642,7 @@ if __name__ == '__main__':
     print("NXR Card Grading - Manual Data Entry System (UPDATED)")
     print("=" * 60)
     print(f"Access: http://localhost:{port}/admin")
-    print("Login: admin / nxr2026")
+    print("Login: configured admin accounts")
     print("=" * 60)
     print("Updated Features:")
     print("  - NEW: Four sub-scores (centering, edges, corners, surface)")

@@ -136,7 +136,7 @@
                                 <div class="ms-auto">
                                     <span class="text-muted">
                                         <i class="fas fa-info-circle me-1"></i>
-                                        Found {{ entries|length }} entries
+                                        Found {{ total_matching }} entries
                                     </span>
                                 </div>
                             </div>
@@ -156,11 +156,11 @@
                     <h6 class="mb-0">
                         <i class="fas fa-table me-2"></i>
                         {% if status_filter == 'all' %}
-                            All Entries ({{ entries|length }})
+                            All Entries ({{ total_matching }})
                         {% elif status_filter == 'pending' %}
-                            Pending Review ({{ entries|length }})
+                            Pending Review ({{ total_matching }})
                         {% elif status_filter == 'approved' %}
-                            Approved Entries ({{ entries|length }})
+                            Approved Entries ({{ total_matching }})
                         {% endif %}
                     </h6>
                     <div class="btn-group">
@@ -171,6 +171,16 @@
                 </div>
                 <div class="card-body">
                     {% if entries %}
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <small class="text-muted">
+                                Showing {{ page_start }}-{{ page_end }} of {{ total_matching }}
+                            </small>
+                            {% if pagination.total_pages > 1 %}
+                                <small class="text-muted">
+                                    Page {{ pagination.page }} / {{ pagination.total_pages }}
+                                </small>
+                            {% endif %}
+                        </div>
                         <div class="table-responsive">
                             <table class="table table-hover">
                                 <thead>
@@ -267,6 +277,23 @@
                                 </tbody>
                             </table>
                         </div>
+                        {% if pagination.total_pages > 1 %}
+                            <nav aria-label="Entry pagination" class="mt-3">
+                                <ul class="pagination justify-content-center mb-0">
+                                    <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+                                        <a class="page-link" href="{{ pagination.prev_url or '#' }}">Previous</a>
+                                    </li>
+                                    {% for page_item in pagination.pages %}
+                                        <li class="page-item {% if page_item.current %}active{% endif %}">
+                                            <a class="page-link" href="{{ page_item.url }}">{{ page_item.number }}</a>
+                                        </li>
+                                    {% endfor %}
+                                    <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+                                        <a class="page-link" href="{{ pagination.next_url or '#' }}">Next</a>
+                                    </li>
+                                </ul>
+                            </nav>
+                        {% endif %}
                     {% else %}
                         <div class="text-center py-5">
                             <i class="fas fa-inbox fa-4x text-muted mb-3"></i>
