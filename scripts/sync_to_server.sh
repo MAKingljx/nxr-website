@@ -8,6 +8,7 @@ DEPLOY_ROOT="${DEPLOY_ROOT:-/root/nxr_website}"
 
 rsync -avz --delete \
   --exclude '.git/' \
+  --exclude '.playwright-cli/' \
   --exclude '.phoenix/' \
   --exclude '.env' \
   --exclude '.env.*' \
