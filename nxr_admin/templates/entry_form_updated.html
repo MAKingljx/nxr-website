@@ -16,7 +16,7 @@
 <script>
     // Function to generate new Cert ID
     function generateNewCertId() {
-        fetch('/api/generate-cert-id')
+        fetch('/admin/api/generate-cert-id')
             .then(response => response.json())
             .then(data => {
                 document.getElementById('cert_id').value = data.cert_id;
@@ -77,7 +77,7 @@
         }
         
         // Calculate via API
-        fetch('/api/calculate-grade', {
+        fetch('/admin/api/calculate-grade', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -213,7 +213,7 @@
             popField.value = 'Calculating...';
             
             // Call API to calculate POP
-            fetch('/api/calculate-pop', {
+            fetch('/admin/api/calculate-pop', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({

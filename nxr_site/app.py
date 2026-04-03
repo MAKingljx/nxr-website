@@ -65,9 +65,9 @@ def get_card(cert_id):
 @app.route("/favicon.ico")
 def favicon():
     return send_from_directory(
-        SITE_DIR / "static" / "images",
-        "nxr-logo-circle.png",
-        mimetype="image/png",
+        PROJECT_ROOT,
+        "favicon.ico",
+        mimetype="image/vnd.microsoft.icon",
     )
 
 @app.route("/")

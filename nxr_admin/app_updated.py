@@ -54,7 +54,8 @@ LANGUAGE_OPTIONS = [
 
 app = Flask(__name__,
             template_folder=str(ADMIN_DIR / 'templates'),
-            static_folder=str(ADMIN_DIR / 'static'))
+            static_folder=str(ADMIN_DIR / 'static'),
+            static_url_path='/admin/static')
 app.secret_key = 'nxr-manual-entry-2026-updated'
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
@@ -776,6 +777,7 @@ def export_approved():
     return redirect(url_for('entry_list'))
 
 # ========== API: Generate Cert ID ==========
+@app.route('/admin/api/generate-cert-id')
 @app.route('/api/generate-cert-id')
 @login_required
 def api_generate_cert_id():
@@ -784,6 +786,7 @@ def api_generate_cert_id():
     return jsonify({'cert_id': cert_id})
 
 # ========== API: Calculate Grade ==========
+@app.route('/admin/api/calculate-grade', methods=['POST'])
 @app.route('/api/calculate-grade', methods=['POST'])
 @login_required
 def api_calculate_grade():
@@ -814,6 +817,7 @@ def api_calculate_grade():
         return jsonify({'error': str(e)}), 400
 
 # ========== API: Calculate POP ==========
+@app.route('/admin/api/calculate-pop', methods=['POST'])
 @app.route('/api/calculate-pop', methods=['POST'])
 @login_required
 def api_calculate_pop():
@@ -976,6 +980,7 @@ def upload_manager():
                          brand_options=BRAND_OPTIONS,
                          language_options=LANGUAGE_OPTIONS)
 
+@app.route('/admin/api/upload-stats')
 @app.route('/api/upload-stats')
 @login_required
 def api_upload_stats():
@@ -1020,6 +1025,7 @@ def api_upload_stats():
 
     return jsonify(stats)
 
+@app.route('/admin/api/upload/<int:entry_id>', methods=['POST'])
 @app.route('/api/upload/<int:entry_id>', methods=['POST'])
 @login_required
 def api_upload_entry(entry_id):
@@ -1070,6 +1076,7 @@ def api_upload_entry(entry_id):
         'message': 'Upload simulated successfully (server not configured)'
     })
 
+@app.route('/admin/api/batch-upload', methods=['POST'])
 @app.route('/api/batch-upload', methods=['POST'])
 @login_required
 def api_batch_upload():
@@ -1330,10 +1337,13 @@ if __name__ == '__main__':
     # Initialize temporary database
     init_temp_database()
 
+    port = int(os.environ.get('PORT', '8081'))
+    debug = os.environ.get('FLASK_DEBUG') == '1'
+
     print("=" * 60)
     print("NXR Card Grading - Manual Data Entry System (UPDATED)")
     print("=" * 60)
-    print("Access: http://localhost:8081/admin")
+    print(f"Access: http://localhost:{port}/admin")
     print("Login: admin / nxr2026")
     print("=" * 60)
     print("Updated Features:")
@@ -1350,4 +1360,9 @@ if __name__ == '__main__':
     print("  - Export to main database")
     print("=" * 60)
 
-    app.run(debug=True, port=8081, host='0.0.0.0', use_reloader=False)
+    app.run(
+        host='0.0.0.0',
+        port=port,
+        debug=debug,
+        use_reloader=False,
+    )

@@ -88,7 +88,7 @@
     
     // 刷新统计信息
     function refreshStats() {
-        fetch('/api/upload-stats')
+        fetch('/admin/api/upload-stats')
             .then(response => response.json())
             .then(data => {
                 updateStatsDisplay(data);
@@ -166,7 +166,7 @@
         
         showLoading('Uploading selected entries...');
         
-        fetch('/api/batch-upload', {
+        fetch('/admin/api/batch-upload', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -217,7 +217,7 @@
         
         showLoading(`Uploading ${certId}...`);
         
-        fetch(`/api/upload/${entryId}`, {
+        fetch(`/admin/api/upload/${entryId}`, {
             method: 'POST'
         })
         .then(response => response.json())
