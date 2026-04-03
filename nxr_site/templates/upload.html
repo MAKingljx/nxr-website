@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Internal Upload - NXR Grading</title>
+<link rel="icon" type="image/svg+xml" href="/static/images/nxr-favicon.svg">
+<link rel="apple-touch-icon" href="/static/images/nxr-logo-circle.png">
+    <style>
+        * { box-sizing: border-box; margin:0; padding:0; }
+        :root { --bg:#121212; --bg2:#1a1a1a; --text:#fff; --text2:#b3b3b3; --blue:#0071e3; --border:#333; }
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background:var(--bg); color:var(--text); padding:40px 20px; }
+        .form-box { max-width:700px; margin:0 auto; background:var(--bg2); padding:40px; border-radius:16px; }
+        .form-box h2 { font-size:32px; margin-bottom:32px; text-align:center; }
+        .form-group { margin-bottom:20px; display:flex; flex-direction:column; gap:8px; }
+        .form-group label { color:var(--text2); font-size:16px; }
+        .form-group input { padding:16px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:16px; }
+        .file-input { padding:12px; background:var(--bg); border:1px solid var(--border); border-radius:8px; }
+        .submit-btn { width:100%; padding:18px; background:var(--blue); color:#fff; border:none; border-radius:12px; font-size:20px; font-weight:700; cursor:pointer; }
+        
+        /* 进度条样式 */
+        .progress-container { display:none; margin-top:20px; }
+        .progress-label { text-align:center; margin-bottom:8px; font-size:16px; color:#fff; }
+        .progress-bar { height:12px; background:#333; border-radius:6px; overflow:hidden; }
+        .progress-fill { height:100%; width:0%; background:#0071e3; transition:width 0.2s ease; }
+    </style>
+</head>
+<body>
+    <div class="form-box">
+        <h2>Internal Card Upload</h2>
+        <form id="uploadForm" enctype="multipart/form-data">
+            <div class="form-group"><label>Cert ID</label><input type="text" name="cert_id" required></div>
+            <div class="form-group"><label>Card Name</label><input type="text" name="card_name"></div>
+            <div class="form-group"><label>Grade</label><input type="text" name="grade"></div>
+            <div class="form-group"><label>Year</label><input type="text" name="year"></div>
+            <div class="form-group"><label>Brand</label><input type="text" name="brand"></div>
+            <div class="form-group"><label>Player</label><input type="text" name="player"></div>
+            <div class="form-group"><label>Variety</label><input type="text" name="variety"></div>
+            <div class="form-group"><label>Population</label><input type="text" name="pop"></div>
+            <div class="form-group"><label>Front Image</label><input type="file" name="front" class="file-input" required></div>
+            <div class="form-group"><label>Back Image</label><input type="file" name="back" class="file-input" required></div>
+            <button type="submit" class="submit-btn">UPLOAD</button>
+        </form>
+
+        <!-- 真实上传进度条 -->
+        <div class="progress-container" id="progressContainer">
+            <div class="progress-label" id="progressText">Uploading... 0%</div>
+            <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+        </div>
+    </div>
+
+    <script>
+        const form = document.getElementById('uploadForm');
+        const container = document.getElementById('progressContainer');
+        const text = document.getElementById('progressText');
+        const fill = document.getElementById('progressFill');
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = form.querySelector('button');
+            btn.disabled = true;
+            btn.innerText = "Uploading...";
+            container.style.display = "block";
+
+            const formData = new FormData(form);
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/upload');
+
+            // 真实进度
+            xhr.upload.addEventListener('progress', (e) => {
+                if (e.lengthComputable) {
+                    const percent = Math.round((e.loaded / e.total) * 100);
+                    text.innerText = `Uploading... ${percent}%`;
+                    fill.style.width = percent + '%';
+                }
+            });
+
+            xhr.onload = () => {
+                if (xhr.status === 200) {
+                    text.innerText = "Upload complete! Redirecting...";
+                    fill.style.width = "100%";
+                    setTimeout(() => window.location.href = "/verify", 1000);
+                } else {
+                    text.innerText = "Upload failed";
+                    btn.disabled = false;
+                    btn.innerText = "UPLOAD";
+                }
+            };
+
+            xhr.send(formData);
+        });
+    </script>
+</body>
+</html>

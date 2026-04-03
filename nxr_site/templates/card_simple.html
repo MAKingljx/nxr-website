@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% if card %}NXR - {{ card.card_name }} - {{ card.cert_id }}{% else %}Card Not Found | NXR Grading{% endif %}</title>
+<link rel="icon" type="image/svg+xml" href="/static/images/nxr-favicon.svg">
+<link rel="apple-touch-icon" href="/static/images/nxr-logo-circle.png">
+{% if card %}
+<link rel="preload" href="{{ card.front_img }}" as="image">
+<link rel="preload" href="{{ card.back_img }}" as="image">
+{% endif %}
+<style>
+/* 所有现有的CSS样式保持不变 */
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0a0a0a;--bg2:#111;--bg3:#181818;--bg4:#1e1e1e;--text:#fff;--text2:#999;--text3:#666;--red:#e94560;--red2:#c73652;--gold:#f5c842;--border:#222;--border2:#2a2a2a;--font:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+html{scroll-behavior:smooth}
+body{font-family:var(--font);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+a{text-decoration:none;color:inherit}
+
+/* AI Character Info Button */
+.ai-character-section{margin-top:24px;text-align:center}
+.ai-character-btn{display:block;width:100%;background:linear-gradient(135deg, #3b82f6, #8b5cf6);color:#fff;border:none;border-radius:12px;padding:20px;font-family:inherit;cursor:pointer;transition:all 0.3s ease;position:relative;overflow:hidden}
+.ai-character-btn:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(59,130,246,0.3);background:linear-gradient(135deg, #2563eb, #7c3aed)}
+.ai-character-btn:active{transform:translateY(0)}
+.ai-icon{display:block;font-size:32px;margin-bottom:8px}
+.ai-text{display:block;font-size:16px;font-weight:700;margin-bottom:4px}
+.ai-subtext{display:block;font-size:12px;color:rgba(255,255,255,0.8);font-weight:500}
+.ai-note{font-size:11px;color:var(--text3);margin-top:8px;line-height:1.4}
+
+/* AI Modal */
+.ai-modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(10,10,10,0.95);z-index:10000;backdrop-filter:blur(8px);align-items:center;justify-content:center;padding:20px}
+.ai-modal.active{display:flex}
+.ai-modal-content{background:var(--bg2);border:1px solid var(--border2);border-radius:16px;max-width:600px;width:100%;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;animation:modalSlideIn 0.3s ease}
+@keyframes modalSlideIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+.ai-modal-header{padding:24px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.ai-modal-title{font-size:18px;font-weight:700;display:flex;align-items:center;gap:10px}
+.ai-modal-title .icon{font-size:20px}
+.ai-modal-close{background:none;border:none;color:var(--text3);font-size:24px;cursor:pointer;padding:4px;line-height:1;transition:color 0.2s}
+.ai-modal-close:hover{color:var(--text)}
+.ai-modal-body{padding:24px;flex:1;overflow-y:auto}
+.ai-loading{text-align:center;padding:40px}
+.ai-loading-spinner{width:40px;height:40px;border:3px solid var(--border2);border-top-color:var(--red);border-radius:50%;margin:0 auto 16px;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.ai-loading-text{color:var(--text2);font-size:14px}
+.ai-content{display:none}
+.ai-character-info{line-height:1.7;color:var(--text2)}
+.ai-character-info h3{color:var(--text);margin:20px 0 12px;font-size:16px;font-weight:700}
+.ai-character-info h3:first-child{margin-top:0}
+.ai-character-info p{margin-bottom:16px}
+.ai-character-info ul{margin:12px 0 16px 20px;color:var(--text2)}
+.ai-character-info li{margin-bottom:8px}
+.ai-modal-footer{padding:20px 24px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+.ai-language-select{display:flex;align-items:center;gap:8px}
+.ai-language-label{font-size:12px;color:var(--text3)}
+.ai-language-select select{background:var(--bg3);border:1px solid var(--border2);border-radius:6px;color:var(--text);padding:8px 12px;font-size:13px;font-family:inherit;outline:none;cursor:pointer;min-width:140px}
+.ai-powered-by{font-size:11px;color:var(--text3);display:flex;align-items:center;gap:6px}
+.ai-powered-by .icon{font-size:12px}
+
+/* 其他现有样式... */
+</style>
+</head>
+<body>
+<!-- 导航栏等现有HTML结构... -->
+
+<div class="card-page">
+  
+  <!-- Card exists - show card details -->
+  <div class="card-layout">
+    <div class="images-col">
+      <!-- 图片区域... -->
+      
+      <!-- AI Character Info Button -->
+      <div class="ai-character-section">
+        <button class="ai-character-btn" id="aiCharacterBtn" onclick="openAIModal()">
+          <span class="ai-icon">🤖</span>
+          <span class="ai-text">AI Character Info</span>
+          <span class="ai-subtext">Learn about this character</span>
+        </button>
+        <p class="ai-note">Powered by DeepSeek AI • Available in 7 languages</p>
+      </div>
+      
+      <!-- Verification info -->
+      <div class="verification-info">
+        <div class="verification-title">Verification</div>
+        <p style="font-size:13px;color:var(--text2);margin-bottom:8px;line-height:1.5">
+          This card has been authenticated and graded by NXR Grading. The certificate ID below can be used to verify this grade on our website.
+        </p>
+        <div class="verification-id">{{ cert_id }}</div>
+      </div>
+    </div>
+    
+    <div class="card-info">
+      <h1 class="card-title">{{ card.card_name if card else '' }}</h1>
+      <div class="card-cert">Certificate ID: {{ cert_id }}</div>
+      <div class="grade-badge">Final Grade: {{ card.grade if card else 'N/A' }}</div>
+      
+      <div class="detail-grid">
+        {% if card.year %}<div class="detail-row"><span class="detail-key">Year</span><span class="detail-val">{{ card.year }}</span></div>{% endif %}
+        {% if card.brand %}<div class="detail-row"><span class="detail-key">Brand</span><span class="detail-val">{{ card.brand }}</span></div>{% endif %}
+        {% if card.set_name %}<div class="detail-row"><span class="detail-key">Set</span><span class="detail-val">{{ card.set_name }}</span></div>{% endif %}
+        {% if card.card_number %}<div class="detail-row"><span class="detail-key">Card number</span><span class="detail-val">{{ card.card_number }}</span></div>{% endif %}
+        {% if card.pop %}<div class="detail-row"><span class="detail-key">Population</span><span class="detail-val">{{ card['pop'] }}</span></div>{% endif %}
+        {% if card.language %}<div class="detail-row"><span class="detail-key">Language</span><span class="detail-val">{{ card.language }}</span></div>{% endif %}
+      </div>
+      
+      <!-- 子分数区域... -->
+    </div>
+  </div>
+</div>
+
+<!-- AI Character Info Modal -->
+<div class="ai-modal" id="aiModal">
+  <div class="ai-modal-content">
+    <div class="ai-modal-header">
+      <div class="ai-modal-title">
+        <span class="icon">🤖</span>
+        <span>AI Character Information</span>
+      </div>
+      <button class="ai-modal-close" id="aiModalClose" onclick="closeAIModal()">&times;</button>
+    </div>
+    
+    <div class="ai-modal-body">
+      <div class="ai-loading" id="aiLoading">
+        <div class="ai-loading-spinner"></div>
+        <div class="ai-loading-text">AI is analyzing the character...</div>
+      </div>
+      
+      <div class="ai-content" id="aiContent">
+        <div class="ai-character-info" id="aiCharacterInfo">
+          <!-- AI content will be loaded here -->
+        </div>
+      </div>
+    </div>
+    
+    <div class="ai-modal-footer">
+      <div class="ai-language-select">
+        <span class="ai-language-label">Language:</span>
+        <select id="aiLanguageSelect" onchange="changeLanguage()">
+          <option value="en" selected>English</option>
+          <option value="zh">中文 (Chinese)</option>
+          <option value="es">Español (Spanish)</option>
+          <option value="fr">Français (French)</option>
+          <option value="de">Deutsch (German)</option>
+          <option value="ja">日本語 (Japanese)</option>
+          <option value="ko">한국어 (Korean)</option>
+        </select>
+      </div>
+      <div class="ai-powered-by">
+        <span class="icon">⚡</span>
+        <span>Powered by DeepSeek AI</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// 全局AI函数 - 简化版本
+let currentRequest = null;
+
+// 打开AI模态框
+async function openAIModal() {
+    console.log("openAIModal called");
+    
+    const aiModal = document.getElementById('aiModal');
+    const aiLoading = document.getElementById('aiLoading');
+    const aiContent = document.getElementById('aiContent');
+    const aiCharacterInfo = document.getElementById('aiCharacterInfo');
+    const aiLanguageSelect = document.getElementById('aiLanguageSelect');
+    
+    if (!aiModal) {
+        console.error("AI modal not found");
+        return;
+    }
+    
+    // 显示模态框
+    aiModal.classList.add('active');
+    document.body.style.overflow = 'hidden';
+    
+    // 重置内容
+    aiLoading.style.display = 'block';
+    aiContent.style.display = 'none';
+    aiCharacterInfo.innerHTML = '';
+    
+    try {
+        // 获取卡片信息
+        const cardTitle = document.querySelector('.card-title').textContent;
+        const cardBrand = document.querySelector('.detail-row:nth-child(2) .detail-val')?.textContent || 'Unknown';
+        const language = aiLanguageSelect ? aiLanguageSelect.value : 'en';
+        
+        console.log("Fetching AI info for:", { brand: cardBrand, character: cardTitle, language: language });
+        
+        // 取消之前的请求（如果有）
+        if (currentRequest) {
+            currentRequest.abort();
+        }
+        
+        // 调用后端API
+        const controller = new AbortController();
+        currentRequest = controller;
+        
+        const response = await fetch('/api/ai_character_info', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                brand: cardBrand,
+                character: cardTitle,
+                language: language
+            }),
+            signal: controller.signal
+        });
+        
+        if (!response.ok) {
+            throw new Error(`API error: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        console.log("API response received:", data);
+        
+        // 显示AI响应
+        aiCharacterInfo.innerHTML = data.content || '<p>No information available for this character.</p>';
+        
+        // 显示内容
+        aiLoading.style.display = 'none';
+        aiContent.style.display = 'block';
+        
+        currentRequest = null;
+        
+    } catch (error) {
+        if (error.name === 'AbortError') {
+            console.log("Request was aborted");
+            return;
+        }
+        
+        console.error('AI request failed:', error);
+        aiCharacterInfo.innerHTML = `
+            <h3>Error</h3>
+            <p>Unable to load character information at this time.</p>
+            <p>Please try again later or check your connection.</p>
+            <p>Error details: ${error.message}</p>
+        `;
+        aiLoading.style.display = 'none';
+        aiContent.style.display = 'block';
+        currentRequest = null;
+    }
+}
+
+// 关闭AI模态框
+function closeAIModal() {
+    console.log("closeAIModal called");
+    
+    const aiModal = document.getElementById('aiModal');
+    if (aiModal) {
+        aiModal.classList.remove('active');
+        document.body.style.overflow = '';
+    }
+    
+    // 取消正在进行的请求
+    if (currentRequest) {
+        currentRequest.abort();
+        currentRequest = null;
+    }
+}
+
+// 切换语言
+function changeLanguage() {
+    console.log("changeLanguage called");
+    const aiModal = document.getElementById('aiModal');
+    if (aiModal && aiModal.classList.contains('active')) {
+        openAIModal(); // 重新加载内容
+    }
+}
+
+// 添加键盘事件监听（按ESC关闭模态框）
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        const aiModal = document.getElementById('aiModal');
+        if (aiModal && aiModal.classList.contains('active')) {
+            closeAIModal();
+        }
+    }
+});
+
+// 点击模态框背景关闭
+document.addEventListener('click', function(e) {
+    const aiModal = document.getElementById('aiModal');
+    if (aiModal && aiModal.classList.contains('active') && e.target === aiModal) {
+        closeAIModal();
+    }
+});
+
+console.log("AI functions loaded successfully");
+</script>
+
+<!-- 其他现有的JavaScript代码... -->
+</body>
+</html>

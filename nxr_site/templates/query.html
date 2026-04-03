@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verify Your Grade | NXR Card Grading</title>
+<link rel="icon" type="image/svg+xml" href="/static/images/nxr-favicon.svg">
+<link rel="apple-touch-icon" href="/static/images/nxr-logo-circle.png">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #121212;
+            --bg-secondary: #1a1a1a;
+            --text-primary: #ffffff;
+            --text-secondary: #b3b3b3;
+            --accent-blue: #0071e3;
+            --border-color: #333333;
+            --font-primary: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        }
+
+        body {
+            font-family: var(--font-primary);
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        /* 导航栏（统一风格） */
+        .navbar {
+            background-color: var(--bg-primary);
+            border-bottom: 1px solid var(--border-color);
+            padding: 20px 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .nav-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--text-primary);
+            text-decoration: none;
+        }
+
+        .logo img {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            object-fit: cover;
+            display: block;
+        }
+
+        .nav-menu {
+            display: flex;
+            list-style: none;
+            gap: 32px;
+        }
+
+        .nav-menu a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 16px;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .nav-menu a:hover, .nav-menu a.active {
+            color: var(--text-primary);
+        }
+
+        .cta-button {
+            background-color: var(--accent-blue);
+            color: white;
+            padding: 10px 24px;
+            border-radius: 4px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: background-color 0.2s;
+        }
+
+        .cta-button:hover {
+            background-color: #0077ed;
+        }
+
+        /* 页面头部 */
+        .page-header {
+            background-image: url('/static/images/page-header-bg.png');
+            background-size: cover;
+            background-position: center;
+            height: 300px;
+            display: flex;
+            align-items: center;
+            position: relative;
+        }
+
+        .page-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.6);
+        }
+
+        .header-content {
+            position: relative;
+            z-index: 2;
+        }
+
+        .page-header h1 {
+            font-size: 48px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .page-header p {
+            font-size: 20px;
+            color: var(--text-secondary);
+        }
+
+        /* 查询区域 */
+        .verify-section {
+            padding: 80px 0;
+            background-color: var(--bg-secondary);
+        }
+
+        .verify-container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            padding: 48px;
+            border-radius: 4px;
+            text-align: center;
+        }
+
+        .verify-container h2 {
+            font-size: 32px;
+            margin-bottom: 16px;
+        }
+
+        .verify-container p {
+            color: var(--text-secondary);
+            font-size: 16px;
+            margin-bottom: 32px;
+        }
+
+        .verify-form {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+
+        .verify-form input {
+            flex: 1;
+            padding: 12px 16px;
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            color: var(--text-primary);
+            font-size: 16px;
+        }
+
+        .verify-form input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+
+        /* 页脚（统一风格） */
+        .footer {
+            background-color: var(--bg-primary);
+            border-top: 1px solid var(--border-color);
+            padding: 48px 0;
+            margin-top: 80px;
+        }
+
+        .footer-content {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 32px;
+            margin-bottom: 32px;
+        }
+
+        .footer-column h4 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: var(--text-primary);
+        }
+
+        .footer-column ul {
+            list-style: none;
+        }
+
+        .footer-column ul li a {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 16px;
+            line-height: 2;
+            transition: color 0.2s;
+        }
+
+        .footer-column ul li a:hover {
+            color: var(--text-primary);
+        }
+
+        .footer-bottom {
+            text-align: center;
+            padding-top: 32px;
+            border-top: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        @media (max-width: 768px) {
+            .nav-menu {
+                display: none;
+            }
+
+            .page-header h1 {
+                font-size: 32px;
+            }
+
+            .verify-form {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container nav-container">
+            <a href="/" class="logo"><img src="/static/images/nxr-logo-circle.png" alt="NXR logo"><span>NXR Grading</span></a>
+            <ul class="nav-menu">
+                <li><a href="/">Home</a></li>
+                <li><a href="/services">Services</a></li>
+                <li><a href="/submit">Submit</a></li>
+                <li><a href="/query" class="active">Verify</a></li>
+                <li><a href="/about">About</a></li>
+                <li><a href="/faq">FAQ</a></li>
+            </ul>
+            <a href="/submit" class="cta-button">Submit Now</a>
+        </div>
+    </nav>
+
+    <section class="page-header">
+        <div class="container header-content">
+            <h1>Verify Your Grade</h1>
+            <p>Instantly check your card's authenticity and grading details</p>
+        </div>
+    </section>
+
+    <section class="verify-section">
+        <div class="container">
+            <div class="verify-container">
+                <h2>Enter Your Certificate Number</h2>
+                <p>Scan the QR code on your slab or enter the certificate number below to verify your grade.</p>
+                <form class="verify-form">
+                    <input type="text" placeholder="Enter Certificate Number" required>
+                    <button type="submit" class="cta-button">Verify</button>
+                </form>
+                <img src="/static/images/feature-qr.png" alt="QR Verification" style="width: 100px; margin-top: 20px;">
+            </div>
+        </div>
+    </section>
+
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-column">
+                    <h4>NXR Grading</h4>
+                    <ul>
+                        <li><a href="/about">About Us</a></li>
+                        <li><a href="/services">Our Services</a></li>
+                        <li><a href="/submit">Submit Cards</a></li>
+                        <li><a href="/query">Verify Grade</a></li>
+                    </ul>
+                </div>
+                <div class="footer-column">
+                    <h4>Resources</h4>
+                    <ul>
+                        <li><a href="/faq">FAQ</a></li>
+                        <li><a href="/grading-standards">Grading Standards</a></li>
+                        <li><a href="/shipping">Shipping Info</a></li>
+                        <li><a href="/contact">Contact Us</a></li>
+                    </ul>
+                </div>
+                <div class="footer-column">
+                    <h4>Connect</h4>
+                    <ul>
+                        <li><a href="#">Instagram</a></li>
+                        <li><a href="#">Twitter</a></li>
+                        <li><a href="#">Facebook</a></li>
+                        <li><a href="#">YouTube</a></li>
+                    </ul>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; 2026 NXR Card Grading. All rights reserved.</p>
+                <p>Professional grading services for sports, Pokemon, and collectible trading cards.</p>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

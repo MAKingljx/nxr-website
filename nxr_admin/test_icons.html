@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Icon Test</title>
+    <!-- Same CDN as in the app -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+        }
+        .icon-test {
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .success { color: green; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+    <h1>Font Awesome Icon Test</h1>
+    
+    <div class="icon-test">
+        <h3>Test 1: Dashboard Icon</h3>
+        <p><i class="fas fa-tachometer-alt"></i> fa-tachometer-alt</p>
+        <p>Should show: 📊 (dashboard icon)</p>
+    </div>
+    
+    <div class="icon-test">
+        <h3>Test 2: Add Icon</h3>
+        <p><i class="fas fa-plus-circle"></i> fa-plus-circle</p>
+        <p>Should show: ➕ (plus in circle)</p>
+    </div>
+    
+    <div class="icon-test">
+        <h3>Test 3: Database Icon</h3>
+        <p><i class="fas fa-database"></i> fa-database</p>
+        <p>Should show: 💾 (database icon)</p>
+    </div>
+    
+    <div class="icon-test">
+        <h3>Test 4: Check Icon</h3>
+        <p><i class="fas fa-check-circle"></i> fa-check-circle</p>
+        <p>Should show: ✅ (check in circle)</p>
+    </div>
+    
+    <div class="icon-test">
+        <h3>Test 5: Excel Icon</h3>
+        <p><i class="fas fa-file-excel"></i> fa-file-excel</p>
+        <p>Should show: 📊 (spreadsheet icon)</p>
+    </div>
+    
+    <script>
+        // Test if Font Awesome loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(function() {
+                var testIcon = document.createElement('i');
+                testIcon.className = 'fas fa-check';
+                testIcon.style.position = 'absolute';
+                testIcon.style.left = '-9999px';
+                document.body.appendChild(testIcon);
+                
+                var computedStyle = window.getComputedStyle(testIcon);
+                var fontFamily = computedStyle.fontFamily || '';
+                
+                var resultDiv = document.createElement('div');
+                resultDiv.className = 'icon-test';
+                
+                if (fontFamily.includes('Font Awesome')) {
+                    resultDiv.innerHTML = '<h3 class="success">✅ Font Awesome Loaded Successfully</h3>' +
+                                         '<p>Font family detected: ' + fontFamily + '</p>';
+                } else {
+                    resultDiv.innerHTML = '<h3 class="error">❌ Font Awesome Not Loaded</h3>' +
+                                         '<p>Font family detected: ' + fontFamily + '</p>' +
+                                         '<p>Possible issues: Network problem, CDN blocked, or browser cache.</p>';
+                }
+                
+                document.body.appendChild(resultDiv);
+                document.body.removeChild(testIcon);
+            }, 1000);
+        });
+    </script>
+</body>
+</html>

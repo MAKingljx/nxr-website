@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>About NXR Grading | Built by Collectors, for Collectors</title>
+<link rel="icon" type="image/svg+xml" href="/static/images/nxr-favicon.svg">
+<link rel="apple-touch-icon" href="/static/images/nxr-logo-circle.png">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0a0a0a;--bg2:#111;--bg3:#181818;--bg4:#1e1e1e;--text:#fff;--text2:#999;--text3:#666;--red:#e94560;--red2:#c73652;--gold:#f5c842;--border:#222;--border2:#2a2a2a;--font:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+html{scroll-behavior:smooth}
+body{font-family:var(--font);background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased}
+a{text-decoration:none;color:inherit}
+.nav{position:fixed;top:0;left:0;right:0;z-index:200;height:64px;background:rgba(10,10,10,.92);backdrop-filter:blur(16px);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 40px}
+.nav-logo{display:inline-flex;align-items:center;gap:12px;font-size:20px;font-weight:900;letter-spacing:5px}.nav-logo img{width:38px;height:38px;border-radius:50%;object-fit:cover;display:block}
+.nav-links{display:flex;gap:32px;list-style:none}
+.nav-links a{color:var(--text2);font-size:14px;font-weight:500;transition:color .2s}
+.nav-links a:hover,.nav-links a.active{color:var(--text)}
+.nav-cta{background:var(--red);color:#fff;padding:9px 22px;border-radius:4px;font-size:14px;font-weight:700;transition:background .2s}
+.nav-cta:hover{background:var(--red2)}
+@media(max-width:768px){.nav-links{display:none}.nav{padding:0 20px}}
+
+.page-hero{padding:140px 40px 80px;position:relative;overflow:hidden;border-bottom:1px solid var(--border)}
+.page-hero::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 70% 80% at 20% 50%,rgba(233,69,96,.08),transparent)}
+.page-hero-inner{max-width:1100px;margin:0 auto;position:relative;z-index:1}
+.section-tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;color:var(--red);margin-bottom:16px}
+.page-hero h1{font-size:clamp(36px,5vw,64px);font-weight:900;letter-spacing:-2px;line-height:1.05;margin-bottom:20px}
+.page-hero p{font-size:18px;color:var(--text2);max-width:560px;line-height:1.7}
+
+.section{padding:80px 40px}
+.section-inner{max-width:1100px;margin:0 auto}
+.bg2{background:var(--bg2)}
+
+/* MISSION */
+.mission-grid{display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:center}
+@media(max-width:800px){.mission-grid{grid-template-columns:1fr;gap:40px}}
+.mission-text h2{font-size:clamp(26px,3.5vw,40px);font-weight:900;letter-spacing:-1px;margin-bottom:20px;line-height:1.15}
+.mission-text h2 em{font-style:normal;color:var(--red)}
+.mission-text p{font-size:15px;color:var(--text2);line-height:1.85;margin-bottom:16px}
+.mission-text p strong{color:var(--text)}
+.mission-visual{background:var(--bg3);border:1px solid var(--border2);border-radius:20px;padding:36px;display:flex;flex-direction:column;gap:20px}
+.principle{display:flex;gap:16px;align-items:flex-start}
+.principle-num{width:36px;height:36px;border-radius:50%;background:rgba(233,69,96,.12);border:1px solid rgba(233,69,96,.25);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;color:var(--red);flex-shrink:0}
+.principle-body h4{font-size:14px;font-weight:700;margin-bottom:4px}
+.principle-body p{font-size:13px;color:var(--text2);line-height:1.6}
+
+/* VALUES */
+.values-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:2px;background:var(--border);margin-top:48px}
+@media(max-width:700px){.values-grid{grid-template-columns:1fr}}
+.value-card{background:var(--bg2);padding:36px 28px}
+.value-icon{font-size:28px;margin-bottom:16px}
+.value-card h3{font-size:17px;font-weight:700;margin-bottom:10px}
+.value-card p{font-size:14px;color:var(--text2);line-height:1.7}
+
+/* TEAM */
+.team-intro{max-width:640px;margin:0 auto 56px;text-align:center}
+.team-intro h2{font-size:clamp(26px,3.5vw,40px);font-weight:900;letter-spacing:-1px;margin-bottom:14px}
+.team-intro p{font-size:15px;color:var(--text2);line-height:1.7}
+.team-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:24px}
+.team-card{background:var(--bg3);border:1px solid var(--border2);border-radius:16px;padding:28px;text-align:center}
+.team-avatar{width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,var(--bg4),var(--border2));margin:0 auto 16px;display:flex;align-items:center;justify-content:center;font-size:28px;border:1px solid var(--border2)}
+.team-card h4{font-size:16px;font-weight:700;margin-bottom:4px}
+.team-card .role{font-size:12px;color:var(--red);font-weight:600;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px}
+.team-card p{font-size:13px;color:var(--text2);line-height:1.6}
+
+/* CTA */
+.cta-strip{background:var(--bg3);border:1px solid var(--border2);border-radius:16px;padding:48px;text-align:center;margin-top:80px}
+.cta-strip h2{font-size:clamp(24px,3vw,36px);font-weight:900;letter-spacing:-1px;margin-bottom:12px}
+.cta-strip p{font-size:15px;color:var(--text2);margin-bottom:28px}
+.btn-primary{display:inline-block;background:var(--red);color:#fff;padding:14px 32px;border-radius:4px;font-size:15px;font-weight:700;letter-spacing:.5px;transition:background .2s}
+.btn-primary:hover{background:var(--red2)}
+.btn-secondary{display:inline-block;background:transparent;color:var(--text);padding:14px 32px;border-radius:4px;font-size:15px;font-weight:600;border:1px solid var(--border2);margin-left:12px;transition:border-color .2s}
+.btn-secondary:hover{border-color:var(--text3)}
+
+.footer{background:var(--bg2);border-top:1px solid var(--border);padding:60px 40px 32px}
+.footer-inner{max-width:1100px;margin:0 auto}
+.footer-top{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:48px;margin-bottom:48px}
+@media(max-width:800px){.footer-top{grid-template-columns:1fr 1fr;gap:32px}}
+.footer-brand .footer-logo{font-size:20px;font-weight:900;letter-spacing:5px;margin-bottom:14px}
+.footer-brand p{font-size:13px;color:var(--text3);line-height:1.7;max-width:240px}
+.footer-col h4{font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--text2);margin-bottom:16px}
+.footer-col ul{list-style:none;display:flex;flex-direction:column;gap:10px}
+.footer-col ul a{font-size:13px;color:var(--text3);transition:color .2s}
+.footer-col ul a:hover{color:var(--text)}
+.footer-bottom{border-top:1px solid var(--border);padding-top:24px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+.footer-copy{font-size:12px;color:var(--text3)}
+.footer-tagline{font-size:12px;color:var(--text3);font-style:italic}
+</style>
+</head>
+<body>
+<nav class="nav">
+  <a href="/" class="nav-logo"><img src="/static/images/nxr-logo-circle.png" alt="NXR logo"><span>NXR</span></a>
+  <ul class="nav-links">
+    <li><a href="/">Home</a></li>
+    <li><a href="/services">Services</a></li>
+    <li><a href="/submit">Submit</a></li>
+    <li><a href="/verify">Verify</a></li>
+    <li><a href="/about" class="active">About</a></li>
+    <li><a href="/faq">FAQ</a></li>
+  </ul>
+  <a href="/submit" class="nav-cta">Submit Now</a>
+</nav>
+
+<div class="page-hero">
+  <div class="page-hero-inner">
+    <div class="section-tag">About NXR</div>
+    <h1>Built by collectors.<br>For collectors.</h1>
+    <p>We started NXR because we were tired of the same thing you were tired of — grades you couldn't trust, institutions that didn't care, and a system that rewarded loyalty over accuracy.</p>
+  </div>
+</div>
+
+<section class="section">
+  <div class="section-inner">
+    <div class="mission-grid">
+      <div class="mission-text">
+        <div class="section-tag">Our Mission</div>
+        <h2>Transparency isn't a feature.<br><em>It's the foundation.</em></h2>
+        <p>NXR was founded on a simple belief: <strong>collectors deserve to know exactly how their cards are graded.</strong> Not just the final number — the full breakdown, the criteria, the reasoning.</p>
+        <p>We combine AI-powered precision scanning with certified human expertise to deliver grades that are consistent, documented, and defensible. Every time. For every card. Regardless of who submitted it.</p>
+        <p>We don't have a VIP tier. We don't have a fast lane for high-profile submissions. <strong>Your card gets the same rigorous process as everyone else's.</strong> That's not a policy — it's a principle.</p>
+      </div>
+      <div class="mission-visual">
+        <div class="principle">
+          <div class="principle-num">1</div>
+          <div class="principle-body">
+            <h4>Transparency over tradition</h4>
+            <p>Every sub-score published. Every criterion documented. No black box, no mystery grades.</p>
+          </div>
+        </div>
+        <div class="principle">
+          <div class="principle-num">2</div>
+          <div class="principle-body">
+            <h4>Consistency over convenience</h4>
+            <p>The same standards applied to every card, every time. No exceptions for high-value submissions.</p>
+          </div>
+        </div>
+        <div class="principle">
+          <div class="principle-num">3</div>
+          <div class="principle-body">
+            <h4>Technology in service of accuracy</h4>
+            <p>AI doesn't replace human judgment — it removes human bias. Both work together.</p>
+          </div>
+        </div>
+        <div class="principle">
+          <div class="principle-num">4</div>
+          <div class="principle-body">
+            <h4>Collectors first, always</h4>
+            <p>We exist to serve the people who love these cards — not the institutions that profit from them.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section bg2">
+  <div class="section-inner">
+    <div class="section-tag" style="display:block;text-align:center;margin-bottom:16px">Our Values</div>
+    <h2 style="font-size:clamp(26px,3.5vw,40px);font-weight:900;letter-spacing:-1px;text-align:center;margin-bottom:8px">What we stand for</h2>
+    <p style="text-align:center;color:var(--text2);font-size:15px;margin-bottom:0">The principles that guide every decision we make.</p>
+    <div class="values-grid">
+      <div class="value-card">
+        <div class="value-icon">🔍</div>
+        <h3>Radical Transparency</h3>
+        <p>Every grade comes with a full breakdown. Centering, edges, corners, surface — all published, all verifiable. You'll never wonder why your card got its grade.</p>
+      </div>
+      <div class="value-card">
+        <div class="value-icon">⚖️</div>
+        <h3>Absolute Consistency</h3>
+        <p>The same criteria. The same process. The same standards — for a $5 common and a $50,000 vintage. No favoritism. No exceptions.</p>
+      </div>
+      <div class="value-card">
+        <div class="value-icon">🤝</div>
+        <h3>Collector-First</h3>
+        <p>We answer to collectors, not shareholders. Our incentives are aligned with yours: accurate grades build trust, and trust builds everything else.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="section-inner">
+    <div class="team-intro">
+      <div class="section-tag">The Team</div>
+      <h2>Experts who've been on your side of the slab</h2>
+      <p>Our team combines decades of collecting experience with expertise in AI, materials science, and authentication. We've submitted cards. We know what it feels like to get a grade that doesn't make sense.</p>
+    </div>
+    <div class="team-grid">
+      <div class="team-card">
+        <div class="team-avatar">🧠</div>
+        <h4>AI Grading System</h4>
+        <div class="role">Core Technology</div>
+        <p>Proprietary computer vision trained on millions of card images. Measures to sub-millimeter precision.</p>
+      </div>
+      <div class="team-card">
+        <div class="team-avatar">🔬</div>
+        <h4>Certified Graders</h4>
+        <div class="role">Human Verification</div>
+        <p>Every AI grade is independently reviewed by a certified expert. Both must agree before a grade is issued.</p>
+      </div>
+      <div class="team-card">
+        <div class="team-avatar">🛡️</div>
+        <h4>Authentication Team</h4>
+        <div class="role">Fraud Prevention</div>
+        <p>Specialists in detecting alterations, trimming, and counterfeits across all major card categories.</p>
+      </div>
+      <div class="team-card">
+        <div class="team-avatar">📦</div>
+        <h4>Encapsulation Lab</h4>
+        <div class="role">Protection & Finishing</div>
+        <p>UV-resistant, tamper-evident slabs with NFC + QR dual verification, assembled in a controlled environment.</p>
+      </div>
+    </div>
+    <div class="cta-strip">
+      <h2>Ready to experience grading done right?</h2>
+      <p>Submit your cards and see exactly what they're worth — with full transparency, every step of the way.</p>
+      <a href="/submit" class="btn-primary">Submit Your Cards</a>
+      <a href="/services" class="btn-secondary">View Services</a>
+    </div>
+  </div>
+</section>
+
+<footer class="footer">
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-logo">NXR</div>
+        <p>Professional card grading built on AI precision, human expertise, and radical transparency.</p>
+      </div>
+      <div class="footer-col"><h4>Company</h4><ul><li><a href="/about">About Us</a></li><li><a href="/services">Services</a></li><li><a href="/submit">Submit</a></li><li><a href="/verify">Verify</a></li></ul></div>
+      <div class="footer-col"><h4>Resources</h4><ul><li><a href="/faq">FAQ</a></li><li><a href="/faq">Grading Standards</a></li><li><a href="/submit">Shipping Info</a></li><li><a href="/about">Contact</a></li></ul></div>
+      <div class="footer-col"><h4>Connect</h4><ul><li><a href="#">Instagram</a></li><li><a href="#">Twitter / X</a></li><li><a href="#">YouTube</a></li><li><a href="#">Discord</a></li></ul></div>
+    </div>
+    <div class="footer-bottom">
+      <span class="footer-copy">&copy; 2026 NXR Card Grading. All rights reserved.</span>
+      <span class="footer-tagline">Grading built on proof, not promises.</span>
+    </div>
+  </div>
+</footer>
+</body>
+</html>
