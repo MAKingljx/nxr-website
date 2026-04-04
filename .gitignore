@@ -35,5 +35,6 @@ nxr_admin/uploads/
 nxr_admin/exports/
 nxr_site/__pycache__/
 slabs photo/
+testpis/
 *.xlsx
 *.mov
