@@ -8,12 +8,17 @@ import sqlite3
 import random
 import string
 import json
+import math
+import shutil
 from datetime import datetime
 from pathlib import Path
+from collections import deque
 from flask import send_from_directory, send_file, Flask, render_template, request, redirect, url_for, session, flash, jsonify
 from werkzeug.utils import secure_filename
-from werkzeug.security import check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 from functools import wraps
+from PIL import Image, ImageFilter, ImageOps
+import numpy as np
 
 # Configuration
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -22,6 +27,8 @@ DATA_DIR = BASE_DIR / "Data"
 DATA_DIR.mkdir(exist_ok=True)
 DB_PATH = DATA_DIR / "cards.db"
 TEMP_DB_PATH = DATA_DIR / "temp_cards.db"
+SITE_STATIC_DIR = BASE_DIR / "nxr_site" / "static"
+SITE_STATIC_DIR.mkdir(exist_ok=True)
 
 # Ensure directories exist
 UPLOAD_FOLDER = ADMIN_DIR / "uploads"
@@ -99,6 +106,12 @@ LANGUAGE_DB_VARIANTS = {
 }
 
 TEMP_LIST_PAGE_SIZE = 25
+AUTO_PROCESS_UPLOADS = os.environ.get('AUTO_PROCESS_UPLOADS', '1') != '0'
+IMAGE_ANALYSIS_MAX_DIMENSION = 480
+IMAGE_MAX_DIMENSION = 2200
+IMAGE_MIN_FOREGROUND_RATIO = 0.02
+IMAGE_ROTATION_LIMIT_DEGREES = 35
+IMAGE_CROP_PADDING_RATIO = 0.03
 
 
 def load_admin_accounts():
@@ -127,11 +140,113 @@ def load_admin_accounts():
     return accounts or DEFAULT_ADMIN_ACCOUNTS
 
 
+def is_password_hash(value):
+    return isinstance(value, str) and value.startswith(('scrypt:', 'pbkdf2:', 'argon2:'))
+
+
 def verify_admin_password(account, password):
     password_hash = account.get('password_hash')
     if password_hash:
-        return check_password_hash(password_hash, password)
+        if is_password_hash(password_hash):
+            return check_password_hash(password_hash, password)
+        return password == password_hash
     return password == account.get('password', '')
+
+
+def hash_admin_password(password):
+    if is_password_hash(password):
+        return password
+    return generate_password_hash(password)
+
+
+def ensure_admin_users_table(conn):
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS admin_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL,
+            password_hash TEXT NOT NULL,
+            email TEXT,
+            role TEXT DEFAULT 'admin',
+            is_active INTEGER DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            last_login DATETIME
+        )
+    ''')
+    conn.execute('''
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_users_username
+        ON admin_users (username COLLATE NOCASE)
+    ''')
+
+
+def upsert_admin_user(conn, username, password, role='admin', email=None, is_active=1):
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    password_hash = hash_admin_password(password)
+    existing = conn.execute(
+        'SELECT id, created_at FROM admin_users WHERE username = ? COLLATE NOCASE',
+        (username,),
+    ).fetchone()
+
+    if existing:
+        conn.execute('''
+            UPDATE admin_users
+            SET username = ?, password_hash = ?, email = ?, role = ?, is_active = ?
+            WHERE id = ?
+        ''', (username, password_hash, email, role, is_active, existing['id']))
+    else:
+        conn.execute('''
+            INSERT INTO admin_users (username, password_hash, email, role, is_active, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (username, password_hash, email, role, is_active, now))
+
+
+def migrate_existing_admin_passwords(conn):
+    rows = conn.execute('SELECT id, password_hash FROM admin_users').fetchall()
+    for row in rows:
+        stored_value = row['password_hash'] or ''
+        if stored_value and not is_password_hash(stored_value):
+            conn.execute(
+                'UPDATE admin_users SET password_hash = ? WHERE id = ?',
+                (hash_admin_password(stored_value), row['id']),
+            )
+
+
+def initialize_admin_users(conn):
+    ensure_admin_users_table(conn)
+    migrate_existing_admin_passwords(conn)
+
+    existing_count = conn.execute('SELECT COUNT(*) FROM admin_users').fetchone()[0]
+    if existing_count == 0:
+        for username, config in load_admin_accounts().items():
+            upsert_admin_user(
+                conn,
+                username=username,
+                password=config.get('password_hash') or config.get('password', ''),
+                role=config.get('role', 'admin'),
+                email=config.get('email'),
+            )
+
+
+def get_admin_account(username):
+    with get_main_db_connection() as conn:
+        row = conn.execute('''
+            SELECT username, password_hash, email, role, is_active
+            FROM admin_users
+            WHERE username = ? COLLATE NOCASE
+            LIMIT 1
+        ''', (username,)).fetchone()
+
+    if not row or not row['is_active']:
+        return None
+    return dict(row)
+
+
+def update_admin_last_login(username):
+    with get_main_db_connection() as conn:
+        conn.execute(
+            'UPDATE admin_users SET last_login = CURRENT_TIMESTAMP WHERE username = ? COLLATE NOCASE',
+            (username,),
+        )
+        conn.commit()
 
 
 def normalize_language(value):
@@ -170,6 +285,245 @@ def delete_uploaded_file(filename):
         app.logger.warning('Failed to delete uploaded file: %s', file_path)
 
 
+def resolve_uploaded_file_path(filename):
+    safe_name = Path(filename or '').name
+    if not safe_name or safe_name != (filename or ''):
+        return None
+    return Path(app.config['UPLOAD_FOLDER']) / safe_name
+
+
+def build_public_image_name(cert_id, side, source_path):
+    cert_part = secure_filename((cert_id or '').strip()) or 'card'
+    extension = source_path.suffix.lower() or '.jpg'
+    return f"{cert_part}_{side}{extension}"
+
+
+def cleanup_public_image_variants(cert_id, side, keep_name=None):
+    cert_part = secure_filename((cert_id or '').strip()) or 'card'
+    for candidate in SITE_STATIC_DIR.glob(f'{cert_part}_{side}.*'):
+        if keep_name and candidate.name == keep_name:
+            continue
+        if candidate.is_file():
+            candidate.unlink()
+
+
+def sync_uploaded_image_to_site(cert_id, side, filename):
+    source_path = resolve_uploaded_file_path(filename)
+    if source_path is None:
+        raise ValueError(f'Invalid {side} image filename')
+    if not source_path.is_file():
+        raise FileNotFoundError(f'{side.title()} image file not found: {source_path.name}')
+
+    public_name = build_public_image_name(cert_id, side, source_path)
+    destination_path = SITE_STATIC_DIR / public_name
+
+    cleanup_public_image_variants(cert_id, side, keep_name=public_name)
+    shutil.copy2(source_path, destination_path)
+
+    return f'/static/{public_name}'
+
+
+def _sample_border_pixels(rgb_array):
+    height, width = rgb_array.shape[:2]
+    margin = max(4, int(min(height, width) * 0.06))
+
+    top = rgb_array[:margin, :, :]
+    bottom = rgb_array[-margin:, :, :]
+    left = rgb_array[:, :margin, :]
+    right = rgb_array[:, -margin:, :]
+    return np.concatenate([
+        top.reshape(-1, 3),
+        bottom.reshape(-1, 3),
+        left.reshape(-1, 3),
+        right.reshape(-1, 3),
+    ], axis=0)
+
+
+def _extract_largest_component(mask):
+    height, width = mask.shape
+    visited = np.zeros((height, width), dtype=bool)
+    best_component = []
+
+    for y in range(height):
+        for x in range(width):
+            if not mask[y, x] or visited[y, x]:
+                continue
+
+            queue = deque([(y, x)])
+            visited[y, x] = True
+            component = []
+
+            while queue:
+                current_y, current_x = queue.popleft()
+                component.append((current_y, current_x))
+
+                for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    next_y = current_y + dy
+                    next_x = current_x + dx
+                    if (
+                        0 <= next_y < height
+                        and 0 <= next_x < width
+                        and mask[next_y, next_x]
+                        and not visited[next_y, next_x]
+                    ):
+                        visited[next_y, next_x] = True
+                        queue.append((next_y, next_x))
+
+            if len(component) > len(best_component):
+                best_component = component
+
+    if not best_component:
+        return mask
+
+    largest_mask = np.zeros_like(mask, dtype=bool)
+    ys, xs = zip(*best_component)
+    largest_mask[list(ys), list(xs)] = True
+    return largest_mask
+
+
+def _build_foreground_mask(image):
+    analysis_image = ImageOps.exif_transpose(image).convert('RGB')
+    analysis_image.thumbnail((IMAGE_ANALYSIS_MAX_DIMENSION, IMAGE_ANALYSIS_MAX_DIMENSION), Image.Resampling.LANCZOS)
+
+    rgb_array = np.asarray(analysis_image, dtype=np.int16)
+    if rgb_array.size == 0:
+        return analysis_image, None
+
+    grayscale_array = np.asarray(analysis_image.convert('L'), dtype=np.int16)
+    border_pixels = _sample_border_pixels(rgb_array)
+    border_luma = _sample_border_pixels(np.repeat(grayscale_array[:, :, None], 3, axis=2))[:, 0]
+
+    background_rgb = np.median(border_pixels, axis=0)
+    background_luma = np.median(border_luma)
+
+    color_distance = np.sqrt(np.sum((rgb_array - background_rgb) ** 2, axis=2))
+    luma_distance = np.abs(grayscale_array - background_luma)
+    saturation = rgb_array.max(axis=2) - rgb_array.min(axis=2)
+
+    mask = (color_distance > 28) | ((luma_distance > 20) & (saturation > 10))
+    mask[:2, :] = False
+    mask[-2:, :] = False
+    mask[:, :2] = False
+    mask[:, -2:] = False
+
+    mask_image = Image.fromarray((mask.astype(np.uint8) * 255), mode='L')
+    mask_image = mask_image.filter(ImageFilter.MaxFilter(7)).filter(ImageFilter.MinFilter(7)).filter(ImageFilter.SMOOTH)
+    mask = np.asarray(mask_image) > 127
+
+    if mask.mean() < IMAGE_MIN_FOREGROUND_RATIO:
+        return analysis_image, None
+
+    mask = _extract_largest_component(mask)
+    if mask.mean() < IMAGE_MIN_FOREGROUND_RATIO:
+        return analysis_image, None
+
+    return analysis_image, mask
+
+
+def _estimate_rotation_from_mask(mask):
+    ys, xs = np.nonzero(mask)
+    if len(xs) < 100:
+        return 0.0
+
+    coordinates = np.column_stack((xs, ys)).astype(np.float64)
+    centered = coordinates - coordinates.mean(axis=0)
+    covariance = np.cov(centered, rowvar=False)
+    eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+    principal_axis = eigenvectors[:, np.argmax(eigenvalues)]
+
+    angle = math.degrees(math.atan2(principal_axis[1], principal_axis[0]))
+    rotation = 90.0 - angle
+
+    while rotation <= -90:
+        rotation += 180
+    while rotation > 90:
+        rotation -= 180
+
+    if abs(rotation) > IMAGE_ROTATION_LIMIT_DEGREES:
+        return 0.0
+    if abs(rotation) < 0.8:
+        return 0.0
+    return rotation
+
+
+def _compute_crop_box(image, mask):
+    ys, xs = np.nonzero(mask)
+    if len(xs) < 100:
+        return None
+
+    analysis_width, analysis_height = image.size
+    left = xs.min()
+    right = xs.max()
+    top = ys.min()
+    bottom = ys.max()
+
+    pad_x = int((right - left + 1) * IMAGE_CROP_PADDING_RATIO)
+    pad_y = int((bottom - top + 1) * IMAGE_CROP_PADDING_RATIO)
+
+    left = max(0, left - pad_x)
+    top = max(0, top - pad_y)
+    right = min(analysis_width, right + pad_x + 1)
+    bottom = min(analysis_height, bottom + pad_y + 1)
+
+    if right - left < analysis_width * 0.2 or bottom - top < analysis_height * 0.2:
+        return None
+
+    return (left, top, right, bottom)
+
+
+def _resize_for_storage(image):
+    image.thumbnail((IMAGE_MAX_DIMENSION, IMAGE_MAX_DIMENSION), Image.Resampling.LANCZOS)
+    return image
+
+
+def auto_crop_and_straighten_image(file_path):
+    source_path = Path(file_path)
+    image = Image.open(source_path)
+    image = ImageOps.exif_transpose(image).convert('RGB')
+
+    analysis_image, initial_mask = _build_foreground_mask(image)
+    if initial_mask is None:
+        processed = _resize_for_storage(image)
+        processed.save(source_path, quality=92, optimize=True)
+        return {'processed': False, 'rotated': False, 'cropped': False}
+
+    rotation = _estimate_rotation_from_mask(initial_mask)
+    background_fill = tuple(int(value) for value in np.median(_sample_border_pixels(np.asarray(analysis_image, dtype=np.int16)), axis=0))
+
+    rotated = image
+    rotated_flag = False
+    if rotation:
+        rotated = image.rotate(rotation, resample=Image.Resampling.BICUBIC, expand=True, fillcolor=background_fill)
+        rotated_flag = True
+
+    rotated_analysis, rotated_mask = _build_foreground_mask(rotated)
+    crop_box = None
+    if rotated_mask is not None:
+        small_crop_box = _compute_crop_box(rotated_analysis, rotated_mask)
+        if small_crop_box:
+            scale_x = rotated.width / rotated_analysis.width
+            scale_y = rotated.height / rotated_analysis.height
+            crop_box = (
+                int(small_crop_box[0] * scale_x),
+                int(small_crop_box[1] * scale_y),
+                int(small_crop_box[2] * scale_x),
+                int(small_crop_box[3] * scale_y),
+            )
+
+    cropped_flag = False
+    processed = rotated
+    if crop_box:
+        cropped = rotated.crop(crop_box)
+        if cropped.width > rotated.width * 0.25 and cropped.height > rotated.height * 0.25:
+            processed = cropped
+            cropped_flag = True
+
+    processed = _resize_for_storage(processed)
+    processed.save(source_path, quality=92, optimize=True)
+
+    return {'processed': rotated_flag or cropped_flag, 'rotated': rotated_flag, 'cropped': cropped_flag}
+
+
 def normalize_language_values(conn, table_name):
     cursor = conn.cursor()
     for legacy_value, normalized_value in (
@@ -192,6 +546,8 @@ def normalize_language_values(conn, table_name):
 def initialize_main_database():
     conn = get_main_db_connection()
     cursor = conn.cursor()
+
+    initialize_admin_users(conn)
 
     has_cards_table = cursor.execute("""
         SELECT 1 FROM sqlite_master
@@ -248,10 +604,36 @@ def calculate_population(card_name, set_name, card_number, language, final_grade
     return temp_count + main_count + 1, normalized_language, temp_count, main_count
 
 
-def build_main_card_payload(entry):
+def get_existing_public_images(existing_row):
+    if not existing_row:
+        return '', ''
+    front_image = existing_row['front_image'] or existing_row['image'] or ''
+    back_image = existing_row['back_image'] or front_image or ''
+    return front_image, back_image
+
+
+def prepare_main_card_images(entry, existing_row=None, require_complete=False):
     cert_id = entry['cert_id']
-    front_image = entry['front_image'] or ''
-    back_image = entry['back_image'] or ''
+    temp_front = entry['front_image'] or ''
+    temp_back = entry['back_image'] or ''
+    existing_front, existing_back = get_existing_public_images(existing_row)
+
+    if require_complete and (not temp_front or not temp_back):
+        raise ValueError('Both front and back images are required before upload')
+
+    front_image = existing_front
+    back_image = existing_back
+
+    if temp_front:
+        front_image = sync_uploaded_image_to_site(cert_id, 'front', temp_front)
+    if temp_back:
+        back_image = sync_uploaded_image_to_site(cert_id, 'back', temp_back)
+
+    return front_image, back_image
+
+
+def build_main_card_payload(entry, front_image='', back_image=''):
+    cert_id = entry['cert_id']
     created_at = entry['created_at'] or entry['entry_date'] or datetime.now().isoformat()
     updated_at = entry['updated_at'] or created_at
 
@@ -293,6 +675,46 @@ def build_main_card_payload(entry):
         'ai_back_analysis': '',
         'has_ai_analysis': 0,
         'final_grade_text': entry['final_grade_text'] or '',
+    }
+
+
+def upsert_main_card(entry, conn_main, require_complete=False):
+    existing = conn_main.execute(
+        '''
+            SELECT cert_id, image, front_image, back_image
+            FROM cards
+            WHERE cert_id = ?
+        ''',
+        (entry['cert_id'],),
+    ).fetchone()
+
+    front_image, back_image = prepare_main_card_images(
+        entry,
+        existing_row=existing,
+        require_complete=require_complete,
+    )
+    payload = build_main_card_payload(entry, front_image=front_image, back_image=back_image)
+
+    columns = list(payload.keys())
+    placeholders = ', '.join(['?' for _ in columns])
+    update_clause = ', '.join([
+        f"{column} = excluded.{column}" for column in columns if column != 'cert_id'
+    ])
+    values = [payload[column] for column in columns]
+
+    conn_main.execute(
+        f'''
+            INSERT INTO cards ({', '.join(columns)})
+            VALUES ({placeholders})
+            ON CONFLICT(cert_id) DO UPDATE SET {update_clause}
+        ''',
+        values,
+    )
+
+    return {
+        'action': 'updated' if existing else 'inserted',
+        'front_image': front_image,
+        'back_image': back_image,
     }
 
 
@@ -454,7 +876,63 @@ def save_uploaded_file(file, filename_prefix):
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
     file.save(file_path)
 
+    if AUTO_PROCESS_UPLOADS:
+        try:
+            result = auto_crop_and_straighten_image(file_path)
+            app.logger.info('Processed upload %s: %s', unique_filename, result)
+        except Exception as exc:
+            app.logger.warning('Auto-processing failed for %s: %s', unique_filename, exc)
+
     return unique_filename
+
+
+def get_entry_image_flags(entry):
+    front_name = (entry['front_image'] or '').strip()
+    back_name = (entry['back_image'] or '').strip()
+    front_path = resolve_uploaded_file_path(front_name) if front_name else None
+    back_path = resolve_uploaded_file_path(back_name) if back_name else None
+
+    has_front = bool(front_path and front_path.is_file())
+    has_back = bool(back_path and back_path.is_file())
+
+    return {
+        'has_front_image_file': has_front,
+        'has_back_image_file': has_back,
+        'ready_for_upload': has_front and has_back,
+    }
+
+
+def get_upload_stats(conn):
+    approved_entries = conn.execute(
+        '''
+            SELECT id, front_image, back_image, upload_status
+            FROM temp_cards
+            WHERE status = 'approved'
+        '''
+    ).fetchall()
+
+    stats = {}
+    image_stats = {
+        'total_approved': len(approved_entries),
+        'has_front_image': 0,
+        'has_back_image': 0,
+        'ready_for_upload': 0,
+    }
+
+    for entry in approved_entries:
+        upload_status = entry['upload_status'] or 'not_started'
+        stats[upload_status] = stats.get(upload_status, 0) + 1
+
+        flags = get_entry_image_flags(entry)
+        if flags['has_front_image_file']:
+            image_stats['has_front_image'] += 1
+        if flags['has_back_image_file']:
+            image_stats['has_back_image'] += 1
+        if flags['ready_for_upload']:
+            image_stats['ready_for_upload'] += 1
+
+    stats['image_stats'] = image_stats
+    return stats
 
 # Generate unique 10-digit Cert ID
 def generate_cert_id():
@@ -534,12 +1012,13 @@ def admin_login():
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '').strip()
 
-        valid_accounts = load_admin_accounts()
-        if username in valid_accounts and verify_admin_password(valid_accounts[username], password):
+        account = get_admin_account(username)
+        if account and verify_admin_password(account, password):
             session['admin_logged_in'] = True
-            session['username'] = username
-            session['role'] = valid_accounts[username]['role']
-            flash(f'Login successful! Welcome {username}', 'success')
+            session['username'] = account['username']
+            session['role'] = account.get('role', 'admin')
+            update_admin_last_login(account['username'])
+            flash(f"Login successful! Welcome {account['username']}", 'success')
             return redirect(url_for('dashboard'))
         else:
             flash('Invalid username or password', 'error')
@@ -1059,26 +1538,8 @@ def export_approved():
         inserted = 0
         updated = 0
         for entry in approved_entries:
-            payload = build_main_card_payload(entry)
-            exists = conn_main.execute(
-                "SELECT 1 FROM cards WHERE cert_id = ?",
-                (entry['cert_id'],),
-            ).fetchone()
-
-            columns = list(payload.keys())
-            placeholders = ', '.join(['?' for _ in columns])
-            update_clause = ', '.join([
-                f"{column} = excluded.{column}" for column in columns if column != 'cert_id'
-            ])
-            values = [payload[column] for column in columns]
-
-            conn_main.execute(f'''
-                INSERT INTO cards ({', '.join(columns)})
-                VALUES ({placeholders})
-                ON CONFLICT(cert_id) DO UPDATE SET {update_clause}
-            ''', values)
-
-            if exists:
+            result = upsert_main_card(entry, conn_main, require_complete=False)
+            if result['action'] == 'updated':
                 updated += 1
             else:
                 inserted += 1
@@ -1219,7 +1680,12 @@ def upload_manager():
         LIMIT ? OFFSET ?
     ''', (per_page, offset))
 
-    entries = cursor.fetchall()
+    raw_entries = cursor.fetchall()
+    entries = []
+    for entry in raw_entries:
+        entry_dict = dict(entry)
+        entry_dict.update(get_entry_image_flags(entry))
+        entries.append(entry_dict)
 
     # 获取总数
     cursor.execute('''
@@ -1228,37 +1694,7 @@ def upload_manager():
     ''')
     total = cursor.fetchone()[0]
 
-    # 获取统计信息
-    cursor.execute('''
-        SELECT upload_status, COUNT(*)
-        FROM temp_cards
-        WHERE status = 'approved'
-        GROUP BY upload_status
-    ''')
-
-    stats = {}
-    for status, count in cursor.fetchall():
-        stats[status or 'not_started'] = count
-
-    # 图片完整性统计
-    cursor.execute('''
-        SELECT
-            COUNT(*) as total_approved,
-            SUM(CASE WHEN front_image IS NOT NULL AND front_image != '' THEN 1 ELSE 0 END) as has_front,
-            SUM(CASE WHEN back_image IS NOT NULL AND back_image != '' THEN 1 ELSE 0 END) as has_back,
-            SUM(CASE WHEN front_image IS NOT NULL AND front_image != ''
-                     AND back_image IS NOT NULL AND back_image != '' THEN 1 ELSE 0 END) as has_both
-        FROM temp_cards
-        WHERE status = 'approved'
-    ''')
-
-    row = cursor.fetchone()
-    stats['image_stats'] = {
-        'total_approved': row[0],
-        'has_front_image': row[1],
-        'has_back_image': row[2],
-        'ready_for_upload': row[3]
-    }
+    stats = get_upload_stats(conn)
 
     conn.close()
 
@@ -1280,41 +1716,7 @@ def upload_manager():
 def api_upload_stats():
     """API: 获取上传统计信息"""
     conn = get_temp_db_connection()
-    cursor = conn.cursor()
-
-    stats = {}
-
-    # 各状态数量
-    cursor.execute('''
-        SELECT upload_status, COUNT(*)
-        FROM temp_cards
-        WHERE status = 'approved'
-        GROUP BY upload_status
-    ''')
-
-    for status, count in cursor.fetchall():
-        stats[status or 'not_started'] = count
-
-    # 图片完整性统计
-    cursor.execute('''
-        SELECT
-            COUNT(*) as total_approved,
-            SUM(CASE WHEN front_image IS NOT NULL AND front_image != '' THEN 1 ELSE 0 END) as has_front,
-            SUM(CASE WHEN back_image IS NOT NULL AND back_image != '' THEN 1 ELSE 0 END) as has_back,
-            SUM(CASE WHEN front_image IS NOT NULL AND front_image != ''
-                     AND back_image IS NOT NULL AND back_image != '' THEN 1 ELSE 0 END) as has_both
-        FROM temp_cards
-        WHERE status = 'approved'
-    ''')
-
-    row = cursor.fetchone()
-    stats['image_stats'] = {
-        'total_approved': row[0],
-        'has_front_image': row[1],
-        'has_back_image': row[2],
-        'ready_for_upload': row[3]
-    }
-
+    stats = get_upload_stats(conn)
     conn.close()
 
     return jsonify(stats)
@@ -1323,52 +1725,99 @@ def api_upload_stats():
 @app.route('/api/upload/<int:entry_id>', methods=['POST'])
 @login_required
 def api_upload_entry(entry_id):
-    """API: 上传单条数据到服务器"""
-    # 这里需要实现实际的上传逻辑
-    # 暂时返回模拟响应
+    """API: 上传单条数据到主数据库并同步图片到主站静态目录"""
+    conn_temp = get_temp_db_connection()
+    conn_main = get_main_db_connection()
+    started_at = datetime.now().isoformat()
 
-    conn = get_temp_db_connection()
-    cursor = conn.cursor()
+    try:
+        conn_temp.execute(
+            '''
+                UPDATE temp_cards
+                SET upload_status = 'uploading',
+                    upload_started = ?,
+                    upload_error = NULL
+                WHERE id = ?
+            ''',
+            (started_at, entry_id),
+        )
+        conn_temp.commit()
 
-    # 获取条目信息
-    cursor.execute('SELECT cert_id FROM temp_cards WHERE id = ?', (entry_id,))
-    entry = cursor.fetchone()
+        entry = conn_temp.execute(
+            '''
+                SELECT *
+                FROM temp_cards
+                WHERE id = ?
+                  AND status = 'approved'
+            ''',
+            (entry_id,),
+        ).fetchone()
 
-    if not entry:
-        conn.close()
-        return jsonify({'success': False, 'error': 'Entry not found'})
+        if not entry:
+            raise ValueError('Approved entry not found')
 
-    cert_id = entry[0]
+        export_result = upsert_main_card(entry, conn_main, require_complete=True)
+        conn_main.commit()
 
-    # 模拟上传过程
-    import time
-    time.sleep(1)  # 模拟上传延迟
+        completed_at = datetime.now().isoformat()
+        response_payload = {
+            'entry_id': entry_id,
+            'cert_id': entry['cert_id'],
+            'action': export_result['action'],
+            'front_image': export_result['front_image'],
+            'back_image': export_result['back_image'],
+        }
+        conn_temp.execute(
+            '''
+                UPDATE temp_cards
+                SET upload_status = 'uploaded',
+                    upload_started = ?,
+                    upload_completed = ?,
+                    upload_error = NULL,
+                    server_response = ?
+                WHERE id = ?
+            ''',
+            (
+                started_at,
+                completed_at,
+                json.dumps(response_payload),
+                entry_id,
+            ),
+        )
+        conn_temp.commit()
 
-    # 更新状态
-    cursor.execute('''
-        UPDATE temp_cards
-        SET upload_status = 'uploaded',
-            upload_started = ?,
-            upload_completed = ?,
-            server_response = ?
-        WHERE id = ?
-    ''', (
-        datetime.now().isoformat(),
-        datetime.now().isoformat(),
-        json.dumps({'simulated': True, 'cert_id': cert_id}),
-        entry_id
-    ))
+        return jsonify({
+            'success': True,
+            'entry_id': entry_id,
+            'cert_id': entry['cert_id'],
+            'upload_status': 'uploaded',
+            'action': export_result['action'],
+            'front_image': export_result['front_image'],
+            'back_image': export_result['back_image'],
+            'message': f"Upload completed ({export_result['action']})",
+        })
 
-    conn.commit()
-    conn.close()
+    except Exception as exc:
+        conn_main.rollback()
+        completed_at = datetime.now().isoformat()
+        error_message = str(exc)
+        conn_temp.execute(
+            '''
+                UPDATE temp_cards
+                SET upload_status = 'failed',
+                    upload_started = COALESCE(upload_started, ?),
+                    upload_completed = ?,
+                    upload_error = ?
+                WHERE id = ?
+            ''',
+            (started_at, completed_at, error_message, entry_id),
+        )
+        conn_temp.commit()
+        return jsonify({'success': False, 'error': error_message, 'entry_id': entry_id}), 400
 
-    return jsonify({
-        'success': True,
-        'entry_id': entry_id,
-        'cert_id': cert_id,
-        'upload_status': 'uploaded',
-        'message': 'Upload simulated successfully (server not configured)'
-    })
+    finally:
+        conn_temp.close()
+        conn_main.close()
 
 @app.route('/admin/api/batch-upload', methods=['POST'])
 @app.route('/api/batch-upload', methods=['POST'])

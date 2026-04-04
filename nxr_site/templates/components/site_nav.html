@@ -1,0 +1,12 @@
+<nav class="nav">
+  <a href="/" class="nav-logo" aria-label="NXR Home"><img src="/static/images/nxr-logo-circle.png" alt="NXR logo"></a>
+  <ul class="nav-links">
+    <li><a href="/" class="{% if nav_active == 'home' %}active{% endif %}">Home</a></li>
+    <li><a href="/services" class="{% if nav_active == 'services' %}active{% endif %}">Services</a></li>
+    <li><a href="/submit" class="{% if nav_active == 'submit' %}active{% endif %}">Submit</a></li>
+    <li><a href="/verify" class="{% if nav_active == 'verify' %}active{% endif %}">Verify</a></li>
+    <li><a href="/about" class="{% if nav_active == 'about' %}active{% endif %}">About</a></li>
+    <li><a href="/faq" class="{% if nav_active == 'faq' %}active{% endif %}">FAQ</a></li>
+  </ul>
+  <a href="{{ nav_cta_href|default('/submit') }}" class="nav-cta">{{ nav_cta_label|default('Submit Now') }}</a>
+</nav>

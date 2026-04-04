@@ -476,12 +476,12 @@
                                     <td>
                                         <div class="image-status">
                                             <div>
-                                                <i class="fas fa-image me-1 {% if entry.front_image %}has-image{% else %}no-image{% endif %}"></i>
-                                                Front: {% if entry.front_image %}<span class="has-image">Uploaded</span>{% else %}<span class="no-image">Missing</span>{% endif %}
+                                                <i class="fas fa-image me-1 {% if entry.has_front_image_file %}has-image{% else %}no-image{% endif %}"></i>
+                                                Front: {% if entry.has_front_image_file %}<span class="has-image">Ready</span>{% elif entry.front_image %}<span class="no-image">File Missing</span>{% else %}<span class="no-image">Missing</span>{% endif %}
                                             </div>
                                             <div>
-                                                <i class="fas fa-image me-1 {% if entry.back_image %}has-image{% else %}no-image{% endif %}"></i>
-                                                Back: {% if entry.back_image %}<span class="has-image">Uploaded</span>{% else %}<span class="no-image">Missing</span>{% endif %}
+                                                <i class="fas fa-image me-1 {% if entry.has_back_image_file %}has-image{% else %}no-image{% endif %}"></i>
+                                                Back: {% if entry.has_back_image_file %}<span class="has-image">Ready</span>{% elif entry.back_image %}<span class="no-image">File Missing</span>{% else %}<span class="no-image">Missing</span>{% endif %}
                                             </div>
                                         </div>
                                     </td>
@@ -506,7 +506,7 @@
                                         {% endif %}
                                     </td>
                                     <td class="upload-actions">
-                                        {% if entry.front_image and entry.back_image %}
+                                        {% if entry.ready_for_upload %}
                                             {% if entry.upload_status == 'uploaded' %}
                                                 <span class="text-success">
                                                     <i class="fas fa-check-circle me-1"></i>Uploaded
