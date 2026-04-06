@@ -1,0 +1,157 @@
+{% extends "base_site.html" %}
+{% set nav_active = "about" %}
+
+{% block title %}About NXR Grading | Built by Collectors, for Collectors{% endblock %}
+
+{% block page_css %}
+<style>
+.mission-grid{display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:center}
+.mission-text h2{font-size:clamp(26px,3.5vw,40px);font-weight:900;letter-spacing:-1px;margin-bottom:20px;line-height:1.15}
+.mission-text h2 em{font-style:normal;color:var(--red)}
+.mission-text p{font-size:15px;color:var(--text2);line-height:1.85;margin-bottom:16px}
+.mission-text p strong{color:var(--text)}
+.mission-visual{background:var(--bg3);border:1px solid var(--border2);border-radius:20px;padding:36px;display:flex;flex-direction:column;gap:20px}
+.principle{display:flex;gap:16px;align-items:flex-start}
+.principle-num{width:36px;height:36px;border-radius:50%;background:rgba(233,69,96,.12);border:1px solid rgba(233,69,96,.25);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;color:var(--red);flex-shrink:0}
+.principle-body h4{font-size:14px;font-weight:700;margin-bottom:4px}
+.principle-body p{font-size:13px;color:var(--text2);line-height:1.6}
+.values-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:2px;background:var(--border);margin-top:48px}
+.value-card{background:var(--bg2);padding:36px 28px}
+.value-icon{font-size:28px;margin-bottom:16px}
+.value-card h3{font-size:17px;font-weight:700;margin-bottom:10px}
+.value-card p{font-size:14px;color:var(--text2);line-height:1.7}
+.team-intro{max-width:640px;margin:0 auto 56px;text-align:center}
+.team-intro h2{font-size:clamp(26px,3.5vw,40px);font-weight:900;letter-spacing:-1px;margin-bottom:14px}
+.team-intro p{font-size:15px;color:var(--text2);line-height:1.7}
+.team-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:24px}
+.team-card{background:var(--bg3);border:1px solid var(--border2);border-radius:16px;padding:28px;text-align:center}
+.team-avatar{width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,var(--bg4),var(--border2));margin:0 auto 16px;display:flex;align-items:center;justify-content:center;font-size:28px;border:1px solid var(--border2)}
+.team-card h4{font-size:16px;font-weight:700;margin-bottom:4px}
+.team-card .role{font-size:12px;color:var(--red);font-weight:600;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px}
+.team-card p{font-size:13px;color:var(--text2);line-height:1.6}
+.btn-secondary{margin-left:12px}
+@media(max-width:800px){.mission-grid{grid-template-columns:1fr;gap:40px}}
+@media(max-width:700px){.values-grid{grid-template-columns:1fr}}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-hero">
+  <div class="page-hero-inner">
+    <div class="section-tag">About NXR</div>
+    <h1>Built by collectors.<br>For collectors.</h1>
+    <p>We started NXR because we were tired of the same thing you were tired of — grades you couldn't trust, institutions that didn't care, and a system that rewarded loyalty over accuracy.</p>
+  </div>
+</div>
+
+<section class="section">
+  <div class="section-inner">
+    <div class="mission-grid">
+      <div class="mission-text">
+        <div class="section-tag">Our Mission</div>
+        <h2>Transparency isn't a feature.<br><em>It's the foundation.</em></h2>
+        <p>NXR was founded on a simple belief: <strong>collectors deserve to know exactly how their cards are graded.</strong> Not just the final number — the full breakdown, the criteria, the reasoning.</p>
+        <p>We combine AI-powered precision scanning with certified human expertise to deliver grades that are consistent, documented, and defensible. Every time. For every card. Regardless of who submitted it.</p>
+        <p>We don't have a VIP tier. We don't have a fast lane for high-profile submissions. <strong>Your card gets the same rigorous process as everyone else's.</strong> That's not a policy — it's a principle.</p>
+      </div>
+      <div class="mission-visual">
+        <div class="principle">
+          <div class="principle-num">1</div>
+          <div class="principle-body">
+            <h4>Transparency over tradition</h4>
+            <p>Every sub-score published. Every criterion documented. No black box, no mystery grades.</p>
+          </div>
+        </div>
+        <div class="principle">
+          <div class="principle-num">2</div>
+          <div class="principle-body">
+            <h4>Consistency over convenience</h4>
+            <p>The same standards applied to every card, every time. No exceptions for high-value submissions.</p>
+          </div>
+        </div>
+        <div class="principle">
+          <div class="principle-num">3</div>
+          <div class="principle-body">
+            <h4>Technology in service of accuracy</h4>
+            <p>AI doesn't replace human judgment — it removes human bias. Both work together.</p>
+          </div>
+        </div>
+        <div class="principle">
+          <div class="principle-num">4</div>
+          <div class="principle-body">
+            <h4>Collectors first, always</h4>
+            <p>We exist to serve the people who love these cards — not the institutions that profit from them.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section bg2">
+  <div class="section-inner">
+    <div class="section-tag" style="display:block;text-align:center;margin-bottom:16px">Our Values</div>
+    <h2 style="font-size:clamp(26px,3.5vw,40px);font-weight:900;letter-spacing:-1px;text-align:center;margin-bottom:8px">What we stand for</h2>
+    <p style="text-align:center;color:var(--text2);font-size:15px;margin-bottom:0">The principles that guide every decision we make.</p>
+    <div class="values-grid">
+      <div class="value-card">
+        <div class="value-icon">🔍</div>
+        <h3>Radical Transparency</h3>
+        <p>Every grade comes with a full breakdown. Centering, edges, corners, surface — all published, all verifiable. You'll never wonder why your card got its grade.</p>
+      </div>
+      <div class="value-card">
+        <div class="value-icon">⚖️</div>
+        <h3>Absolute Consistency</h3>
+        <p>The same criteria. The same process. The same standards — for a $5 common and a $50,000 vintage. No favoritism. No exceptions.</p>
+      </div>
+      <div class="value-card">
+        <div class="value-icon">🤝</div>
+        <h3>Collector-First</h3>
+        <p>We answer to collectors, not shareholders. Our incentives are aligned with yours: accurate grades build trust, and trust builds everything else.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="section-inner">
+    <div class="team-intro">
+      <div class="section-tag">The Team</div>
+      <h2>Experts who've been on your side of the slab</h2>
+      <p>Our team combines decades of collecting experience with expertise in AI, materials science, and authentication. We've submitted cards. We know what it feels like to get a grade that doesn't make sense.</p>
+    </div>
+    <div class="team-grid">
+      <div class="team-card">
+        <div class="team-avatar">🧠</div>
+        <h4>AI Grading System</h4>
+        <div class="role">Core Technology</div>
+        <p>Proprietary computer vision trained on millions of card images. Measures to sub-millimeter precision.</p>
+      </div>
+      <div class="team-card">
+        <div class="team-avatar">🔬</div>
+        <h4>Certified Graders</h4>
+        <div class="role">Human Verification</div>
+        <p>Every AI grade is independently reviewed by a certified expert. Both must agree before a grade is issued.</p>
+      </div>
+      <div class="team-card">
+        <div class="team-avatar">🛡️</div>
+        <h4>Authentication Team</h4>
+        <div class="role">Fraud Prevention</div>
+        <p>Specialists in detecting alterations, trimming, and counterfeits across all major card categories.</p>
+      </div>
+      <div class="team-card">
+        <div class="team-avatar">📦</div>
+        <h4>Encapsulation Lab</h4>
+        <div class="role">Protection & Finishing</div>
+        <p>UV-resistant, tamper-evident slabs with NFC + QR dual verification, assembled in a controlled environment.</p>
+      </div>
+    </div>
+    <div class="cta-strip">
+      <h2>Ready to experience grading done right?</h2>
+      <p>Submit your cards and see exactly what they're worth — with full transparency, every step of the way.</p>
+      <a href="/submit" class="btn-primary">Submit Your Cards</a>
+      <a href="/services" class="btn-secondary">View Services</a>
+    </div>
+  </div>
+</section>
+{% endblock %}

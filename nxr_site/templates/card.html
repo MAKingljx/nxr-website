@@ -1,0 +1,439 @@
+{% extends "base_site.html" %}
+{% set nav_active = "verify" %}
+
+{% block title %}{% if card %}NXR - {{ card.card_name }} - {{ card.cert_id }}{% else %}Card Not Found | NXR Grading{% endif %}{% endblock %}
+
+{% block extra_head %}
+{% if card %}
+<link rel="preload" href="{{ card.front_image }}" as="image">
+<link rel="preload" href="{{ card.back_image }}" as="image">
+{% endif %}
+{% endblock %}
+
+{% block page_css %}
+<style>
+.card-page{padding:120px 40px 60px}
+.card-layout{max-width:1100px;margin:0 auto;display:grid;grid-template-columns:400px 1fr;gap:60px;align-items:start}
+.img-wrap{background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:20px;margin-bottom:16px}
+.img-wrap img{
+  width:100%;
+  max-width:340px;
+  border-radius:4px;
+  display:block;
+  margin:0 auto;
+  object-fit:contain;
+  min-height:150px;
+  background:linear-gradient(45deg,var(--bg3),var(--bg4));
+}
+.img-label{font-size:12px;color:var(--text3);text-align:center;margin-top:10px}
+.card-title{font-size:clamp(28px,4vw,42px);font-weight:900;letter-spacing:-1px;margin-bottom:8px}
+.card-cert{font-size:14px;color:var(--text3);margin-bottom:24px;font-family:monospace}
+.grade-badge{display:inline-block;background:var(--red);color:#fff;padding:10px 24px;border-radius:4px;font-size:20px;font-weight:800;margin-bottom:28px;position:relative;overflow:hidden;transition:all .3s ease}
+.grade-badge.perfect-10{
+  background:linear-gradient(135deg,#f5c842 0%,#ffd700 25%,#f5c842 50%,#ffd700 75%,#f5c842 100%);
+  background-size:400% 400%;
+  animation:gradientShift 3s ease infinite,glow 2s ease-in-out infinite alternate;
+  color:#000;
+  font-weight:900;
+  letter-spacing:1px;
+  text-shadow:0 0 10px rgba(255,255,255,.5);
+  border:2px solid #f5c842;
+  box-shadow:0 0 20px rgba(245,200,66,.5),0 0 40px rgba(245,200,66,.3),inset 0 0 20px rgba(255,255,255,.2);
+}
+.grade-badge.perfect-10::before{content:'';position:absolute;top:-50%;left:-50%;width:200%;height:200%;background:radial-gradient(circle,rgba(255,255,255,.1) 0%,transparent 70%);animation:rotate 10s linear infinite}
+.grade-badge.perfect-10::after{content:'✨';position:absolute;top:-10px;right:-10px;font-size:16px;animation:sparkle 1.5s ease-in-out infinite}
+@keyframes gradientShift{0%{background-position:0 50%}50%{background-position:100% 50%}100%{background-position:0 50%}}
+@keyframes glow{0%{box-shadow:0 0 20px rgba(245,200,66,.5),0 0 40px rgba(245,200,66,.3),inset 0 0 20px rgba(255,255,255,.2)}100%{box-shadow:0 0 30px rgba(245,200,66,.8),0 0 60px rgba(245,200,66,.5),inset 0 0 30px rgba(255,255,255,.3)}}
+@keyframes rotate{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}
+@keyframes sparkle{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1.2)}}
+.detail-grid{background:var(--bg2);border:1px solid var(--border2);border-radius:8px;overflow:hidden}
+.detail-row{display:flex;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border)}
+.detail-row:last-child{border-bottom:none}
+.detail-key{font-size:13px;color:var(--text3)}
+.detail-val{font-size:14px;font-weight:600}
+.subgrades-section{margin-top:32px}
+.subgrades-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+.subgrades-title{font-size:16px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text)}
+.subgrades-subtitle{font-size:13px;color:var(--text3)}
+.subgrades-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+.subgrade-card{background:var(--bg2);border:1px solid var(--border2);border-radius:12px;padding:24px;position:relative;transition:all .3s ease;overflow:hidden}
+.subgrade-card:hover{transform:translateY(-4px);border-color:var(--red);box-shadow:0 8px 24px rgba(233,69,96,.1)}
+.subgrade-card::before{content:'';position:absolute;top:0;left:0;right:0;height:4px;background:linear-gradient(90deg,var(--red),var(--red2))}
+.subgrade-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.subgrade-name{font-size:14px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.5px}
+.subgrade-score{font-size:32px;font-weight:900;color:var(--red);line-height:1}
+.subgrade-desc{font-size:12px;color:var(--text3);line-height:1.5;margin-top:8px}
+.subgrade-perfect{color:#22c55e !important}
+.subgrade-good{color:#f5c842 !important}
+.subgrade-fair{color:#ff7b00 !important}
+.subgrade-poor{color:#e94560 !important}
+.perfect-subgrade{position:relative;overflow:hidden}
+.perfect-subgrade::before{content:'';position:absolute;top:0;left:0;right:0;height:4px;background:linear-gradient(90deg,#f5c842,#ffd700,#f5c842);background-size:200% 100%;animation:subgradeGlow 2s linear infinite}
+@keyframes subgradeGlow{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.ai-character-section{margin-top:24px;text-align:center}
+.ai-character-btn{display:block;width:100%;background:linear-gradient(135deg,#3b82f6,#8b5cf6);color:#fff;border:none;border-radius:12px;padding:20px;font-family:inherit;cursor:pointer;transition:all .3s ease;position:relative;overflow:hidden}
+.ai-character-btn:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(59,130,246,.3);background:linear-gradient(135deg,#2563eb,#7c3aed)}
+.ai-character-btn:active{transform:translateY(0)}
+.ai-character-btn::before{content:'';position:absolute;top:0;left:0;right:0;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.1),transparent);transform:translateX(-100%);transition:transform .6s}
+.ai-character-btn:hover::before{transform:translateX(100%)}
+.ai-icon{display:block;font-size:32px;margin-bottom:8px}
+.ai-text{display:block;font-size:16px;font-weight:700;margin-bottom:4px}
+.ai-subtext{display:block;font-size:12px;color:rgba(255,255,255,.8);font-weight:500}
+.ai-note{font-size:11px;color:var(--text3);margin-top:8px;line-height:1.4}
+.ai-modal{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(10,10,10,.95);z-index:10000;backdrop-filter:blur(8px);align-items:center;justify-content:center;padding:20px}
+.ai-modal.active{display:flex}
+.ai-modal-content{background:var(--bg2);border:1px solid var(--border2);border-radius:16px;max-width:600px;width:100%;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;animation:modalSlideIn .3s ease}
+@keyframes modalSlideIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+.ai-modal-header{padding:24px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.ai-modal-title{font-size:18px;font-weight:700;display:flex;align-items:center;gap:10px}
+.ai-modal-title .icon{font-size:20px}
+.ai-modal-close{background:none;border:none;color:var(--text3);font-size:24px;cursor:pointer;padding:4px;line-height:1;transition:color .2s}
+.ai-modal-close:hover{color:var(--text)}
+.ai-modal-body{padding:24px;flex:1;overflow-y:auto}
+.ai-loading{text-align:center;padding:40px}
+.ai-loading-spinner{width:40px;height:40px;border:3px solid var(--border2);border-top-color:var(--red);border-radius:50%;margin:0 auto 16px;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.ai-loading-text{color:var(--text2);font-size:14px}
+.ai-content{display:none}
+.ai-character-info{line-height:1.7;color:var(--text2)}
+.ai-character-info h3{color:var(--text);margin:20px 0 12px;font-size:16px;font-weight:700}
+.ai-character-info h3:first-child{margin-top:0}
+.ai-character-info p{margin-bottom:16px}
+.ai-character-info ul{margin:12px 0 16px 20px;color:var(--text2)}
+.ai-character-info li{margin-bottom:8px}
+.ai-modal-footer{padding:20px 24px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+.ai-language-select{display:flex;align-items:center;gap:8px}
+.ai-language-label{font-size:12px;color:var(--text3)}
+.ai-language-select select{background:var(--bg3);border:1px solid var(--border2);border-radius:6px;color:var(--text);padding:8px 12px;font-size:13px;font-family:inherit;outline:none;cursor:pointer;min-width:140px}
+.ai-powered-by{font-size:11px;color:var(--text3);display:flex;align-items:center;gap:6px}
+.ai-powered-by .icon{font-size:12px}
+.verification-info{margin-top:24px;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:20px}
+.verification-title{font-size:13px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text);margin-bottom:8px;display:flex;align-items:center;gap:8px}
+.verification-title::before{content:'🔒';font-size:14px}
+.verification-id{font-family:monospace;font-size:14px;color:var(--text3);background:var(--bg3);padding:8px 12px;border-radius:4px;margin-top:8px;display:inline-block}
+.error-container{text-align:center;padding:60px 20px}
+.error-icon{font-size:64px;margin-bottom:24px;color:var(--text3)}
+.error-title{font-size:clamp(28px,4vw,36px);font-weight:900;margin-bottom:16px}
+.error-message{font-size:16px;color:var(--text2);max-width:500px;margin:0 auto 32px;line-height:1.6}
+.error-actions{display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
+@media(max-width:900px){.card-layout{grid-template-columns:1fr}}
+@media(max-width:768px){
+  .ai-modal-content{max-height:90vh;margin:0}
+  .ai-modal-header{padding:20px}
+  .ai-modal-body{padding:20px}
+  .ai-modal-footer{flex-direction:column;align-items:stretch;gap:16px}
+  .ai-language-select{justify-content:space-between}
+  .img-wrap img{max-width:100%;height:auto;min-height:200px}
+  .img-wrap{padding:15px;margin-bottom:12px}
+}
+@media(max-width:600px){
+  .card-page{padding:100px 20px 40px}
+  .card-layout{gap:32px}
+  .subgrades-grid{grid-template-columns:1fr}
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="card-page">
+  {% if card %}
+  <div class="card-layout">
+    <div class="images-col">
+      <div class="img-wrap">
+        <img src="{{ card.front_image }}" alt="Front" data-fallback="placeholder" loading="eager">
+        <div class="img-label">Front</div>
+      </div>
+      <div class="img-wrap">
+        <img src="{{ card.back_image }}" alt="Back" data-fallback="placeholder" loading="lazy">
+        <div class="img-label">Back</div>
+      </div>
+
+      <div class="ai-character-section">
+        <button class="ai-character-btn" id="aiCharacterBtn">
+          <span class="ai-icon">🤖</span>
+          <span class="ai-text">AI Character Info</span>
+          <span class="ai-subtext">Learn about this character</span>
+        </button>
+        <p class="ai-note">Powered by DeepSeek AI • Available in 7 languages</p>
+      </div>
+
+      <div class="verification-info">
+        <div class="verification-title">Verification</div>
+        <p style="font-size:13px;color:var(--text2);margin-bottom:8px;line-height:1.5">
+          This card has been authenticated and graded by NXR Grading. The certificate ID below can be used to verify this grade on our website.
+        </p>
+        <div class="verification-id">{{ card.cert_id }}</div>
+      </div>
+    </div>
+
+    <div class="card-info" data-card-brand="{{ card.brand or '' }}">
+      <h1 class="card-title">{{ card.card_name }}</h1>
+      <div class="card-cert">Certificate ID: {{ card.cert_id }}</div>
+      <div class="grade-badge">Final Grade: {{ card.grade }}</div>
+
+      <div class="detail-grid">
+        {% if card.year %}<div class="detail-row"><span class="detail-key">Year</span><span class="detail-val">{{ card.year }}</span></div>{% endif %}
+        {% if card.brand %}<div class="detail-row"><span class="detail-key">Brand</span><span class="detail-val">{{ card.brand }}</span></div>{% endif %}
+        {% if card.set_name %}<div class="detail-row"><span class="detail-key">Set</span><span class="detail-val">{{ card.set_name }}</span></div>{% endif %}
+        {% if card.card_number %}<div class="detail-row"><span class="detail-key">Card number</span><span class="detail-val">{{ card.card_number }}</span></div>{% endif %}
+        {% if card.pop %}<div class="detail-row"><span class="detail-key">Population</span><span class="detail-val">{{ card["pop"] }}</span></div>{% endif %}
+      </div>
+
+      <div class="subgrades-section">
+        <div class="subgrades-header">
+          <div class="subgrades-title">Sub-Grades Breakdown</div>
+          <div class="subgrades-subtitle">Four critical components of the grade</div>
+        </div>
+
+        <div class="subgrades-grid">
+          {% if card.centering is not none %}
+          <div class="subgrade-card">
+            <div class="subgrade-header">
+              <div class="subgrade-name">Centering</div>
+              <div class="subgrade-score {% if card.centering >= 9.5 %}subgrade-perfect{% elif card.centering >= 8.0 %}subgrade-good{% elif card.centering >= 6.0 %}subgrade-fair{% else %}subgrade-poor{% endif %}">
+                {{ "%.1f"|format(card.centering) }}
+              </div>
+            </div>
+            <div class="subgrade-desc">Measures how evenly the image is positioned within the borders. Critical for vintage cards.</div>
+          </div>
+          {% endif %}
+
+          {% if card.edges is not none %}
+          <div class="subgrade-card">
+            <div class="subgrade-header">
+              <div class="subgrade-name">Edges</div>
+              <div class="subgrade-score {% if card.edges >= 9.5 %}subgrade-perfect{% elif card.edges >= 8.0 %}subgrade-good{% elif card.edges >= 6.0 %}subgrade-fair{% else %}subgrade-poor{% endif %}">
+                {{ "%.1f"|format(card.edges) }}
+              </div>
+            </div>
+            <div class="subgrade-desc">Evaluates the condition of all four edges. Look for chipping, whitening, or wear.</div>
+          </div>
+          {% endif %}
+
+          {% if card.corners is not none %}
+          <div class="subgrade-card">
+            <div class="subgrade-header">
+              <div class="subgrade-name">Corners</div>
+              <div class="subgrade-score {% if card.corners >= 9.5 %}subgrade-perfect{% elif card.corners >= 8.0 %}subgrade-good{% elif card.corners >= 6.0 %}subgrade-fair{% else %}subgrade-poor{% endif %}">
+                {{ "%.1f"|format(card.corners) }}
+              </div>
+            </div>
+            <div class="subgrade-desc">Assesses sharpness and wear on all four corners. The most common area for damage.</div>
+          </div>
+          {% endif %}
+
+          {% if card.surface is not none %}
+          <div class="subgrade-card">
+            <div class="subgrade-header">
+              <div class="subgrade-name">Surface</div>
+              <div class="subgrade-score {% if card.surface >= 9.5 %}subgrade-perfect{% elif card.surface >= 8.0 %}subgrade-good{% elif card.surface >= 6.0 %}subgrade-fair{% else %}subgrade-poor{% endif %}">
+                {{ "%.1f"|format(card.surface) }}
+              </div>
+            </div>
+            <div class="subgrade-desc">Checks for scratches, print defects, stains, or other surface imperfections.</div>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="ai-modal" id="aiModal">
+    <div class="ai-modal-content">
+      <div class="ai-modal-header">
+        <div class="ai-modal-title">
+          <span class="icon">🤖</span>
+          <span>AI Character Information</span>
+        </div>
+        <button class="ai-modal-close" id="aiModalClose">&times;</button>
+      </div>
+
+      <div class="ai-modal-body">
+        <div class="ai-loading" id="aiLoading">
+          <div class="ai-loading-spinner"></div>
+          <div class="ai-loading-text">AI is analyzing the character...</div>
+        </div>
+
+        <div class="ai-content" id="aiContent">
+          <div class="ai-character-info" id="aiCharacterInfo"></div>
+        </div>
+      </div>
+
+      <div class="ai-modal-footer">
+        <div class="ai-language-select">
+          <span class="ai-language-label">Language:</span>
+          <select id="aiLanguageSelect">
+            <option value="en">English</option>
+            <option value="zh">中文 (Chinese)</option>
+            <option value="es">Español (Spanish)</option>
+            <option value="fr">Français (French)</option>
+            <option value="de">Deutsch (German)</option>
+            <option value="ja">日本語 (Japanese)</option>
+            <option value="ko">한국어 (Korean)</option>
+          </select>
+        </div>
+        <div class="ai-powered-by">
+          <span class="icon">⚡</span>
+          <span>Powered by DeepSeek AI</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <div class="error-container">
+    <div class="error-icon">🔍</div>
+    <h1 class="error-title">Card Not Found</h1>
+    <p class="error-message">
+      The certificate ID you entered does not exist in our database.<br>
+      Please check the number and try again.
+    </p>
+    <div class="error-actions">
+      <a href="/verify" class="btn-primary">Try Another ID</a>
+      <a href="/" class="btn-secondary">Return to Home</a>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block page_js %}
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  const placeholder = "{{ url_for('static', filename='placeholder.png') }}";
+
+  document.querySelectorAll('img[data-fallback]').forEach((image) => {
+    image.addEventListener('error', () => {
+      if (image.dataset.fallback === 'hide') {
+        image.style.display = 'none';
+        return;
+      }
+      image.src = placeholder;
+    });
+  });
+
+  const gradeBadge = document.querySelector('.grade-badge');
+  if (gradeBadge) {
+    const gradeText = gradeBadge.textContent.toLowerCase();
+    const isPerfectGrade = gradeText.includes('10 perfect') || gradeText.includes('pristine 10');
+    if (isPerfectGrade) {
+      gradeBadge.classList.add('perfect-10');
+      document.querySelectorAll('.subgrade-perfect').forEach((score) => {
+        const card = score.closest('.subgrade-card');
+        if (card) {
+          card.classList.add('perfect-subgrade');
+        }
+      });
+      window.setTimeout(createConfetti, 500);
+    }
+  }
+
+  const aiCharacterButton = document.getElementById('aiCharacterBtn');
+  const aiModal = document.getElementById('aiModal');
+  if (!aiCharacterButton || !aiModal) {
+    return;
+  }
+
+  const aiModalClose = document.getElementById('aiModalClose');
+  const aiLoading = document.getElementById('aiLoading');
+  const aiContent = document.getElementById('aiContent');
+  const aiCharacterInfo = document.getElementById('aiCharacterInfo');
+  const aiLanguageSelect = document.getElementById('aiLanguageSelect');
+
+  async function loadAICharacterInfo() {
+    const cardTitle = document.querySelector('.card-title')?.textContent?.trim();
+    const cardBrand = document.querySelector('.card-info')?.dataset.cardBrand || 'Unknown';
+
+    aiLoading.style.display = 'block';
+    aiContent.style.display = 'none';
+    aiCharacterInfo.innerHTML = '';
+
+    try {
+      const response = await fetch('/api/ai_character_info', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          brand: cardBrand,
+          character: cardTitle,
+          language: aiLanguageSelect.value,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`API error: ${response.status}`);
+      }
+
+      const data = await response.json();
+      aiCharacterInfo.innerHTML = data.content || '<p>No information available for this character.</p>';
+    } catch (error) {
+      console.error('AI request failed:', error);
+      aiCharacterInfo.innerHTML = `
+        <h3>Error</h3>
+        <p>Unable to load character information at this time.</p>
+        <p>Please try again later or check your connection.</p>
+      `;
+    } finally {
+      aiLoading.style.display = 'none';
+      aiContent.style.display = 'block';
+    }
+  }
+
+  function openAIModal() {
+    aiModal.classList.add('active');
+    document.body.style.overflow = 'hidden';
+    loadAICharacterInfo();
+  }
+
+  function closeAIModal() {
+    aiModal.classList.remove('active');
+    document.body.style.overflow = '';
+  }
+
+  aiCharacterButton.addEventListener('click', openAIModal);
+  aiModalClose.addEventListener('click', closeAIModal);
+  aiModal.addEventListener('click', (event) => {
+    if (event.target === aiModal) {
+      closeAIModal();
+    }
+  });
+  aiLanguageSelect.addEventListener('change', () => {
+    if (aiModal.classList.contains('active')) {
+      loadAICharacterInfo();
+    }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && aiModal.classList.contains('active')) {
+      closeAIModal();
+    }
+  });
+
+  function createConfetti() {
+    const colors = ['#f5c842', '#ffd700', '#22c55e', '#3b82f6', '#8b5cf6'];
+    for (let index = 0; index < 50; index += 1) {
+      const confetti = document.createElement('div');
+      confetti.style.position = 'fixed';
+      confetti.style.width = '8px';
+      confetti.style.height = '8px';
+      confetti.style.background = colors[Math.floor(Math.random() * colors.length)];
+      confetti.style.borderRadius = '50%';
+      confetti.style.zIndex = '9999';
+      confetti.style.left = `${Math.random() * 100}vw`;
+      confetti.style.top = '-10px';
+      confetti.style.opacity = '0';
+      confetti.style.pointerEvents = 'none';
+      document.body.appendChild(confetti);
+
+      const animation = confetti.animate([
+        {transform: 'translateY(0) rotate(0deg)', opacity: 0},
+        {transform: `translateY(${Math.random() * 100 + 50}vh) rotate(${Math.random() * 360}deg)`, opacity: 1},
+        {transform: `translateY(${Math.random() * 100 + 150}vh) rotate(${Math.random() * 720}deg)`, opacity: 0},
+      ], {
+        duration: Math.random() * 2000 + 2000,
+        easing: 'cubic-bezier(0.215, 0.610, 0.355, 1)',
+      });
+
+      animation.onfinish = () => confetti.remove();
+    }
+  }
+});
+</script>
+{% endblock %}

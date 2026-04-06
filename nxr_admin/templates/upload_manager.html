@@ -1,0 +1,624 @@
+{% extends "base.html" %}
+
+{% block title %}Upload Manager - NXR Card Grading{% endblock %}
+
+{% block page_title %}
+    <i class="fas fa-cloud-upload-alt me-2"></i>Upload Manager
+{% endblock %}
+
+{% block page_actions %}
+    <div class="btn-group">
+        <button type="button" class="btn btn-outline-primary" onclick="refreshStats()">
+            <i class="fas fa-sync-alt me-1"></i>Refresh
+        </button>
+        <a href="{{ url_for('entry_list') }}" class="btn btn-outline-secondary">
+            <i class="fas fa-arrow-left me-1"></i>Back to List
+        </a>
+    </div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .upload-status {
+        font-size: 0.75rem;
+        padding: 2px 6px;
+        border-radius: 10px;
+    }
+    .status-not_started {
+        background-color: #6c757d;
+        color: white;
+    }
+    .status-uploading {
+        background-color: #ffc107;
+        color: black;
+    }
+    .status-uploaded {
+        background-color: #28a745;
+        color: white;
+    }
+    .status-failed {
+        background-color: #dc3545;
+        color: white;
+    }
+    .image-status {
+        font-size: 0.8rem;
+    }
+    .has-image {
+        color: #28a745;
+    }
+    .no-image {
+        color: #dc3545;
+    }
+    .pagination-container {
+        display: flex;
+        justify-content: center;
+        margin-top: 20px;
+    }
+    .batch-controls {
+        background-color: #f8f9fa;
+        padding: 15px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        border: 1px solid #dee2e6;
+    }
+    .stats-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-radius: 10px;
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+    .stats-number {
+        font-size: 2.5rem;
+        font-weight: bold;
+        margin-bottom: 5px;
+    }
+    .stats-label {
+        font-size: 0.9rem;
+        opacity: 0.9;
+    }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let selectedEntries = new Set();
+    let currentPage = {{ page }};
+    let totalPages = {{ total_pages }};
+    
+    // 刷新统计信息
+    function refreshStats() {
+        fetch('/admin/api/upload-stats')
+            .then(response => response.json())
+            .then(data => {
+                updateStatsDisplay(data);
+                showToast('Stats refreshed', 'success');
+            })
+            .catch(error => {
+                console.error('Error refreshing stats:', error);
+                showToast('Error refreshing stats', 'error');
+            });
+    }
+    
+    // 更新统计显示
+    function updateStatsDisplay(stats) {
+        // 更新统计卡片
+        document.getElementById('total_approved').textContent = stats.image_stats.total_approved;
+        document.getElementById('ready_for_upload').textContent = stats.image_stats.ready_for_upload;
+        document.getElementById('uploaded_count').textContent = stats.uploaded || 0;
+        document.getElementById('failed_count').textContent = stats.failed || 0;
+    }
+    
+    // 选择/取消选择所有条目
+    function toggleSelectAll() {
+        const checkboxes = document.querySelectorAll('.entry-checkbox');
+        const selectAllCheckbox = document.getElementById('selectAll');
+        
+        checkboxes.forEach(checkbox => {
+            checkbox.checked = selectAllCheckbox.checked;
+            if (checkbox.checked) {
+                selectedEntries.add(checkbox.value);
+            } else {
+                selectedEntries.delete(checkbox.value);
+            }
+        });
+        
+        updateSelectedCount();
+    }
+    
+    // 处理单个条目选择
+    function handleEntrySelect(checkbox) {
+        if (checkbox.checked) {
+            selectedEntries.add(checkbox.value);
+        } else {
+            selectedEntries.delete(checkbox.value);
+            document.getElementById('selectAll').checked = false;
+        }
+        
+        updateSelectedCount();
+    }
+    
+    // 更新选中数量显示
+    function updateSelectedCount() {
+        const count = selectedEntries.size;
+        document.getElementById('selectedCount').textContent = count;
+        
+        // 更新按钮状态
+        const uploadBtn = document.getElementById('uploadSelectedBtn');
+        const retryBtn = document.getElementById('retryFailedBtn');
+        
+        uploadBtn.disabled = count === 0;
+        retryBtn.disabled = count === 0;
+    }
+    
+    // 上传选中的条目
+    function uploadSelected() {
+        if (selectedEntries.size === 0) {
+            showToast('Please select entries to upload', 'warning');
+            return;
+        }
+        
+        if (!confirm(`Upload ${selectedEntries.size} selected entries to server?`)) {
+            return;
+        }
+        
+        const entryIds = Array.from(selectedEntries);
+        
+        showLoading('Uploading selected entries...');
+        
+        fetch('/admin/api/batch-upload', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ entry_ids: entryIds })
+        })
+        .then(response => response.json())
+        .then(data => {
+            hideLoading();
+            
+            if (data.success) {
+                showToast(`Upload completed: ${data.success_count} successful, ${data.failed_count} failed`, 'success');
+                
+                // 刷新页面
+                setTimeout(() => {
+                    window.location.reload();
+                }, 2000);
+            } else {
+                showToast(`Upload failed: ${data.error}`, 'error');
+            }
+        })
+        .catch(error => {
+            hideLoading();
+            console.error('Upload error:', error);
+            showToast('Upload error occurred', 'error');
+        });
+    }
+    
+    // 重试失败的条目
+    function retryFailed() {
+        if (selectedEntries.size === 0) {
+            showToast('Please select entries to retry', 'warning');
+            return;
+        }
+        
+        if (!confirm(`Retry ${selectedEntries.size} selected failed entries?`)) {
+            return;
+        }
+        
+        uploadSelected(); // 使用相同的上传逻辑
+    }
+    
+    // 上传单个条目
+    function uploadSingle(entryId, certId) {
+        if (!confirm(`Upload entry ${certId} to server?`)) {
+            return;
+        }
+        
+        showLoading(`Uploading ${certId}...`);
+        
+        fetch(`/admin/api/upload/${entryId}`, {
+            method: 'POST'
+        })
+        .then(response => response.json())
+        .then(data => {
+            hideLoading();
+            
+            if (data.success) {
+                showToast(`Upload successful: ${certId}`, 'success');
+                
+                // 更新行状态
+                updateEntryStatus(entryId, data);
+            } else {
+                showToast(`Upload failed: ${data.error}`, 'error');
+            }
+        })
+        .catch(error => {
+            hideLoading();
+            console.error('Upload error:', error);
+            showToast('Upload error occurred', 'error');
+        });
+    }
+    
+    // 更新条目状态显示
+    function updateEntryStatus(entryId, data) {
+        const row = document.querySelector(`tr[data-entry-id="${entryId}"]`);
+        if (!row) return;
+        
+        // 更新状态标签
+        const statusCell = row.querySelector('.upload-status');
+        if (statusCell) {
+            statusCell.className = `upload-status status-${data.upload_status || 'uploaded'}`;
+            statusCell.textContent = data.upload_status || 'uploaded';
+        }
+        
+        // 更新操作按钮
+        const actionCell = row.querySelector('.upload-actions');
+        if (actionCell && data.upload_status === 'uploaded') {
+            actionCell.innerHTML = `
+                <span class="text-success">
+                    <i class="fas fa-check-circle me-1"></i>Uploaded
+                </span>
+            `;
+        }
+    }
+    
+    // 分页导航
+    function goToPage(page) {
+        if (page < 1 || page > totalPages) return;
+        
+        const url = new URL(window.location);
+        url.searchParams.set('page', page);
+        window.location.href = url.toString();
+    }
+    
+    // 显示加载指示器
+    function showLoading(message = 'Loading...') {
+        let loadingDiv = document.getElementById('loadingOverlay');
+        if (!loadingDiv) {
+            loadingDiv = document.createElement('div');
+            loadingDiv.id = 'loadingOverlay';
+            loadingDiv.className = 'loading-overlay';
+            loadingDiv.innerHTML = `
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <div class="loading-message mt-2">${message}</div>
+            `;
+            document.body.appendChild(loadingDiv);
+            
+            // 添加样式
+            const style = document.createElement('style');
+            style.textContent = `
+                .loading-overlay {
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    background: rgba(0, 0, 0, 0.5);
+                    display: flex;
+                    flex-direction: column;
+                    justify-content: center;
+                    align-items: center;
+                    z-index: 9999;
+                    color: white;
+                }
+                .loading-message {
+                    font-size: 1.1rem;
+                }
+            `;
+            document.head.appendChild(style);
+        }
+    }
+    
+    // 隐藏加载指示器
+    function hideLoading() {
+        const loadingDiv = document.getElementById('loadingOverlay');
+        if (loadingDiv) {
+            loadingDiv.remove();
+        }
+    }
+    
+    // 显示Toast消息
+    function showToast(message, type = 'info') {
+        // 创建或获取toast容器
+        let toastContainer = document.getElementById('toastContainer');
+        if (!toastContainer) {
+            toastContainer = document.createElement('div');
+            toastContainer.id = 'toastContainer';
+            toastContainer.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                z-index: 9999;
+            `;
+            document.body.appendChild(toastContainer);
+        }
+        
+        // 创建toast
+        const toastId = 'toast-' + Date.now();
+        const toast = document.createElement('div');
+        toast.id = toastId;
+        toast.className = `toast show align-items-center text-bg-${type} border-0`;
+        toast.style.cssText = 'min-width: 250px; margin-bottom: 10px;';
+        toast.innerHTML = `
+            <div class="d-flex">
+                <div class="toast-body">
+                    ${message}
+                </div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" onclick="document.getElementById('${toastId}').remove()"></button>
+            </div>
+        `;
+        
+        toastContainer.appendChild(toast);
+        
+        // 自动移除
+        setTimeout(() => {
+            if (document.getElementById(toastId)) {
+                document.getElementById(toastId).remove();
+            }
+        }, 5000);
+    }
+    
+    // 页面加载完成
+    document.addEventListener('DOMContentLoaded', function() {
+        // 初始化统计信息
+        refreshStats();
+        
+        // 更新选中数量
+        updateSelectedCount();
+    });
+</script>
+{% endblock %}
+
+{% block content %}
+    <!-- 统计卡片 -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="stats-card">
+                <div class="stats-number" id="total_approved">{{ stats.image_stats.total_approved }}</div>
+                <div class="stats-label">Total Approved</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                <div class="stats-number" id="ready_for_upload">{{ stats.image_stats.ready_for_upload }}</div>
+                <div class="stats-label">Ready for Upload</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
+                <div class="stats-number" id="uploaded_count">{{ stats.uploaded|default(0) }}</div>
+                <div class="stats-label">Successfully Uploaded</div>
+            </div>
+        </div>
+        <div class="col-md-3">
+            <div class="stats-card" style="background: linear-gradient(135deg, #f6d365 0%, #fda085 100%);">
+                <div class="stats-number" id="failed_count">{{ stats.failed|default(0) }}</div>
+                <div class="stats-label">Failed Uploads</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 批量控制面板 -->
+    <div class="batch-controls">
+        <div class="row align-items-center">
+            <div class="col-md-4">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" id="selectAll" onchange="toggleSelectAll()">
+                    <label class="form-check-label fw-bold" for="selectAll">
+                        Select All on This Page
+                    </label>
+                </div>
+                <div class="mt-1">
+                    <small class="text-muted">
+                        <span id="selectedCount">0</span> entries selected
+                    </small>
+                </div>
+            </div>
+            <div class="col-md-8 text-end">
+                <div class="btn-group">
+                    <button type="button" class="btn btn-primary" id="uploadSelectedBtn" onclick="uploadSelected()" disabled>
+                        <i class="fas fa-cloud-upload-alt me-1"></i>Upload Selected
+                    </button>
+                    <button type="button" class="btn btn-warning" id="retryFailedBtn" onclick="retryFailed()" disabled>
+                        <i class="fas fa-redo me-1"></i>Retry Failed
+                    </button>
+                    <button type="button" class="btn btn-outline-info" onclick="refreshStats()">
+                        <i class="fas fa-sync-alt me-1"></i>Refresh
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 上传条目表格 -->
+    <div class="card">
+        <div class="card-header">
+            <h6 class="mb-0"><i class="fas fa-list me-2"></i>All Approved Entries</h6>
+                        <small class="text-muted">Entries with complete images can be uploaded to server</small>
+        </div>
+        <div class="card-body">
+            {% if entries %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th width="40">
+                                    <input type="checkbox" class="form-check-input" id="selectAllHeader" onchange="toggleSelectAll()">
+                                </th>
+                                <th>Cert ID</th>
+                                <th>Card Name</th>
+                                <th>Brand</th>
+                                <th>Grade</th>
+                                <th>Images</th>
+                                <th>Upload Status</th>
+                                <th>Last Updated</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for entry in entries %}
+                                <tr data-entry-id="{{ entry.id }}">
+                                    <td>
+                                        <input type="checkbox" class="form-check-input entry-checkbox" 
+                                               value="{{ entry.id }}" 
+                                               onchange="handleEntrySelect(this)">
+                                    </td>
+                                    <td><strong>{{ entry.cert_id }}</strong></td>
+                                    <td>{{ entry.card_name }}</td>
+                                    <td>{{ entry.brand }}</td>
+                                    <td>
+                                        <strong>{{ entry.final_grade_text }}</strong>
+                                        <small class="text-muted">({{ entry.final_grade }})</small>
+                                    </td>
+                                    <td>
+                                        <div class="image-status">
+                                            <div>
+                                                <i class="fas fa-image me-1 {% if entry.has_front_image_file %}has-image{% else %}no-image{% endif %}"></i>
+                                                Front: {% if entry.has_front_image_file %}<span class="has-image">Ready</span>{% elif entry.front_image %}<span class="no-image">File Missing</span>{% else %}<span class="no-image">Missing</span>{% endif %}
+                                            </div>
+                                            <div>
+                                                <i class="fas fa-image me-1 {% if entry.has_back_image_file %}has-image{% else %}no-image{% endif %}"></i>
+                                                Back: {% if entry.has_back_image_file %}<span class="has-image">Ready</span>{% elif entry.back_image %}<span class="no-image">File Missing</span>{% else %}<span class="no-image">Missing</span>{% endif %}
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        {% set upload_status = entry.upload_status or 'not_started' %}
+                                        <span class="upload-status status-{{ upload_status }}">
+                                            {{ upload_status|replace('_', ' ')|title }}
+                                        </span>
+                                        {% if entry.upload_error %}
+                                            <div class="text-danger small mt-1" title="{{ entry.upload_error }}">
+                                                <i class="fas fa-exclamation-circle"></i> Error
+                                            </div>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        {% if entry.upload_completed %}
+                                            {{ entry.upload_completed[:19] }}
+                                        {% elif entry.updated_at %}
+                                            {{ entry.updated_at[:19] }}
+                                        {% else %}
+                                            {{ entry.entry_date[:19] if entry.entry_date else '' }}
+                                        {% endif %}
+                                    </td>
+                                    <td class="upload-actions">
+                                        {% if entry.ready_for_upload %}
+                                            {% if entry.upload_status == 'uploaded' %}
+                                                <span class="text-success">
+                                                    <i class="fas fa-check-circle me-1"></i>Uploaded
+                                                </span>
+                                            {% else %}
+                                                <button type="button" class="btn btn-sm btn-outline-primary" 
+                                                        onclick="uploadSingle('{{ entry.id }}', '{{ entry.cert_id }}')">
+                                                    <i class="fas fa-cloud-upload-alt me-1"></i>Upload
+                                                </button>
+                                            {% endif %}
+                                        {% else %}
+                                            <span class="text-muted small">
+                                                <i class="fas fa-exclamation-triangle me-1"></i>Images required
+                                            </span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- 分页控件 -->
+                {% if total_pages > 1 %}
+                    <div class="pagination-container">
+                        <nav aria-label="Page navigation">
+                            <ul class="pagination">
+                                <li class="page-item {% if page == 1 %}disabled{% endif %}">
+                                    <a class="page-link" href="javascript:void(0)" onclick="goToPage(1)" aria-label="First">
+                                        <i class="fas fa-angle-double-left"></i>
+                                    </a>
+                                </li>
+                                <li class="page-item {% if page == 1 %}disabled{% endif %}">
+                                    <a class="page-link" href="javascript:void(0)" onclick="goToPage({{ page - 1 }})" aria-label="Previous">
+                                        <i class="fas fa-angle-left"></i>
+                                    </a>
+                                </li>
+                                
+                                {% for p in range(1, total_pages + 1) %}
+                                    {% if p >= page - 2 and p <= page + 2 %}
+                                        <li class="page-item {% if p == page %}active{% endif %}">
+                                            <a class="page-link" href="javascript:void(0)" onclick="goToPage({{ p }})">{{ p }}</a>
+                                        </li>
+                                    {% endif %}
+                                {% endfor %}
+                                
+                                <li class="page-item {% if page == total_pages %}disabled{% endif %}">
+                                    <a class="page-link" href="javascript:void(0)" onclick="goToPage({{ page + 1 }})" aria-label="Next">
+                                        <i class="fas fa-angle-right"></i>
+                                    </a>
+                                </li>
+                                <li class="page-item {% if page == total_pages %}disabled{% endif %}">
+                                    <a class="page-link" href="javascript:void(0)" onclick="goToPage({{ total_pages }})" aria-label="Last">
+                                        <i class="fas fa-angle-double-right"></i>
+                                    </a>
+                                </li>
+                            </ul>
+                        </nav>
+                    </div>
+                    
+                    <div class="text-center text-muted mt-2">
+                        Page {{ page }} of {{ total_pages }} | {{ total }} entries total
+                    </div>
+                {% endif %}
+            {% else %}
+                <div class="text-center py-5">
+                    <i class="fas fa-cloud-upload-alt fa-3x text-muted mb-3"></i>
+                    <h5>No entries ready for upload</h5>
+                    <p class="text-muted">
+                        Approved entries with both front and back images will appear here.
+                    </p>
+                    <a href="{{ url_for('entry_list') }}" class="btn btn-outline-primary">
+                        <i class="fas fa-list me-1"></i>View All Entries
+                    </a>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- 使用说明 -->
+    <div class="card mt-4">
+        <div class="card-header">
+            <h6 class="mb-0"><i class="fas fa-info-circle me-2"></i>Upload Instructions</h6>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6">
+                    <h6><i class="fas fa-check-circle text-success me-2"></i>Requirements</h6>
+                    <ul>
+                        <li>Entry must be in <strong>approved</strong> status</li>
+                        <li>Both <strong>front and back images</strong> must be uploaded</li>
+                        <li>Images will be automatically converted to <strong>WebP format</strong></li>
+                        <li>Images will be compressed for optimal file size</li>
+                    </ul>
+                </div>
+                <div class="col-md-6">
+                    <h6><i class="fas fa-sync-alt text-primary me-2"></i>Process</h6>
+                    <ol>
+                        <li>Select entries using checkboxes</li>
+                        <li>Click "Upload Selected" to start batch upload</li>
+                        <li>System will convert images to WebP format</li>
+                        <li>Data and images will be sent to server</li>
+                        <li>Upload status will be updated in real-time</li>
+                    </ol>
+                </div>
+            </div>
+            
+            <div class="alert alert-info mt-3">
+                <i class="fas fa-exclamation-circle me-2"></i>
+                <strong>Note:</strong> Server configuration (API URL and key) needs to be set in the system configuration.
+                Contact administrator if uploads are not working.
+            </div>
+        </div>
+    </div>
+{% endblock %}

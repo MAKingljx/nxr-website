@@ -1,0 +1,511 @@
+{% extends "base.html" %}
+
+{% block title %}Export to Excel - NXR Card Grading{% endblock %}
+
+{% block page_title %}
+    <i class="fas fa-file-excel me-2"></i>Export Approved Cards to Excel
+{% endblock %}
+
+{% block page_actions %}
+    <div class="btn-group">
+        <a href="{{ url_for('entry_list', status='approved') }}" class="btn btn-outline-secondary">
+            <i class="fas fa-arrow-left me-1"></i>Back to Approved List
+        </a>
+        <a href="{{ url_for('upload_manager') }}" class="btn btn-outline-primary">
+            <i class="fas fa-cloud-upload-alt me-1"></i>Upload Manager
+        </a>
+    </div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .stats-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border-radius: 10px;
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+    .stats-number {
+        font-size: 2.5rem;
+        font-weight: bold;
+        margin-bottom: 5px;
+    }
+    .stats-label {
+        font-size: 0.9rem;
+        opacity: 0.9;
+    }
+    .grade-badge {
+        font-size: 0.8rem;
+        padding: 4px 8px;
+        border-radius: 12px;
+        margin-right: 5px;
+        margin-bottom: 5px;
+        display: inline-block;
+    }
+    .export-file {
+        border-left: 4px solid #28a745;
+        padding-left: 15px;
+        margin-bottom: 15px;
+    }
+    .export-file .file-size {
+        font-size: 0.85rem;
+        color: #6c757d;
+    }
+    .preview-table {
+        font-size: 0.9rem;
+    }
+    .preview-table th {
+        background-color: #f8f9fa;
+        font-weight: 600;
+    }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // 加载导出文件列表
+    function loadExportList() {
+        fetch('/admin/export/list')
+            .then(response => response.json())
+            .then(data => {
+                const container = document.getElementById('exportList');
+                if (!container) return;
+                
+                if (data.exports && data.exports.length > 0) {
+                    let html = '<h6 class="mb-3"><i class="fas fa-history me-2"></i>Recent Exports</h6>';
+                    
+                    data.exports.forEach(file => {
+                        const fileSize = (file.size / 1024).toFixed(1);
+                        html += `
+                            <div class="export-file">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <strong><i class="fas fa-file-excel text-success me-2"></i>${file.name}</strong>
+                                        <div class="file-size">
+                                            ${fileSize} KB • ${file.modified}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <a href="${file.url}" class="btn btn-sm btn-success me-2">
+                                            <i class="fas fa-download me-1"></i>Download
+                                        </a>
+                                        <button type="button" class="btn btn-sm btn-outline-danger" onclick="deleteExport('${file.name}')">
+                                            <i class="fas fa-trash"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    });
+                    
+                    container.innerHTML = html;
+                } else {
+                    container.innerHTML = `
+                        <div class="text-center py-4">
+                            <i class="fas fa-file-excel fa-3x text-muted mb-3"></i>
+                            <p class="text-muted">No export files yet</p>
+                        </div>
+                    `;
+                }
+            })
+            .catch(error => {
+                console.error('Error loading export list:', error);
+            });
+    }
+    
+    // 删除导出文件
+    function deleteExport(filename) {
+        if (!confirm(`Delete export file "${filename}"?`)) {
+            return;
+        }
+        
+        fetch(`/admin/export/delete/${filename}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-Requested-With': 'XMLHttpRequest',
+            }
+        })
+        .then(response => {
+            if (response.ok) {
+                loadExportList();
+                showToast('File deleted successfully', 'success');
+            } else {
+                showToast('Error deleting file', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error deleting file:', error);
+            showToast('Error deleting file', 'error');
+        });
+    }
+    
+    // 显示预览数据
+    function showPreview() {
+        const gradeFilter = document.getElementById('gradeFilter').value;
+        const previewContainer = document.getElementById('previewContainer');
+        
+        if (!gradeFilter) {
+            previewContainer.innerHTML = `
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle me-2"></i>Select a grade filter to see preview
+                </div>
+            `;
+            return;
+        }
+        
+        // 显示加载中
+        previewContainer.innerHTML = `
+            <div class="text-center py-4">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="mt-2">Loading preview...</p>
+            </div>
+        `;
+        
+        // 模拟预览数据
+        setTimeout(() => {
+            const sampleData = [
+                {
+                    cert_id: '1234567890',
+                    card_name: 'Charizard Holo',
+                    brand: 'Pokemon',
+                    final_grade_text: gradeFilter === 'all' ? '9.5' : gradeFilter,
+                    entry_date: '2026-04-01T12:00:00',
+                    landing_page_url: 'nxrgrading.com/card/1234567890'
+                },
+                {
+                    cert_id: '0987654321',
+                    card_name: 'Pikachu Yellow',
+                    brand: 'Pokemon',
+                    final_grade_text: gradeFilter === 'all' ? '10' : gradeFilter,
+                    entry_date: '2026-04-01T11:30:00',
+                    landing_page_url: 'nxrgrading.com/card/0987654321'
+                }
+            ];
+            
+            let html = `
+                <h6 class="mb-3"><i class="fas fa-eye me-2"></i>Preview (Sample Data)</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm preview-table">
+                        <thead>
+                            <tr>
+                                <th>Cert ID</th>
+                                <th>Card Name</th>
+                                <th>Brand</th>
+                                <th>Grade</th>
+                                <th>Landing Page URL</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+            
+            sampleData.forEach(row => {
+                html += `
+                    <tr>
+                        <td><code>${row.cert_id}</code></td>
+                        <td>${row.card_name}</td>
+                        <td>${row.brand}</td>
+                        <td><span class="badge bg-primary">${row.final_grade_text}</span></td>
+                        <td><small><a href="https://${row.landing_page_url}" target="_blank">${row.landing_page_url}</a></small></td>
+                    </tr>
+                `;
+            });
+            
+            html += `
+                        </tbody>
+                    </table>
+                </div>
+                <div class="alert alert-info mt-3">
+                    <i class="fas fa-info-circle me-2"></i>
+                    <strong>Note:</strong> Actual export will include all fields from the database. 
+                    The last column will always be <code>landing_page_url</code> with format: <code>nxrgrading.com/card/{cert_id}</code>
+                </div>
+            `;
+            
+            previewContainer.innerHTML = html;
+        }, 500);
+    }
+    
+    // 表单提交验证
+    document.addEventListener('DOMContentLoaded', function() {
+        // 加载导出列表
+        loadExportList();
+        
+        // 初始化预览
+        showPreview();
+        
+        // 监听筛选条件变化
+        document.getElementById('gradeFilter').addEventListener('change', showPreview);
+        
+        // 表单提交
+        const form = document.getElementById('exportForm');
+        form.addEventListener('submit', function(e) {
+            const gradeFilter = document.getElementById('gradeFilter').value;
+            
+            if (!gradeFilter) {
+                e.preventDefault();
+                showToast('Please select a grade filter', 'warning');
+                return;
+            }
+            
+            // 显示处理中
+            const submitBtn = form.querySelector('button[type="submit"]');
+            const originalText = submitBtn.innerHTML;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Generating Excel...';
+            submitBtn.disabled = true;
+            
+            // 恢复按钮状态（如果页面没有重定向）
+            setTimeout(() => {
+                submitBtn.innerHTML = originalText;
+                submitBtn.disabled = false;
+            }, 5000);
+        });
+    });
+    
+    // Toast消息函数
+    function showToast(message, type = 'info') {
+        // 创建或获取toast容器
+        let toastContainer = document.getElementById('toastContainer');
+        if (!toastContainer) {
+            toastContainer = document.createElement('div');
+            toastContainer.id = 'toastContainer';
+            toastContainer.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                z-index: 9999;
+            `;
+            document.body.appendChild(toastContainer);
+        }
+        
+        // 创建toast
+        const toastId = 'toast-' + Date.now();
+        const toast = document.createElement('div');
+        toast.id = toastId;
+        toast.className = `toast show align-items-center text-bg-${type} border-0`;
+        toast.style.cssText = 'min-width: 250px; margin-bottom: 10px;';
+        toast.innerHTML = `
+            <div class="d-flex">
+                <div class="toast-body">
+                    ${message}
+                </div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" onclick="document.getElementById('${toastId}').remove()"></button>
+            </div>
+        `;
+        
+        toastContainer.appendChild(toast);
+        
+        // 自动移除
+        setTimeout(() => {
+            if (document.getElementById(toastId)) {
+                document.getElementById(toastId).remove();
+            }
+        }, 5000);
+    }
+</script>
+{% endblock %}
+
+{% block content %}
+    <!-- 统计卡片 -->
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="stats-card">
+                <div class="stats-number">{{ total_approved }}</div>
+                <div class="stats-label">Total Approved Cards</div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="stats-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                <div class="stats-number">{{ grade_options|length }}</div>
+                <div class="stats-label">Unique Grade Levels</div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="stats-card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
+                <div class="stats-number">
+                    {% set total_cards = grade_stats.values()|sum %}
+                    {{ total_cards }}
+                </div>
+                <div class="stats-label">Cards Available for Export</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- 左侧：导出表单 -->
+        <div class="col-md-8">
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="fas fa-cogs me-2"></i>Export Configuration</h6>
+                </div>
+                <div class="card-body">
+                    <form id="exportForm" method="POST" action="{{ url_for('generate_excel') }}">
+                        <!-- Grade筛选 -->
+                        <div class="mb-4">
+                            <label class="form-label fw-bold">
+                                <i class="fas fa-filter me-2"></i>Filter by Final Grade
+                            </label>
+                            <p class="text-muted small mb-3">
+                                Select a specific grade to export only those cards, or "All Grades" to export everything.
+                            </p>
+                            
+                            <select class="form-select" id="gradeFilter" name="grade_filter" required>
+                                <option value="">-- Select Grade --</option>
+                                <option value="all">All Grades ({{ total_approved }} cards)</option>
+                                {% for grade in grade_options %}
+                                    <option value="{{ grade }}">
+                                        {{ grade }} ({{ grade_stats.get(grade, 0) }} cards)
+                                    </option>
+                                {% endfor %}
+                            </select>
+                            
+                            <!-- Grade标签显示 -->
+                            {% if grade_options %}
+                                <div class="mt-3">
+                                    <div class="form-text mb-2">Available grades:</div>
+                                    {% for grade in grade_options %}
+                                        <span class="grade-badge bg-primary">
+                                            {{ grade }}: {{ grade_stats.get(grade, 0) }}
+                                        </span>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
+                        </div>
+                        
+                        <!-- 输出选项 -->
+                        <div class="mb-4">
+                            <label class="form-label fw-bold">
+                                <i class="fas fa-file-export me-2"></i>Export Options
+                            </label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="includeAllFields" checked disabled>
+                                <label class="form-check-label" for="includeAllFields">
+                                    Include all database fields
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="addLandingPage" checked disabled>
+                                <label class="form-check-label" for="addLandingPage">
+                                    Add <code>landing_page_url</code> column (nxrgrading.com/card/{cert_id})
+                                </label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="addSummarySheet" checked disabled>
+                                <label class="form-check-label" for="addSummarySheet">
+                                    Include summary and statistics sheets
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <!-- 文件命名 -->
+                        <div class="mb-4">
+                            <label class="form-label fw-bold">
+                                <i class="fas fa-file-signature me-2"></i>File Naming
+                            </label>
+                            <p class="text-muted small mb-2">
+                                Files are automatically named with timestamp and grade filter:
+                            </p>
+                            <div class="alert alert-light">
+                                <code>approved_cards_[grade]_YYYYMMDD_HHMMSS.xlsx</code>
+                            </div>
+                        </div>
+                        
+                        <!-- 提交按钮 -->
+                        <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                            <button type="button" class="btn btn-outline-secondary" onclick="showPreview()">
+                                <i class="fas fa-eye me-1"></i>Preview
+                            </button>
+                            <button type="submit" class="btn btn-success">
+                                <i class="fas fa-file-excel me-1"></i>Generate Excel File
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            
+            <!-- 预览区域 -->
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="fas fa-eye me-2"></i>Export Preview</h6>
+                </div>
+                <div class="card-body">
+                    <div id="previewContainer">
+                        <!-- 预览内容将通过JavaScript加载 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- 右侧：导出历史和说明 -->
+        <div class="col-md-4">
+            <!-- 导出历史 -->
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="fas fa-history me-2"></i>Export History</h6>
+                </div>
+                <div class="card-body">
+                    <div id="exportList">
+                        <!-- 导出列表将通过JavaScript加载 -->
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 使用说明 -->
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="fas fa-info-circle me-2"></i>Instructions</h6>
+                </div>
+                <div class="card-body">
+                    <h6><i class="fas fa-step-forward me-2"></i>Step-by-Step Guide</h6>
+                    <ol class="small">
+                        <li class="mb-2">Select a grade filter from the dropdown</li>
+                        <li class="mb-2">Click "Preview" to see sample data</li>
+                        <li class="mb-2">Click "Generate Excel File" to create export</li>
+                        <li class="mb-2">Download the file from Export History</li>
+                    </ol>
+                    
+                    <h6 class="mt-3"><i class="fas fa-columns me-2"></i>Excel File Structure</h6>
+                    <ul class="small">
+                        <li class="mb-1"><strong>Approved Cards</strong>: Main data sheet</li>
+                        <li class="mb-1"><strong>导出汇总</strong>: Export summary (Chinese)</li>
+                        <li class="mb-1"><strong>评分统计</strong>: Grade statistics (Chinese)</li>
+                    </ul>
+                    
+                    <h6 class="mt-3"><i class="fas fa-link me-2"></i>Landing Page URLs</h6>
+                    <p class="small">
+                        Each row includes a <code>landing_page_url</code> column with format:<br>
+                        <code>nxrgrading.com/card/{cert_id}</code>
+                    </p>
+                    
+                    <div class="alert alert-warning mt-3">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        <strong>Note:</strong> Exported files are stored in the <code>exports/</code> folder and can be downloaded from the history list.
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 快速操作 -->
+            <div class="card mt-4">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="fas fa-bolt me-2"></i>Quick Actions</h6>
+                </div>
+                <div class="card-body">
+                    <div class="d-grid gap-2">
+                        <a href="{{ url_for('entry_list', status='approved') }}" class="btn btn-outline-primary">
+                            <i class="fas fa-list me-1"></i>View All Approved Cards
+                        </a>
+                        <a href="{{ url_for('upload_manager') }}" class="btn btn-outline-success">
+                            <i class="fas fa-cloud-upload-alt me-1"></i>Go to Upload Manager
+                        </a>
+                        <button type="button" class="btn btn-outline-info" onclick="loadExportList()">
+                            <i class="fas fa-sync-alt me-1"></i>Refresh Export List
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endblock %}

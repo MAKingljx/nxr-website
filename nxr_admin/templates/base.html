@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}NXR Card Grading - Manual Entry{% endblock %}</title>
+    <link rel="icon" type="image/png" sizes="256x256" href="{{ url_for('static', filename='images/nxr-logo-circle.png') }}">
+    <link rel="shortcut icon" href="/favicon.ico">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/nxr-logo-circle.png') }}">
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Font Awesome with fallback -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        // Check if Font Awesome loaded, if not use local fallback
+        document.addEventListener('DOMContentLoaded', function() {
+            setTimeout(function() {
+                // Check if Font Awesome icons are visible
+                var testIcon = document.createElement('i');
+                testIcon.className = 'fas fa-check';
+                testIcon.style.position = 'absolute';
+                testIcon.style.left = '-9999px';
+                document.body.appendChild(testIcon);
+                
+                var computedStyle = window.getComputedStyle(testIcon);
+                var fontFamily = computedStyle.fontFamily || '';
+                
+                if (!fontFamily.includes('Font Awesome')) {
+                    console.log('Font Awesome not loaded, using fallback');
+                    // Create fallback CSS
+                    var fallbackStyle = document.createElement('style');
+                    fallbackStyle.textContent = `
+                        .fas, .far, .fab, .fa {
+                            display: inline-block;
+                            font-style: normal;
+                            font-weight: normal;
+                            line-height: 1;
+                            -webkit-font-smoothing: antialiased;
+                            -moz-osx-font-smoothing: grayscale;
+                        }
+                        .fa-tachometer-alt:before { content: "📊 "; }
+                        .fa-plus-circle:before { content: "➕ "; }
+                        .fa-database:before { content: "💾 "; }
+                        .fa-clock:before { content: "⏰ "; }
+                        .fa-check-circle:before { content: "✅ "; }
+                        .fa-times-circle:before { content: "❌ "; }
+                        .fa-hourglass-half:before { content: "⏳ "; }
+                        .fa-list:before { content: "📋 "; }
+                        .fa-edit:before { content: "✏️ "; }
+                        .fa-trash:before { content: "🗑️ "; }
+                        .fa-eye:before { content: "👁️ "; }
+                        .fa-cloud-upload-alt:before { content: "☁️ "; }
+                        .fa-file-excel:before { content: "📊 "; }
+                        .fa-arrow-left:before { content: "⬅️ "; }
+                        .fa-filter:before { content: "🔍 "; }
+                        .fa-download:before { content: "⬇️ "; }
+                        .fa-history:before { content: "🔄 "; }
+                        .fa-info-circle:before { content: "ℹ️ "; }
+                        .fa-bolt:before { content: "⚡ "; }
+                        .fa-exclamation-triangle:before { content: "⚠️ "; }
+                        .fa-sync-alt:before { content: "🔄 "; }
+                        .fa-spinner:before { content: "🌀 "; }
+                        .fa-step-forward:before { content: "⏭️ "; }
+                        .fa-columns:before { content: "📊 "; }
+                        .fa-link:before { content: "🔗 "; }
+                        .fa-cogs:before { content: "⚙️ "; }
+                        .fa-file-export:before { content: "📤 "; }
+                        .fa-file-signature:before { content: "📝 "; }
+                        .fa-eye:before { content: "👁️ "; }
+                        .fa-history:before { content: "🔄 "; }
+                        .fa-info-circle:before { content: "ℹ️ "; }
+                        .fa-bolt:before { content: "⚡ "; }
+                    `;
+                    document.head.appendChild(fallbackStyle);
+                }
+                
+                document.body.removeChild(testIcon);
+            }, 1000); // Wait 1 second for Font Awesome to load
+        });
+    </script>
+    <!-- Custom CSS -->
+    <style>
+        body {
+            background-color: #f8f9fa;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .navbar-brand {
+            font-weight: 600;
+            color: #2c3e50;
+        }
+        .sidebar {
+            background-color: #2c3e50;
+            min-height: calc(100vh - 56px);
+            color: white;
+        }
+        .sidebar a {
+            color: #ecf0f1;
+            text-decoration: none;
+            padding: 10px 15px;
+            display: block;
+            border-radius: 5px;
+            margin: 2px 0;
+        }
+        .sidebar a:hover {
+            background-color: #34495e;
+            color: white;
+        }
+        .sidebar a.active {
+            background-color: #3498db;
+            color: white;
+        }
+        /* Ensure icon containers have proper size */
+        .fas, .far, .fab, .fa {
+            min-width: 1em;
+            text-align: center;
+        }
+        /* Fallback for missing icons */
+        .icon-fallback {
+            display: inline-block;
+            width: 1em;
+            height: 1em;
+            background-color: #6c757d;
+            border-radius: 2px;
+            margin-right: 0.5em;
+        }
+        .card {
+            border-radius: 10px;
+            border: none;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+            margin-bottom: 20px;
+        }
+        .card-header {
+            background-color: white;
+            border-bottom: 1px solid #eee;
+            font-weight: 600;
+        }
+        .stat-card {
+            border-left: 4px solid #3498db;
+        }
+        .stat-card.pending {
+            border-left-color: #f39c12;
+        }
+        .stat-card.approved {
+            border-left-color: #27ae60;
+        }
+        .btn-primary {
+            background-color: #3498db;
+            border-color: #3498db;
+        }
+        .btn-primary:hover {
+            background-color: #2980b9;
+            border-color: #2980b9;
+        }
+        .alert {
+            border-radius: 8px;
+            border: none;
+        }
+        .table th {
+            font-weight: 600;
+            color: #2c3e50;
+            border-top: none;
+        }
+        .badge-pending {
+            background-color: #f39c12;
+        }
+        .badge-approved {
+            background-color: #27ae60;
+        }
+        .badge-rejected {
+            background-color: #e74c3c;
+        }
+    </style>
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-light bg-white shadow-sm">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="{{ url_for('dashboard') }}">
+                <i class="fas fa-database me-2"></i>NXR Card Grading - Manual Entry
+            </a>
+            
+            <div class="d-flex align-items-center">
+                <span class="me-3 text-muted">
+                    <i class="fas fa-user me-1"></i>{{ username }}
+                    {% if role %}
+                        <small class="badge bg-{{ 'success' if role == 'admin' else 'info' }} ms-1">
+                            {{ role|title }}
+                        </small>
+                    {% endif %}
+                </span>
+                <a href="{{ url_for('admin_logout') }}" class="btn btn-outline-secondary btn-sm">
+                    <i class="fas fa-sign-out-alt me-1"></i>Logout
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Sidebar -->
+            <div class="col-md-2 sidebar d-none d-md-block">
+                <div class="pt-3">
+                    <h6 class="px-3 text-uppercase text-muted mb-3">Main Menu</h6>
+                    <a href="{{ url_for('dashboard') }}" class="{% if request.endpoint == 'dashboard' %}active{% endif %}">
+                        <i class="fas fa-tachometer-alt me-2"></i>Dashboard
+                    </a>
+                    <a href="{{ url_for('new_entry') }}" class="{% if request.endpoint == 'new_entry' %}active{% endif %}">
+                        <i class="fas fa-plus-circle me-2"></i>New Entry
+                    </a>
+                    <a href="{{ url_for('entry_list') }}" class="{% if request.endpoint == 'entry_list' %}active{% endif %}">
+                        <i class="fas fa-list me-2"></i>All Entries
+                    </a>
+                    <a href="{{ url_for('entry_list', status='pending') }}">
+                        <i class="fas fa-clock me-2"></i>Pending Review
+                    </a>
+                    <a href="{{ url_for('entry_list', status='approved') }}">
+                        <i class="fas fa-check-circle me-2"></i>Approved
+                    </a>
+                    
+                    <h6 class="px-3 text-uppercase text-muted mt-4 mb-3">Tools</h6>
+                    <a href="{{ url_for('export_approved') }}">
+                        <i class="fas fa-database me-2"></i>Export to Main DB
+                    </a>
+                    <a href="{{ url_for('export_excel_page') }}" class="{% if request.endpoint == 'export_excel_page' %}active{% endif %}">
+                        <i class="fas fa-file-excel me-2"></i>Export to Excel
+                    </a>
+                    <a href="{{ url_for('upload_manager') }}" class="{% if request.endpoint == 'upload_manager' %}active{% endif %}">
+                        <i class="fas fa-cloud-upload-alt me-2"></i>Upload to Server
+                    </a>
+                </div>
+            </div>
+
+            <!-- Main Content -->
+            <div class="col-md-10 pt-3">
+                <!-- Flash Messages -->
+                {% with messages = get_flashed_messages(with_categories=true) %}
+                    {% if messages %}
+                        {% for category, message in messages %}
+                            <div class="alert alert-{{ 'success' if category == 'success' else 'warning' if category == 'warning' else 'info' if category == 'info' else 'danger' }} alert-dismissible fade show">
+                                {{ message }}
+                                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                            </div>
+                        {% endfor %}
+                    {% endif %}
+                {% endwith %}
+
+                <!-- Page Title -->
+                <div class="d-flex justify-content-between align-items-center mb-4">
+                    <h4 class="mb-0">{% block page_title %}{% endblock %}</h4>
+                    {% block page_actions %}{% endblock %}
+                </div>
+
+                <!-- Content -->
+                {% block content %}{% endblock %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- jQuery -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    
+    {% block extra_js %}{% endblock %}
+    
+    <script>
+        // Auto-dismiss alerts after 5 seconds
+        $(document).ready(function() {
+            setTimeout(function() {
+                $('.alert').alert('close');
+            }, 5000);
+        });
+    </script>
+</body>
+</html>

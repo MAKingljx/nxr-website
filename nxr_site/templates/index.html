@@ -1,0 +1,177 @@
+{% extends "base_site.html" %}
+{% set nav_active = "home" %}
+
+{% block title %}NXR Grading - AI + Human Professional Card Grading{% endblock %}
+
+{% block page_css %}
+<style>
+.page-hero{padding-top:160px;padding-bottom:100px}
+.hero-cta{margin-top:32px;display:flex;gap:16px;flex-wrap:wrap}
+.features-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:48px}
+.feature{background:var(--bg2);border:1px solid var(--border2);border-radius:12px;padding:32px;transition:transform .2s,border-color .2s}
+.feature:hover{transform:translateY(-4px);border-color:var(--red)}
+.feature-icon{font-size:40px;margin-bottom:20px}
+.feature h3{font-size:18px;font-weight:700;margin-bottom:12px}
+.feature p{font-size:14px;color:var(--text2);line-height:1.6}
+.steps{display:flex;justify-content:space-between;position:relative;margin-top:60px}
+.steps::before{content:'';position:absolute;top:40px;left:50px;right:50px;height:2px;background:var(--border);z-index:1}
+.step{position:relative;z-index:2;background:var(--bg2);border:1px solid var(--border2);border-radius:12px;padding:32px;flex:1;max-width:280px;margin:0 8px}
+.step-number{position:absolute;top:-20px;left:32px;background:var(--red);color:#fff;width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:18px}
+.step h3{font-size:18px;font-weight:700;margin-bottom:12px}
+.step p{font-size:14px;color:var(--text2);line-height:1.6}
+.compare-wrap{overflow-x:auto;margin-top:48px}
+.compare-table{width:100%;border-collapse:collapse;min-width:600px}
+.compare-table th{padding:14px 20px;text-align:left;font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text2);border-bottom:1px solid var(--border)}
+.compare-table th:first-child{color:var(--text3)}
+.compare-table td{padding:14px 20px;font-size:14px;border-bottom:1px solid var(--border);color:var(--text2)}
+.compare-table td:first-child{color:var(--text);font-weight:500}
+.compare-table tr:last-child td{border-bottom:none}
+.compare-table .check{color:#22c55e;font-weight:700}
+.compare-table .cross{color:var(--text3)}
+.compare-table .highlight td{background:rgba(233,69,96,.04)}
+@media(max-width:900px){.features-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:768px){.steps{flex-direction:column;gap:40px}.steps::before{top:0;left:40px;width:2px;height:100%}.step{max-width:100%;margin:0}}
+@media(max-width:600px){.features-grid{grid-template-columns:1fr}}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-hero">
+  <div class="page-hero-inner">
+    <div class="section-tag">Welcome to NXR Grading</div>
+    <h1>Grading that doesn't<br>take itself too seriously.</h1>
+    <p>We combine AI precision with human expertise — because sometimes you need a robot to spot the 0.1mm flaw, and a human to say "yeah, that's actually pretty cool."</p>
+    <div class="hero-cta">
+      <a href="/submit" class="btn-primary">Submit Your Cards</a>
+      <a href="/verify" class="btn-secondary">Verify a Grade</a>
+    </div>
+  </div>
+</div>
+
+<section class="section">
+  <div class="section-inner">
+    <div class="section-tag">Our Approach</div>
+    <h2 style="font-size:clamp(26px,3.5vw,40px);font-weight:900;letter-spacing:-1px;margin-bottom:8px">AI + Human = Better Grades</h2>
+    <p style="color:var(--text2);font-size:15px">We don't trust robots alone. We don't trust humans alone. But together? That's the sweet spot.</p>
+    <div class="steps">
+      <div class="step">
+        <div class="step-number">1</div>
+        <h3>AI First Pass</h3>
+        <p>Our AI scans your card with micron-level precision, analyzing centering, edges, corners, and surface. It's like having a microscope with a PhD.</p>
+      </div>
+      <div class="step">
+        <div class="step-number">2</div>
+        <h3>Human Review</h3>
+        <p>A certified human grader independently reviews the AI's analysis. If they disagree, the card goes to a senior grader. No ego, just accuracy.</p>
+      </div>
+      <div class="step">
+        <div class="step-number">3</div>
+        <h3>Cross-Verification</h3>
+        <p>Both must agree before a final grade is issued. If they don't, we document why. Transparency isn't a feature — it's the whole point.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section bg2">
+  <div class="section-inner">
+    <div class="section-tag">Why Choose NXR</div>
+    <h2 style="font-size:clamp(26px,3.5vw,40px);font-weight:900;letter-spacing:-1px;margin-bottom:8px">We're not just another grading company</h2>
+    <p style="color:var(--text2);font-size:15px">We're the anti-black-box grading service. Here's what that means for you.</p>
+    <div class="features-grid">
+      <div class="feature">
+        <div class="feature-icon">🤖</div>
+        <h3>No Black Box Grading</h3>
+        <p>We publish all four sub-scores (centering, edges, corners, surface) with every grade. You'll know exactly how every point was earned or lost.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">👥</div>
+        <h3>No VIP Lanes</h3>
+        <p>A $5 common and a $50,000 vintage card go through the exact same process. The tier only affects turnaround time — never the rigor of the grade.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">📱</div>
+        <h3>Verification That Works</h3>
+        <p>NFC + QR dual verification built into every slab. Scan with any phone — no app required. Because verification shouldn't be a chore.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🔍</div>
+        <h3>Full Audit Trail</h3>
+        <p>Disagree with a grade? We'll show you the AI scan data, grader's notes, and reasoning behind every sub-score. We stand behind our work.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🛡️</div>
+        <h3>Premium Protection</h3>
+        <p>UV-resistant, tamper-evident slabs engineered for decades of protection. Your cards deserve better than flimsy plastic.</p>
+      </div>
+      <div class="feature">
+        <div class="feature-icon">🌐</div>
+        <h3>Permanent Digital Record</h3>
+        <p>Every grade gets a permanent, publicly accessible digital certificate. No more lost paperwork or faded labels.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="section-inner">
+    <div class="section-tag">The NXR Difference</div>
+    <h2 style="font-size:clamp(26px,3.5vw,40px);font-weight:900;letter-spacing:-1px;margin-bottom:8px">We're doing this differently</h2>
+    <p style="color:var(--text2);font-size:15px;margin-bottom:0">The grading industry has been stuck in the past. Here's how we're moving forward.</p>
+    <div class="compare-wrap">
+      <table class="compare-table">
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th>NXR Grading</th>
+            <th>"The Other Guys"</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="highlight">
+            <td>Sub-scores published</td>
+            <td class="check">✓ Always, all 4</td>
+            <td class="cross">"Proprietary information"</td>
+          </tr>
+          <tr>
+            <td>AI + Human cross-verification</td>
+            <td class="check">✓ Every single card</td>
+            <td class="cross">Human-only (with human error)</td>
+          </tr>
+          <tr class="highlight">
+            <td>Grading criteria</td>
+            <td class="check">✓ Fully documented & public</td>
+            <td class="cross">"Trust us, we're experts"</td>
+          </tr>
+          <tr>
+            <td>Same standards for all</td>
+            <td class="check">✓ No exceptions, no VIP lanes</td>
+            <td class="cross">Pay more for "better" grades</td>
+          </tr>
+          <tr class="highlight">
+            <td>Grade disputes</td>
+            <td class="check">✓ Full transparency & audit trail</td>
+            <td class="cross">"Our graders are always right"</td>
+          </tr>
+          <tr>
+            <td>Verification</td>
+            <td class="check">✓ NFC + QR, no app needed</td>
+            <td class="cross">QR only (if you're lucky)</td>
+          </tr>
+          <tr class="highlight">
+            <td>Digital certificates</td>
+            <td class="check">✓ Free, permanent, public</td>
+            <td class="cross">Paid add-on or not available</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="cta-strip">
+      <h2>Ready for grading that makes sense?</h2>
+      <p>No corporate speak. No runaround. Just honest grades backed by technology and transparency.</p>
+      <a href="/submit" class="btn-primary">Submit Your Cards</a>
+      <a href="/faq" class="btn-secondary">Read the FAQ</a>
+    </div>
+  </div>
+</section>
+{% endblock %}

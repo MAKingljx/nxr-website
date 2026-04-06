@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - NXR Card Grading{% endblock %}
+
+{% block page_title %}
+    <i class="fas fa-tachometer-alt me-2"></i>Dashboard
+{% endblock %}
+
+{% block page_actions %}
+    <a href="{{ url_for('new_entry') }}" class="btn btn-primary">
+        <i class="fas fa-plus-circle me-1"></i>New Entry
+    </a>
+{% endblock %}
+
+{% block content %}
+    <!-- Statistics Cards -->
+    <div class="row mb-4">
+        <div class="col-md-3">
+            <div class="card stat-card">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6 class="text-muted mb-1">Total Entries</h6>
+                            <h3 class="mb-0">{{ stats.total_entries }}</h3>
+                        </div>
+                        <div class="icon-circle bg-primary text-white">
+                            <i class="fas fa-database fa-2x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card stat-card pending">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6 class="text-muted mb-1">Pending Review</h6>
+                            <h3 class="mb-0">{{ stats.pending }}</h3>
+                        </div>
+                        <div class="icon-circle bg-warning text-white">
+                            <i class="fas fa-clock fa-2x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card stat-card approved">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6 class="text-muted mb-1">Approved</h6>
+                            <h3 class="mb-0">{{ stats.approved }}</h3>
+                        </div>
+                        <div class="icon-circle bg-success text-white">
+                            <i class="fas fa-check-circle fa-2x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-md-3">
+            <div class="card stat-card">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>
+                            <h6 class="text-muted mb-1">Today's Entries</h6>
+                            <h3 class="mb-0">{{ stats.today_entries }}</h3>
+                        </div>
+                        <div class="icon-circle bg-info text-white">
+                            <i class="fas fa-calendar-day fa-2x"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="fas fa-bolt me-2"></i>Quick Actions</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3 mb-3">
+                            <a href="{{ url_for('new_entry') }}" class="btn btn-outline-primary w-100">
+                                <i class="fas fa-plus-circle me-2"></i>New Card Entry
+                            </a>
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <a href="{{ url_for('entry_list', status='pending') }}" class="btn btn-outline-warning w-100">
+                                <i class="fas fa-clock me-2"></i>Review Pending
+                            </a>
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <a href="{{ url_for('entry_list', status='approved') }}" class="btn btn-outline-success w-100">
+                                <i class="fas fa-check-circle me-2"></i>View Approved
+                            </a>
+                        </div>
+                        <div class="col-md-3 mb-3">
+                            <a href="{{ url_for('export_approved') }}" class="btn btn-outline-info w-100">
+                                <i class="fas fa-upload me-2"></i>Export to Main DB
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Entries -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="fas fa-history me-2"></i>Recent Entries</h6>
+                    <a href="{{ url_for('entry_list') }}" class="btn btn-sm btn-outline-secondary">View All</a>
+                </div>
+                <div class="card-body">
+                    {% if recent_entries %}
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+                                    <tr>
+                                        <th>Cert ID</th>
+                                        <th>Card Name</th>
+                                        <th>Brand</th>
+                                        <th>Set</th>
+                                        <th>Language</th>
+                                        <th>Final Grade</th>
+                                        <th>Status</th>
+                                        <th>Entry Date</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for entry in recent_entries %}
+                                        <tr>
+                                            <td><strong>{{ entry.cert_id }}</strong></td>
+                                            <td>{{ entry.card_name }}</td>
+                                            <td>{{ entry.brand }}</td>
+                                            <td>{{ entry.set_name or '-' }}</td>
+                                            <td>{{ entry.language or '-' }}</td>
+                                            <td>{{ entry.final_grade_text }}</td>
+                                            <td>
+                                                {% if entry.status == 'pending' %}
+                                                    <span class="badge badge-pending">Pending</span>
+                                                {% elif entry.status == 'approved' %}
+                                                    <span class="badge badge-approved">Approved</span>
+                                                {% else %}
+                                                    <span class="badge badge-rejected">Rejected</span>
+                                                {% endif %}
+                                            </td>
+                                            <td>{{ entry.entry_date[:10] if entry.entry_date else '' }}</td>
+                                            <td>
+                                                <a href="{{ url_for('entry_detail', entry_id=entry.id) }}" class="btn btn-sm btn-outline-primary">
+                                                    <i class="fas fa-eye"></i>
+                                                </a>
+                                            </td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="text-center py-4">
+                            <i class="fas fa-inbox fa-3x text-muted mb-3"></i>
+                            <p class="text-muted">No entries yet. Create your first entry!</p>
+                            <a href="{{ url_for('new_entry') }}" class="btn btn-primary">
+                                <i class="fas fa-plus-circle me-1"></i>Create First Entry
+                            </a>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        .icon-circle {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .badge {
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-weight: 500;
+        }
+        .badge-pending {
+            background-color: #f39c12;
+            color: white;
+        }
+        .badge-approved {
+            background-color: #27ae60;
+            color: white;
+        }
+        .badge-rejected {
+            background-color: #e74c3c;
+            color: white;
+        }
+    </style>
+{% endblock %}

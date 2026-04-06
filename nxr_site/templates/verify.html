@@ -1,0 +1,39 @@
+{% extends "base_site.html" %}
+{% set nav_active = "verify" %}
+
+{% block title %}Verify Card | NXR Grading{% endblock %}
+
+{% block page_css %}
+<style>
+.verify-page{padding:140px 40px 80px;max-width:560px;margin:0 auto}
+.verify-box{background:var(--bg2);border:1px solid var(--border2);border-radius:12px;padding:40px}
+.verify-title{font-size:clamp(24px,3vw,32px);font-weight:900;letter-spacing:-1px;margin-bottom:12px}
+.verify-subtitle{font-size:14px;color:var(--text2);margin-bottom:28px;line-height:1.6}
+.verify-form{display:flex;flex-direction:column;gap:12px}
+.verify-form input{padding:14px 18px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-size:15px;outline:none;transition:border-color .2s}
+.verify-form input:focus{border-color:var(--red)}
+.verify-form input::placeholder{color:var(--text3)}
+.verify-form button{padding:14px;background:var(--red);color:#fff;border:none;border-radius:6px;font-size:15px;font-weight:700;cursor:pointer;transition:background .2s}
+.verify-form button:hover{background:var(--red2)}
+.verify-error{margin-bottom:18px;padding:12px 14px;border:1px solid rgba(233,69,96,.35);border-radius:8px;background:rgba(233,69,96,.1);color:#ffd7dd;font-size:14px;line-height:1.5}
+.hint{margin-top:20px;font-size:13px;color:var(--text3);text-align:center;line-height:1.6}
+@media(max-width:600px){.verify-page{padding:120px 20px 60px}.verify-box{padding:28px 20px}}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="verify-page">
+  <div class="verify-box">
+    <h1 class="verify-title">Verify Your Card</h1>
+    <p class="verify-subtitle">Enter the certificate ID from your slab to verify authenticity and view the full grading report.</p>
+    {% if error %}
+    <div class="verify-error">{{ error }}</div>
+    {% endif %}
+    <form class="verify-form" method="POST" action="/verify">
+      <input type="text" name="cert_id" placeholder="Certificate ID (e.g., NXR123456)" required autocomplete="off" value="{{ cert_id or '' }}">
+      <button type="submit">Verify Card</button>
+    </form>
+    <p class="hint">The certificate ID is printed on your slab label.<br>ID is case-insensitive.</p>
+  </div>
+</div>
+{% endblock %}

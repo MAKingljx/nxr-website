@@ -1,0 +1,221 @@
+{% extends "base_site.html" %}
+{% set nav_active = "services" %}
+
+{% block title %}Grading Services | NXR Grading{% endblock %}
+
+{% block page_css %}
+<style>
+.tiers-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:2px;background:var(--border);margin-top:56px}
+.tier{background:var(--bg2);padding:36px 28px;position:relative;transition:background .2s}
+.tier:hover{background:var(--bg3)}
+.tier.featured{background:var(--bg3);border-top:2px solid var(--red)}
+.tier-badge{position:absolute;top:16px;right:16px;background:var(--red);color:#fff;font-size:10px;font-weight:700;letter-spacing:1.5px;padding:4px 10px;border-radius:20px;text-transform:uppercase}
+.tier-name{font-size:20px;font-weight:900;margin-bottom:6px}
+.tier-turnaround{font-size:13px;color:var(--text3);margin-bottom:24px}
+.tier-price{font-size:40px;font-weight:900;color:var(--text);margin-bottom:4px}
+.tier-price span{font-size:16px;color:var(--text3);font-weight:400}
+.tier-desc{font-size:13px;color:var(--text2);line-height:1.6;margin:20px 0;padding-top:20px;border-top:1px solid var(--border)}
+.tier-features{list-style:none;display:flex;flex-direction:column;gap:10px;margin-bottom:28px}
+.tier-features li{font-size:13px;color:var(--text2);display:flex;align-items:flex-start;gap:8px}
+.tier-features li::before{content:'✓';color:var(--red);font-weight:700;flex-shrink:0}
+.tier-btn{display:block;width:100%;padding:12px;background:transparent;color:var(--text);border:1px solid var(--border2);border-radius:4px;font-size:14px;font-weight:600;text-align:center;transition:all .2s}
+.tier-btn:hover,.tier.featured .tier-btn{background:var(--red);border-color:var(--red);color:#fff}
+.included-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:48px}
+.included-item{background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:24px}
+.included-item h4{font-size:15px;font-weight:700;margin-bottom:8px}
+.included-item p{font-size:13px;color:var(--text2);line-height:1.6}
+.compare-wrap{overflow-x:auto;margin-top:48px}
+.compare-table{width:100%;border-collapse:collapse;min-width:600px}
+.compare-table th{padding:14px 20px;text-align:left;font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text2);border-bottom:1px solid var(--border)}
+.compare-table th:first-child{color:var(--text3)}
+.compare-table td{padding:14px 20px;font-size:14px;border-bottom:1px solid var(--border);color:var(--text2)}
+.compare-table td:first-child{color:var(--text);font-weight:500}
+.compare-table tr:last-child td{border-bottom:none}
+.compare-table .check{color:#22c55e;font-weight:700}
+.compare-table .cross{color:var(--text3)}
+.compare-table .highlight td{background:rgba(233,69,96,.04)}
+.btn-secondary{margin-left:12px}
+@media(max-width:900px){.tiers-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:700px){.included-grid{grid-template-columns:1fr}}
+@media(max-width:500px){.tiers-grid{grid-template-columns:1fr}}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-hero">
+  <div class="page-hero-inner">
+    <div class="section-tag">Grading Services</div>
+    <h1>Honest grades.<br>Every tier.</h1>
+    <p>Whether you're grading a bulk lot or a vintage chase card, every submission gets the same AI + human dual verification process. The tier only affects turnaround time — never the quality of the grade.</p>
+  </div>
+</div>
+
+<section class="section">
+  <div class="section-inner">
+    <div class="section-tag">Service Tiers</div>
+    <h2 style="font-size:clamp(26px,3.5vw,40px);font-weight:900;letter-spacing:-1px;margin-bottom:8px">Choose your turnaround</h2>
+    <p style="color:var(--text2);font-size:15px">Same grading standards across all tiers. No shortcuts, no compromises.</p>
+    <div class="tiers-grid">
+      <div class="tier">
+        <div class="tier-name">Economy</div>
+        <div class="tier-turnaround">20–30 business days</div>
+        <div class="tier-price">$15<span>/card</span></div>
+        <div class="tier-desc">Best for bulk submissions and lower-value cards where turnaround time is flexible.</div>
+        <ul class="tier-features">
+          <li>AI + human dual grading</li>
+          <li>Full sub-score breakdown</li>
+          <li>Premium slab encapsulation</li>
+          <li>NFC + QR verification</li>
+          <li>Digital certificate</li>
+        </ul>
+        <a href="/submit" class="tier-btn">Submit Economy</a>
+      </div>
+      <div class="tier">
+        <div class="tier-name">Standard</div>
+        <div class="tier-turnaround">10–15 business days</div>
+        <div class="tier-price">$25<span>/card</span></div>
+        <div class="tier-desc">The most popular tier. Balanced turnaround for mid-value cards and regular collectors.</div>
+        <ul class="tier-features">
+          <li>AI + human dual grading</li>
+          <li>Full sub-score breakdown</li>
+          <li>Premium slab encapsulation</li>
+          <li>NFC + QR verification</li>
+          <li>Digital certificate</li>
+          <li>Priority customer support</li>
+        </ul>
+        <a href="/submit" class="tier-btn">Submit Standard</a>
+      </div>
+      <div class="tier featured">
+        <div class="tier-badge">Popular</div>
+        <div class="tier-name">Express</div>
+        <div class="tier-turnaround">5–7 business days</div>
+        <div class="tier-price">$45<span>/card</span></div>
+        <div class="tier-desc">Fast-track processing for time-sensitive submissions. Ideal for cards you want graded quickly.</div>
+        <ul class="tier-features">
+          <li>AI + human dual grading</li>
+          <li>Full sub-score breakdown</li>
+          <li>Premium slab encapsulation</li>
+          <li>NFC + QR verification</li>
+          <li>Digital certificate</li>
+          <li>Priority customer support</li>
+          <li>Insured return shipping</li>
+        </ul>
+        <a href="/submit" class="tier-btn">Submit Express</a>
+      </div>
+      <div class="tier">
+        <div class="tier-name">Premium</div>
+        <div class="tier-turnaround">2–3 business days</div>
+        <div class="tier-price">$85<span>/card</span></div>
+        <div class="tier-desc">Maximum priority for high-value cards. Fastest possible turnaround with full coverage.</div>
+        <ul class="tier-features">
+          <li>AI + human dual grading</li>
+          <li>Full sub-score breakdown</li>
+          <li>Premium slab encapsulation</li>
+          <li>NFC + QR verification</li>
+          <li>Digital certificate</li>
+          <li>Dedicated account manager</li>
+          <li>Insured return shipping</li>
+          <li>Full insurance coverage</li>
+        </ul>
+        <a href="/submit" class="tier-btn">Submit Premium</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section bg2">
+  <div class="section-inner">
+    <div class="section-tag">What's Included</div>
+    <h2 style="font-size:clamp(26px,3.5vw,40px);font-weight:900;letter-spacing:-1px;margin-bottom:8px">Every submission includes</h2>
+    <p style="color:var(--text2);font-size:15px">No hidden fees. No upsells. Everything you need is included in every tier.</p>
+    <div class="included-grid">
+      <div class="included-item">
+        <h4>🤖 AI + Human Dual Grading</h4>
+        <p>Our AI system scans and grades first. A certified human grader then independently reviews. Both must agree before a grade is issued.</p>
+      </div>
+      <div class="included-item">
+        <h4>📊 Full Sub-Score Breakdown</h4>
+        <p>Centering, edges, corners, and surface — all published with your grade. You'll know exactly how every point was earned or lost.</p>
+      </div>
+      <div class="included-item">
+        <h4>🔒 Premium Slab Encapsulation</h4>
+        <p>UV-resistant, tamper-evident, optically clear slabs. Engineered for decades of protection, not just display.</p>
+      </div>
+      <div class="included-item">
+        <h4>📱 NFC + QR Verification</h4>
+        <p>Dual verification built into every slab. Scan with any phone — no app required — to instantly verify authenticity and grade.</p>
+      </div>
+      <div class="included-item">
+        <h4>🌐 Digital Certificate</h4>
+        <p>A permanent, publicly accessible digital record of your card's grade, sub-scores, and authentication status.</p>
+      </div>
+      <div class="included-item">
+        <h4>📦 Secure Handling</h4>
+        <p>Your cards are tracked and handled with care at every step. Fully insured while in our facility.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="section-inner">
+    <div class="section-tag">Comparison</div>
+    <h2 style="font-size:clamp(26px,3.5vw,40px);font-weight:900;letter-spacing:-1px;margin-bottom:8px">How we compare</h2>
+    <p style="color:var(--text2);font-size:15px;margin-bottom:0">The grading industry has a transparency problem. Here's where we stand.</p>
+    <div class="compare-wrap">
+      <table class="compare-table">
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th>NXR Grading</th>
+            <th>Traditional Graders</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="highlight">
+            <td>Sub-scores published</td>
+            <td class="check">✓ Always, all 4</td>
+            <td class="cross">Rarely or never</td>
+          </tr>
+          <tr>
+            <td>AI-assisted grading</td>
+            <td class="check">✓ Every card</td>
+            <td class="cross">Limited or none</td>
+          </tr>
+          <tr class="highlight">
+            <td>Grading criteria documented</td>
+            <td class="check">✓ Fully public</td>
+            <td class="cross">Vague or proprietary</td>
+          </tr>
+          <tr>
+            <td>Same standards for all submissions</td>
+            <td class="check">✓ No exceptions</td>
+            <td class="cross">VIP tiers exist</td>
+          </tr>
+          <tr class="highlight">
+            <td>Grade dispute process</td>
+            <td class="check">✓ Full audit trail</td>
+            <td class="cross">Opaque or unavailable</td>
+          </tr>
+          <tr>
+            <td>NFC + QR dual verification</td>
+            <td class="check">✓ Standard</td>
+            <td class="cross">QR only or none</td>
+          </tr>
+          <tr class="highlight">
+            <td>Digital certificate included</td>
+            <td class="check">✓ Free, always</td>
+            <td class="cross">Paid add-on</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="cta-strip">
+      <h2>The grade you see is the grade you get.</h2>
+      <p>No surprises. No black box. Submit your cards and experience grading done right.</p>
+      <a href="/submit" class="btn-primary">Submit Your Cards</a>
+      <a href="/faq" class="btn-secondary">Read the FAQ</a>
+    </div>
+  </div>
+</section>
+{% endblock %}

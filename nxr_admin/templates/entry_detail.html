@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+
+{% block title %}{{ entry.cert_id }} - NXR Card Grading{% endblock %}
+
+{% block page_title %}
+    <i class="fas fa-info-circle me-2"></i>Entry Details: {{ entry.cert_id }}
+{% endblock %}
+
+{% block page_actions %}
+    <div class="btn-group">
+        <a href="{{ url_for('edit_entry', entry_id=entry.id) }}" class="btn btn-outline-secondary">
+            <i class="fas fa-edit me-1"></i>Edit
+        </a>
+        <a href="{{ url_for('entry_list') }}" class="btn btn-outline-primary">
+            <i class="fas fa-arrow-left me-1"></i>Back to List
+        </a>
+    </div>
+{% endblock %}
+
+{% block content %}
+    <div class="row">
+        <!-- Card Information -->
+        <div class="col-md-8">
+            <div class="card mb-4">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="fas fa-id-card me-2"></i>Card Information</h6>
+                    <span class="badge {% if entry.status == 'pending' %}badge-pending{% elif entry.status == 'approved' %}badge-approved{% else %}badge-rejected{% endif %}">
+                        {{ entry.status|title }}
+                    </span>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <table class="table table-borderless">
+                                <tr>
+                                    <th width="40%">Certificate ID:</th>
+                                    <td><strong>{{ entry.cert_id }}</strong></td>
+                                </tr>
+                                <tr>
+                                    <th>Card Name:</th>
+                                    <td>{{ entry.card_name }}</td>
+                                </tr>
+                                <tr>
+                                    <th>Brand:</th>
+                                    <td>{{ entry.brand }}</td>
+                                </tr>
+                                <tr>
+                                    <th>Year:</th>
+                                    <td>{{ entry.year }}</td>
+                                </tr>
+                                <tr>
+                                    <th>Set Name:</th>
+                                    <td>{{ entry.set_name }}</td>
+                                </tr>
+                            </table>
+                        </div>
+                        <div class="col-md-6">
+                            <table class="table table-borderless">
+                                <tr>
+                                    <th width="40%">Variety/Type:</th>
+                                    <td>{{ entry.variety }}</td>
+                                </tr>
+                                <tr>
+                                    <th>Population:</th>
+                                    <td>{{ entry.pop }}</td>
+                                </tr>
+                                <tr>
+                                    <th>Card Number:</th>
+                                    <td>{{ entry.card_number }}</td>
+                                </tr>
+                                <tr>
+                                    <th>Language:</th>
+                                    <td>{{ entry.language }}</td>
+                                </tr>
+                                <tr>
+                                    <th>Final Grade:</th>
+                                    <td>
+                                        <strong>{{ entry.final_grade_text }}</strong>
+                                        <small class="text-muted ms-2">(Calculated: {{ entry.final_grade }})</small>
+                                    </td>
+                                </tr>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Grading Details -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="fas fa-star me-2"></i>Grading Details</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-3 text-center">
+                            <div class="mb-3">
+                                <div class="display-6">{{ entry.centering }}</div>
+                                <small class="text-muted">Centering</small>
+                            </div>
+                        </div>
+                        <div class="col-md-3 text-center">
+                            <div class="mb-3">
+                                <div class="display-6">{{ entry.edges }}</div>
+                                <small class="text-muted">Edges</small>
+                            </div>
+                        </div>
+                        <div class="col-md-3 text-center">
+                            <div class="mb-3">
+                                <div class="display-6">{{ entry.corners }}</div>
+                                <small class="text-muted">Corners</small>
+                            </div>
+                        </div>
+                        <div class="col-md-3 text-center">
+                            <div class="mb-3">
+                                <div class="display-6">{{ entry.surface }}</div>
+                                <small class="text-muted">Surface</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Notes -->
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="fas fa-sticky-note me-2"></i>Notes</h6>
+                </div>
+                <div class="card-body">
+                    {% if entry.entry_notes %}
+                        <p>{{ entry.entry_notes }}</p>
+                    {% else %}
+                        <p class="text-muted">No notes provided.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Sidebar -->
+        <div class="col-md-4">
+            <!-- Entry Metadata -->
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="fas fa-info-circle me-2"></i>Entry Metadata</h6>
+                </div>
+                <div class="card-body">
+                    <table class="table table-borderless">
+                        <tr>
+                            <th>Entry ID:</th>
+                            <td>{{ entry.id }}</td>
+                        </tr>
+                        <tr>
+                            <th>Entered By:</th>
+                            <td>{{ entry.entry_by }}</td>
+                        </tr>
+                        <tr>
+                            <th>Entry Date:</th>
+                            <td>{{ entry.entry_date }}</td>
+                        </tr>
+                        <tr>
+                            <th>Created At:</th>
+                            <td>{{ entry.created_at }}</td>
+                        </tr>
+                        <tr>
+                            <th>Updated At:</th>
+                            <td>{{ entry.updated_at }}</td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="fas fa-cogs me-2"></i>Actions</h6>
+                </div>
+                <div class="card-body">
+                    <div class="d-grid gap-2">
+                        {% if entry.status == 'pending' %}
+                            <form method="POST" action="{{ url_for('approve_entry', entry_id=entry.id) }}" 
+                                  onsubmit="return confirm('Approve this entry?')">
+                                <button type="submit" class="btn btn-success w-100 mb-2">
+                                    <i class="fas fa-check me-1"></i>Approve Entry
+                                </button>
+                            </form>
+                        {% endif %}
+                        
+                        <a href="{{ url_for('edit_entry', entry_id=entry.id) }}" class="btn btn-primary w-100 mb-2">
+                            <i class="fas fa-edit me-1"></i>Edit Entry
+                        </a>
+                        
+                        <a href="{{ url_for('entry_list') }}" class="btn btn-outline-secondary w-100">
+                            <i class="fas fa-list me-1"></i>Back to List
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        .badge {
+            padding: 5px 10px;
+            border-radius: 20px;
+            font-weight: 500;
+        }
+        .badge-pending {
+            background-color: #f39c12;
+            color: white;
+        }
+        .badge-approved {
+            background-color: #27ae60;
+            color: white;
+        }
+        .badge-rejected {
+            background-color: #e74c3c;
+            color: white;
+        }
+        th {
+            color: #2c3e50;
+            font-weight: 500;
+        }
+        .display-6 {
+            font-weight: 600;
+            color: #3498db;
+        }
+    </style>
+{% endblock %}

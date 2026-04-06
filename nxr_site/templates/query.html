@@ -1,0 +1,93 @@
+{% extends "base_site.html" %}
+{% set nav_active = "verify" %}
+
+{% block title %}Verify Your Grade | NXR Card Grading{% endblock %}
+
+{% block page_css %}
+<style>
+.query-header{
+  padding:150px 40px 60px;
+  position:relative;
+  overflow:hidden;
+  border-bottom:1px solid var(--border);
+}
+.query-header::before{
+  content:'';
+  position:absolute;
+  inset:0;
+  background:
+    radial-gradient(circle at 20% 30%,rgba(233,69,96,.12),transparent 40%),
+    linear-gradient(135deg,rgba(255,255,255,.02),transparent 55%);
+}
+.query-header-inner{max-width:1100px;margin:0 auto;position:relative;z-index:1}
+.query-header h1{font-size:clamp(36px,5vw,58px);font-weight:900;letter-spacing:-2px;margin-bottom:10px}
+.query-header p{font-size:18px;color:var(--text2);max-width:620px;line-height:1.7}
+.query-section{padding:80px 40px}
+.query-container{max-width:1100px;margin:0 auto}
+.query-panel{
+  max-width:640px;
+  margin:0 auto;
+  background:var(--bg2);
+  border:1px solid var(--border2);
+  border-radius:18px;
+  padding:40px;
+  text-align:center;
+  box-shadow:0 20px 50px rgba(0,0,0,.18);
+}
+.query-panel h2{font-size:32px;font-weight:900;letter-spacing:-1px;margin-bottom:16px}
+.query-panel p{color:var(--text2);font-size:15px;line-height:1.7;margin-bottom:28px}
+.query-form{display:flex;gap:16px;margin-bottom:28px}
+.query-form input{
+  flex:1;
+  padding:14px 18px;
+  background:var(--bg3);
+  border:1px solid var(--border2);
+  border-radius:8px;
+  color:var(--text);
+  font-size:15px;
+  outline:none;
+}
+.query-form input:focus{border-color:var(--red)}
+.query-qr{
+  width:108px;
+  height:108px;
+  margin:0 auto;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:var(--bg3);
+  border:1px solid var(--border2);
+  border-radius:16px;
+}
+.query-qr img{width:68px;height:68px;object-fit:contain;opacity:.9}
+.query-meta{margin-top:16px;font-size:12px;color:var(--text3);line-height:1.6}
+@media(max-width:768px){.query-form{flex-direction:column}}
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="query-header">
+  <div class="query-header-inner">
+    <div class="section-tag">Quick Lookup</div>
+    <h1>Verify Your Grade</h1>
+    <p>Instantly check your card's authenticity and grading details with the certificate number printed on the slab.</p>
+  </div>
+</section>
+
+<section class="query-section">
+  <div class="query-container">
+    <div class="query-panel">
+      <h2>Enter Your Certificate Number</h2>
+      <p>Scan the QR code on your slab or enter the certificate number below to verify your grade.</p>
+      <form class="query-form" method="POST" action="/verify">
+        <input type="text" name="cert_id" placeholder="Enter Certificate Number" required autocomplete="off">
+        <button type="submit" class="btn-primary">Verify</button>
+      </form>
+      <div class="query-qr">
+        <img src="/static/images/feature-qr.png" alt="QR Verification">
+      </div>
+      <p class="query-meta">You can also use the main <a href="/verify" style="color:var(--red)">verification page</a> for the full lookup flow.</p>
+    </div>
+  </div>
+</section>
+{% endblock %}
