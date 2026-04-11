@@ -300,6 +300,29 @@ def get_admin_account(username):
     return account
 
 
+def get_admin_account_by_id(user_id):
+    with get_main_db_connection() as conn:
+        row = conn.execute(
+            '''
+            SELECT id, username, email, role, is_active, created_at, last_login
+            FROM admin_users
+            WHERE id = ?
+            LIMIT 1
+            ''',
+            (user_id,),
+        ).fetchone()
+
+    if not row:
+        return None
+
+    account = dict(row)
+    account['role'] = normalize_admin_role(account.get('role'), default='admin')
+    account['role_label'] = ADMIN_ROLE_LABELS.get(account['role'], account['role'].title())
+    account['is_superadmin'] = is_superadmin_role(account['role'])
+    account['is_active'] = bool(account.get('is_active'))
+    return account
+
+
 def list_admin_accounts():
     with get_main_db_connection() as conn:
         rows = conn.execute(
@@ -327,13 +350,46 @@ def list_admin_accounts():
     return accounts
 
 
-def admin_username_exists(username):
+def count_active_superadmins(exclude_user_id=None):
+    query = '''
+        SELECT COUNT(*)
+        FROM admin_users
+        WHERE lower(role) = 'superadmin' AND is_active = 1
+    '''
+    params = []
+    if exclude_user_id is not None:
+        query += ' AND id != ?'
+        params.append(exclude_user_id)
+
     with get_main_db_connection() as conn:
-        row = conn.execute(
-            'SELECT 1 FROM admin_users WHERE username = ? COLLATE NOCASE LIMIT 1',
-            (username,),
-        ).fetchone()
+        return conn.execute(query, tuple(params)).fetchone()[0]
+
+
+def admin_username_exists(username, exclude_user_id=None):
+    query = 'SELECT 1 FROM admin_users WHERE username = ? COLLATE NOCASE'
+    params = [username]
+    if exclude_user_id is not None:
+        query += ' AND id != ?'
+        params.append(exclude_user_id)
+    query += ' LIMIT 1'
+
+    with get_main_db_connection() as conn:
+        row = conn.execute(query, tuple(params)).fetchone()
     return bool(row)
+
+
+def update_admin_user(conn, user_id, username, role='admin', email=None, is_active=1, password=None):
+    params = [username, email, role, is_active]
+    query = '''
+        UPDATE admin_users
+        SET username = ?, email = ?, role = ?, is_active = ?
+    '''
+    if password:
+        query += ', password_hash = ?'
+        params.append(hash_admin_password(password))
+    query += ' WHERE id = ?'
+    params.append(user_id)
+    conn.execute(query, tuple(params))
 
 
 def update_admin_last_login(username):
@@ -1499,6 +1555,7 @@ def dashboard():
 @app.route('/admin/users', methods=['GET', 'POST'])
 @superadmin_required
 def admin_users():
+    edit_user_id = request.args.get('edit', type=int)
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '').strip()
@@ -1539,8 +1596,69 @@ def admin_users():
     return render_template(
         'admin_users.html',
         admin_accounts=list_admin_accounts(),
+        editing_account=get_admin_account_by_id(edit_user_id) if edit_user_id else None,
         role_options=[{'value': role, 'label': ADMIN_ROLE_LABELS[role]} for role in MANAGEABLE_ADMIN_ROLES],
+        edit_role_options=[{'value': role, 'label': ADMIN_ROLE_LABELS[role]} for role in ('superadmin',) + MANAGEABLE_ADMIN_ROLES],
     )
+
+
+@app.route('/admin/users/<int:user_id>/edit', methods=['POST'])
+@superadmin_required
+def update_admin_user_route(user_id):
+    existing_account = get_admin_account_by_id(user_id)
+    if not existing_account:
+        flash('Administrator account not found.', 'error')
+        return redirect(url_for('admin_users'))
+
+    username = request.form.get('username', '').strip()
+    password = request.form.get('password', '').strip()
+    email = request.form.get('email', '').strip() or None
+    role = normalize_admin_role(request.form.get('role'), default=existing_account['role'])
+    is_active = 1 if request.form.get('is_active') == '1' else 0
+
+    if not username:
+        flash('Username is required.', 'error')
+        return redirect(url_for('admin_users', edit=user_id))
+    if password and len(password) < 6:
+        flash('Password must be at least 6 characters long when updating it.', 'error')
+        return redirect(url_for('admin_users', edit=user_id))
+    if role not in ADMIN_ROLE_LABELS:
+        flash('Invalid administrator role.', 'error')
+        return redirect(url_for('admin_users', edit=user_id))
+    if admin_username_exists(username, exclude_user_id=user_id):
+        flash(f'Username "{username}" already exists.', 'warning')
+        return redirect(url_for('admin_users', edit=user_id))
+
+    if existing_account['is_superadmin'] and (role != 'superadmin' or not is_active):
+        if count_active_superadmins(exclude_user_id=user_id) == 0:
+            flash('You must keep at least one active super admin account.', 'error')
+            return redirect(url_for('admin_users', edit=user_id))
+
+    with get_main_db_connection() as conn:
+        update_admin_user(
+            conn,
+            user_id=user_id,
+            username=username,
+            role=role,
+            email=email,
+            is_active=is_active,
+            password=password or None,
+        )
+        conn.commit()
+
+    is_current_session_user = session.get('username', '').lower() == existing_account['username'].lower()
+    if is_current_session_user:
+        session['username'] = username
+        session['role'] = role
+
+    flash(f'Administrator account "{username}" updated successfully.', 'success')
+    if is_current_session_user and not is_active:
+        session.clear()
+        flash('Your account was set to inactive. Please login again with an active administrator account.', 'info')
+        return redirect(url_for('admin_login'))
+    if is_current_session_user and not is_superadmin_role(role):
+        return redirect(url_for('dashboard'))
+    return redirect(url_for('admin_users', edit=user_id))
 
 # ========== New Entry ==========
 @app.route('/admin/entry/new', methods=['GET', 'POST'])
