@@ -51,7 +51,6 @@
 - Admin/control backend: `nxr_admin/`
 - Local sync script: `scripts/sync_to_server.sh`
 - Legacy production entrypoint still present on server: `app.py`
-- Editor page: `editor/`
 - Databases: `Data/cards.db`, `Data/temp_cards.db`
 - Project prompt: `AGENTS.md`
 - SSH notes: `SSH.md` (local-only)
