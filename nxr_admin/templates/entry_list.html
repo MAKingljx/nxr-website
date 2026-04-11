@@ -45,26 +45,42 @@
     </div>
 
     <!-- Filter and Sort Form -->
-    {% if status_filter == 'approved' %}
     <div class="row mb-4">
         <div class="col-12">
             <div class="card">
                 <div class="card-header">
-                    <h6 class="mb-0"><i class="fas fa-filter me-2"></i>Filter & Sort Approved Entries</h6>
+                    <h6 class="mb-0"><i class="fas fa-filter me-2"></i>Filter & Sort Entries</h6>
                 </div>
                 <div class="card-body">
                     <form method="get" action="{{ url_for('entry_list') }}" class="row g-3">
-                        <input type="hidden" name="status" value="approved">
+                        <input type="hidden" name="status" value="{{ status_filter }}">
+
+                        <div class="col-md-2">
+                            <label class="form-label">Cert ID</label>
+                            <input type="text" class="form-control" name="cert_id"
+                                   value="{{ cert_id_filter }}"
+                                   placeholder="Search cert ID...">
+                        </div>
                         
-                        <!-- Card Name Filter -->
                         <div class="col-md-3">
                             <label class="form-label">Card Name</label>
                             <input type="text" class="form-control" name="card_name" 
                                    value="{{ card_name_filter }}" 
                                    placeholder="Search card name...">
                         </div>
+
+                        <div class="col-md-2">
+                            <label class="form-label">Brand</label>
+                            <select class="form-select" name="brand">
+                                <option value="">All Brands</option>
+                                {% for brand in brand_options_for_filter %}
+                                    <option value="{{ brand }}" {% if brand_filter == brand %}selected{% endif %}>
+                                        {{ brand }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
                         
-                        <!-- Final Grade Filter -->
                         <div class="col-md-2">
                             <label class="form-label">Final Grade</label>
                             <select class="form-select" name="final_grade">
@@ -77,20 +93,13 @@
                             </select>
                         </div>
                         
-                        <!-- Set Name Filter -->
                         <div class="col-md-3">
                             <label class="form-label">Set Name</label>
-                            <select class="form-select" name="set_name">
-                                <option value="">All Sets</option>
-                                {% for set_name in set_options %}
-                                    <option value="{{ set_name }}" {% if set_name_filter == set_name %}selected{% endif %}>
-                                        {{ set_name }}
-                                    </option>
-                                {% endfor %}
-                            </select>
+                            <input type="text" class="form-control" name="set_name"
+                                   value="{{ set_name_filter }}"
+                                   placeholder="Search set name...">
                         </div>
                         
-                        <!-- Language Filter -->
                         <div class="col-md-2">
                             <label class="form-label">Language</label>
                             <select class="form-select" name="language">
@@ -102,13 +111,23 @@
                                 {% endfor %}
                             </select>
                         </div>
+
+                        <div class="col-md-3">
+                            <label class="form-label">Entered By</label>
+                            <input type="text" class="form-control" name="entered_by"
+                                   value="{{ entered_by_filter }}"
+                                   placeholder="Search by uploader...">
+                        </div>
                         
-                        <!-- Sort Options -->
                         <div class="col-md-2">
                             <label class="form-label">Sort By</label>
                             <select class="form-select" name="sort_by">
-                                <option value="entry_date" {% if sort_by == 'entry_date' %}selected{% endif %}>Approval Date</option>
+                                <option value="entry_date" {% if sort_by == 'entry_date' %}selected{% endif %}>
+                                    {% if status_filter == 'approved' %}Approval Date{% else %}Entry Date{% endif %}
+                                </option>
+                                <option value="cert_id" {% if sort_by == 'cert_id' %}selected{% endif %}>Cert ID</option>
                                 <option value="card_name" {% if sort_by == 'card_name' %}selected{% endif %}>Card Name</option>
+                                <option value="brand" {% if sort_by == 'brand' %}selected{% endif %}>Brand</option>
                                 <option value="final_grade" {% if sort_by == 'final_grade' %}selected{% endif %}>Final Grade</option>
                                 <option value="set_name" {% if sort_by == 'set_name' %}selected{% endif %}>Set Name</option>
                                 <option value="language" {% if sort_by == 'language' %}selected{% endif %}>Language</option>
@@ -130,7 +149,7 @@
                                 <button type="submit" class="btn btn-primary">
                                     <i class="fas fa-search me-1"></i>Apply Filters
                                 </button>
-                                <a href="{{ url_for('entry_list', status='approved') }}" class="btn btn-outline-secondary">
+                                <a href="{{ url_for('entry_list', status=status_filter) }}" class="btn btn-outline-secondary">
                                     <i class="fas fa-times me-1"></i>Clear Filters
                                 </a>
                                 <div class="ms-auto">
@@ -146,7 +165,6 @@
             </div>
         </div>
     </div>
-    {% endif %}
 
     <!-- Entries Table -->
     <div class="row">
@@ -164,6 +182,11 @@
                         {% endif %}
                     </h6>
                     <div class="btn-group">
+                        {% if status_filter == 'pending' %}
+                            <button id="batch-approve-btn" class="btn btn-sm btn-success" disabled>
+                                <i class="fas fa-check-double me-1"></i>Batch Approve
+                            </button>
+                        {% endif %}
                         <a href="{{ url_for('export_approved') }}" class="btn btn-sm btn-outline-info">
                             <i class="fas fa-download me-1"></i>Export Approved
                         </a>
@@ -185,48 +208,57 @@
                             <table class="table table-hover">
                                 <thead>
                                     <tr>
+                                        {% if status_filter == 'pending' %}
+                                            <th style="width: 40px;">
+                                                <input type="checkbox" id="select-all" class="form-check-input">
+                                            </th>
+                                        {% endif %}
                                         <th>ID</th>
-                                        <th>Cert ID</th>
                                         <th>
-                                            {% if status_filter == 'approved' %}
-                                            <a href="{{ url_for('entry_list', status='approved', card_name=card_name_filter, final_grade=final_grade_filter, set_name=set_name_filter, language=language_filter, sort_by='card_name', sort_order='asc' if sort_by == 'card_name' and sort_order == 'desc' else 'desc') }}"
+                                            <a href="{{ url_for('entry_list', status=status_filter, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, final_grade=final_grade_filter, set_name=set_name_filter, language=language_filter, entered_by=entered_by_filter, sort_by='cert_id', sort_order='asc' if sort_by == 'cert_id' and sort_order == 'desc' else 'desc') }}"
+                                               class="text-decoration-none text-dark">
+                                                Cert ID
+                                                {% if sort_by == 'cert_id' %}
+                                                    <i class="fas fa-sort-{{ 'up' if sort_order == 'asc' else 'down' }} ms-1"></i>
+                                                {% endif %}
+                                            </a>
+                                        </th>
+                                        <th>
+                                            <a href="{{ url_for('entry_list', status=status_filter, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, final_grade=final_grade_filter, set_name=set_name_filter, language=language_filter, entered_by=entered_by_filter, sort_by='card_name', sort_order='asc' if sort_by == 'card_name' and sort_order == 'desc' else 'desc') }}"
                                                class="text-decoration-none text-dark">
                                                 Card Name
                                                 {% if sort_by == 'card_name' %}
                                                     <i class="fas fa-sort-{{ 'up' if sort_order == 'asc' else 'down' }} ms-1"></i>
                                                 {% endif %}
                                             </a>
-                                            {% else %}
-                                                Card Name
-                                            {% endif %}
                                         </th>
-                                        <th>Brand</th>
                                         <th>
-                                            {% if status_filter == 'approved' %}
-                                            <a href="{{ url_for('entry_list', status='approved', card_name=card_name_filter, final_grade=final_grade_filter, set_name=set_name_filter, language=language_filter, sort_by='final_grade', sort_order='asc' if sort_by == 'final_grade' and sort_order == 'desc' else 'desc') }}"
+                                            <a href="{{ url_for('entry_list', status=status_filter, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, final_grade=final_grade_filter, set_name=set_name_filter, language=language_filter, entered_by=entered_by_filter, sort_by='brand', sort_order='asc' if sort_by == 'brand' and sort_order == 'desc' else 'desc') }}"
+                                               class="text-decoration-none text-dark">
+                                                Brand
+                                                {% if sort_by == 'brand' %}
+                                                    <i class="fas fa-sort-{{ 'up' if sort_order == 'asc' else 'down' }} ms-1"></i>
+                                                {% endif %}
+                                            </a>
+                                        </th>
+                                        <th>
+                                            <a href="{{ url_for('entry_list', status=status_filter, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, final_grade=final_grade_filter, set_name=set_name_filter, language=language_filter, entered_by=entered_by_filter, sort_by='final_grade', sort_order='asc' if sort_by == 'final_grade' and sort_order == 'desc' else 'desc') }}"
                                                class="text-decoration-none text-dark">
                                                 Final Grade
                                                 {% if sort_by == 'final_grade' %}
                                                     <i class="fas fa-sort-{{ 'up' if sort_order == 'asc' else 'down' }} ms-1"></i>
                                                 {% endif %}
                                             </a>
-                                            {% else %}
-                                                Final Grade
-                                            {% endif %}
                                         </th>
                                         <th>Status</th>
                                         <th>
-                                            {% if status_filter == 'approved' %}
-                                            <a href="{{ url_for('entry_list', status='approved', card_name=card_name_filter, final_grade=final_grade_filter, set_name=set_name_filter, language=language_filter, sort_by='entry_date', sort_order='asc' if sort_by == 'entry_date' and sort_order == 'desc' else 'desc') }}"
+                                            <a href="{{ url_for('entry_list', status=status_filter, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, final_grade=final_grade_filter, set_name=set_name_filter, language=language_filter, entered_by=entered_by_filter, sort_by='entry_date', sort_order='asc' if sort_by == 'entry_date' and sort_order == 'desc' else 'desc') }}"
                                                class="text-decoration-none text-dark">
-                                                Approval Date
+                                                {% if status_filter == 'approved' %}Approval Date{% else %}Entry Date{% endif %}
                                                 {% if sort_by == 'entry_date' %}
                                                     <i class="fas fa-sort-{{ 'up' if sort_order == 'asc' else 'down' }} ms-1"></i>
                                                 {% endif %}
                                             </a>
-                                            {% else %}
-                                                Entry Date
-                                            {% endif %}
                                         </th>
                                         <th>Actions</th>
                                     </tr>
@@ -234,6 +266,12 @@
                                 <tbody>
                                     {% for entry in entries %}
                                         <tr>
+                                            {% if status_filter == 'pending' %}
+                                                <td>
+                                                    <input type="checkbox" class="entry-checkbox form-check-input"
+                                                           value="{{ entry.id }}" {% if entry.status != 'pending' %}disabled{% endif %}>
+                                                </td>
+                                            {% endif %}
                                             <td>{{ entry.id }}</td>
                                             <td><strong>{{ entry.cert_id }}</strong></td>
                                             <td>{{ entry.card_name }}</td>
@@ -251,7 +289,7 @@
                                                     <span class="badge badge-rejected">Rejected</span>
                                                 {% endif %}
                                             </td>
-                                            <td>{{ entry.entry_date[:10] if entry.entry_date else '' }}</td>
+                                            <td>{{ entry.display_date }}</td>
                                             <td>
                                                 <div class="btn-group btn-group-sm">
                                                     <a href="{{ url_for('entry_detail', entry_id=entry.id) }}" 
@@ -339,4 +377,87 @@
             padding: 0.25rem 0.5rem;
         }
     </style>
+    
+    {% if status_filter == 'pending' %}
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const selectAll = document.getElementById('select-all');
+            const checkboxes = document.querySelectorAll('.entry-checkbox');
+            const batchApproveBtn = document.getElementById('batch-approve-btn');
+
+            function updateBatchButton() {
+                const checkedCount = document.querySelectorAll('.entry-checkbox:checked').length;
+                batchApproveBtn.disabled = checkedCount === 0;
+                batchApproveBtn.innerHTML = checkedCount > 0
+                    ? `<i class="fas fa-check-double me-1"></i>Approve Selected (${checkedCount})`
+                    : '<i class="fas fa-check-double me-1"></i>Batch Approve';
+            }
+
+            if (selectAll) {
+                selectAll.addEventListener('change', function() {
+                    checkboxes.forEach(checkbox => {
+                        if (!checkbox.disabled) {
+                            checkbox.checked = selectAll.checked;
+                        }
+                    });
+                    updateBatchButton();
+                });
+            }
+
+            checkboxes.forEach(checkbox => {
+                checkbox.addEventListener('change', function() {
+                    const enabledCheckboxes = Array.from(checkboxes).filter(cb => !cb.disabled);
+                    if (selectAll) {
+                        selectAll.checked = enabledCheckboxes.length > 0 && enabledCheckboxes.every(cb => cb.checked);
+                    }
+                    updateBatchButton();
+                });
+            });
+
+            if (batchApproveBtn) {
+                batchApproveBtn.addEventListener('click', function() {
+                    const entryIds = Array.from(document.querySelectorAll('.entry-checkbox:checked'))
+                        .map(checkbox => parseInt(checkbox.value, 10))
+                        .filter(Number.isInteger);
+
+                    if (entryIds.length === 0) {
+                        alert('Please select at least one entry to approve');
+                        return;
+                    }
+
+                    if (!confirm(`Are you sure you want to approve ${entryIds.length} selected entries?`)) {
+                        return;
+                    }
+
+                    batchApproveBtn.disabled = true;
+                    batchApproveBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Approving...';
+
+                    fetch('{{ url_for('batch_approve_entries') }}', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({entry_ids: entryIds}),
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            alert(data.message);
+                            window.location.reload();
+                            return;
+                        }
+
+                        alert('Error: ' + (data.message || 'Unknown error'));
+                        updateBatchButton();
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                        alert('Error approving entries. Please try again.');
+                        updateBatchButton();
+                    });
+                });
+            }
+        });
+    </script>
+    {% endif %}
 {% endblock %}

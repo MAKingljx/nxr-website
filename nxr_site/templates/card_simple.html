@@ -91,7 +91,7 @@ a{text-decoration:none;color:inherit}
       </div>
     </div>
     
-    <div class="card-info">
+    <div class="card-info" data-card-brand="{{ card.brand if card else '' }}" data-cert-id="{{ cert_id }}">
       <h1 class="card-title">{{ card.card_name if card else '' }}</h1>
       <div class="card-cert">Certificate ID: {{ cert_id }}</div>
       <div class="grade-badge">Final Grade: {{ card.grade if card else 'N/A' }}</div>
@@ -185,8 +185,10 @@ async function openAIModal() {
     
     try {
         // 获取卡片信息
+        const cardInfo = document.querySelector('.card-info');
         const cardTitle = document.querySelector('.card-title').textContent;
-        const cardBrand = document.querySelector('.detail-row:nth-child(2) .detail-val')?.textContent || 'Unknown';
+        const cardBrand = cardInfo?.dataset.cardBrand || 'Unknown';
+        const certId = cardInfo?.dataset.certId || '';
         const language = aiLanguageSelect ? aiLanguageSelect.value : 'en';
         
         console.log("Fetching AI info for:", { brand: cardBrand, character: cardTitle, language: language });
@@ -206,6 +208,7 @@ async function openAIModal() {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
+                cert_id: certId,
                 brand: cardBrand,
                 character: cardTitle,
                 language: language

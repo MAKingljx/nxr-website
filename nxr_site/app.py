@@ -3,7 +3,10 @@ import re
 import sqlite3
 import smtplib
 import threading
+import hashlib
+import json
 from email.message import EmailMessage
+from html import escape
 from pathlib import Path
 
 import requests
@@ -17,6 +20,74 @@ DB_PATH = DATA_DIR / "cards.db"
 STATIC_PREFIX = "/static/"
 PLACEHOLDER_IMAGE = f"{STATIC_PREFIX}placeholder.png"
 EMAIL_PATTERN = re.compile(r"^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$", re.IGNORECASE)
+AI_CHARACTER_PROMPT_VERSION = "v1"
+AI_LANGUAGE_NAMES = {
+    "en": "English",
+    "zh": "中文",
+    "es": "Español",
+    "fr": "Français",
+    "de": "Deutsch",
+    "ja": "日本語",
+    "ko": "한국어",
+}
+AI_SECTION_LABELS = {
+    "en": {
+        "summary": "Overview",
+        "origin": "Origin",
+        "traits": "Key Traits",
+        "collectibility": "Collector Relevance",
+        "card_context": "This Card",
+        "note": "Note",
+    },
+    "zh": {
+        "summary": "概览",
+        "origin": "背景",
+        "traits": "关键特点",
+        "collectibility": "收藏视角",
+        "card_context": "这张卡",
+        "note": "备注",
+    },
+    "es": {
+        "summary": "Resumen",
+        "origin": "Origen",
+        "traits": "Rasgos Clave",
+        "collectibility": "Valor para Coleccionistas",
+        "card_context": "Esta Carta",
+        "note": "Nota",
+    },
+    "fr": {
+        "summary": "Vue d'ensemble",
+        "origin": "Origine",
+        "traits": "Traits Clés",
+        "collectibility": "Intérêt Collection",
+        "card_context": "Cette Carte",
+        "note": "Note",
+    },
+    "de": {
+        "summary": "Überblick",
+        "origin": "Herkunft",
+        "traits": "Wichtige Merkmale",
+        "collectibility": "Sammlerwert",
+        "card_context": "Diese Karte",
+        "note": "Hinweis",
+    },
+    "ja": {
+        "summary": "概要",
+        "origin": "背景",
+        "traits": "主な特徴",
+        "collectibility": "コレクター視点",
+        "card_context": "このカードについて",
+        "note": "補足",
+    },
+    "ko": {
+        "summary": "개요",
+        "origin": "배경",
+        "traits": "핵심 특징",
+        "collectibility": "수집 관점",
+        "card_context": "이 카드",
+        "note": "참고",
+    },
+}
 
 app = Flask(
     __name__,
@@ -55,6 +126,20 @@ def initialize_site_database():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 email TEXT UNIQUE NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ai_character_cache (
+                cert_id TEXT NOT NULL,
+                language TEXT NOT NULL,
+                prompt_hash TEXT NOT NULL,
+                content_json TEXT NOT NULL,
+                rendered_html TEXT NOT NULL,
+                model TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (cert_id, language, prompt_hash)
             )
             """
         )
@@ -213,6 +298,199 @@ def get_card(cert_id):
     return None
 
 
+def build_ai_card_context(card, fallback_brand="", fallback_character=""):
+    return {
+        "cert_id": (card or {}).get("cert_id", ""),
+        "card_name": (card or {}).get("card_name", fallback_character).strip(),
+        "brand": (card or {}).get("brand", fallback_brand).strip(),
+        "year": str((card or {}).get("year", "") or "").strip(),
+        "set_name": ((card or {}).get("set_name", "") or "").strip(),
+        "card_number": ((card or {}).get("card_number", "") or "").strip(),
+        "variety": ((card or {}).get("variety", "") or "").strip(),
+        "language": ((card or {}).get("language", "") or "").strip(),
+        "grade": str((card or {}).get("grade", "") or (card or {}).get("final_grade_text", "") or "").strip(),
+        "population": str((card or {}).get("pop", "") or "").strip(),
+    }
+
+
+def build_ai_character_prompt_hash(card_context, language):
+    payload = {
+        "version": AI_CHARACTER_PROMPT_VERSION,
+        "language": language,
+        "card_context": card_context,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def get_cached_ai_character_info(cert_id, language, prompt_hash):
+    if not cert_id:
+        return None
+
+    with get_db_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT content_json, rendered_html, model
+            FROM ai_character_cache
+            WHERE cert_id = ? AND language = ? AND prompt_hash = ?
+            """,
+            (cert_id, language, prompt_hash),
+        ).fetchone()
+
+    if not row:
+        return None
+
+    return {
+        "payload": json.loads(row["content_json"]),
+        "content": row["rendered_html"],
+        "model": row["model"],
+        "cached": True,
+    }
+
+
+def save_ai_character_cache(cert_id, language, prompt_hash, payload, rendered_html, model):
+    if not cert_id:
+        return
+
+    with get_db_connection() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO ai_character_cache
+            (cert_id, language, prompt_hash, content_json, rendered_html, model)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                cert_id,
+                language,
+                prompt_hash,
+                json.dumps(payload, ensure_ascii=False),
+                rendered_html,
+                model,
+            ),
+        )
+        conn.commit()
+
+
+def build_ai_character_messages(card_context, language):
+    language_name = AI_LANGUAGE_NAMES.get(language, AI_LANGUAGE_NAMES["en"])
+    system_prompt = (
+        "You write concise, accurate collectible card character descriptions. "
+        "Use only broadly known franchise facts plus the provided card context. "
+        "If something is uncertain, say so briefly instead of inventing details. "
+        "Return raw JSON only with these keys: "
+        "title, summary, origin, traits, collectibility, card_context, note. "
+        "traits must be an array of 3 to 5 short strings. "
+        f"Write all prose in {language_name}."
+    )
+    user_prompt = (
+        "Generate AI character information for this trading card.\n"
+        "Focus on the named character, creature, or card identity implied by the card name.\n"
+        "If the card name includes rarity or variant markers, explain them only when useful.\n"
+        "Keep the whole response readable in a modal: concise but informative.\n"
+        "Card context:\n"
+        f"{json.dumps(card_context, ensure_ascii=False, indent=2)}"
+    )
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
+def extract_json_object(text):
+    raw = (text or "").strip()
+    if raw.startswith("```"):
+        parts = raw.split("```")
+        for chunk in parts:
+            chunk = chunk.strip()
+            if chunk.startswith("json"):
+                chunk = chunk[4:].strip()
+            if chunk.startswith("{") and chunk.endswith("}"):
+                raw = chunk
+                break
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError("Model did not return a JSON object")
+    return json.loads(raw[start : end + 1])
+
+
+def post_deepseek_chat_completions(payload):
+    deepseek_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+    if not deepseek_key:
+        raise RuntimeError("DeepSeek API key is not configured")
+
+    base_url = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
+    headers = {
+        "Authorization": f"Bearer {deepseek_key}",
+        "Content-Type": "application/json",
+    }
+
+    candidate_urls = [
+        f"{base_url}/chat/completions",
+        f"{base_url}/v1/chat/completions",
+    ]
+
+    last_response = None
+    for url in candidate_urls:
+        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        if response.status_code != 404:
+            return response
+        last_response = response
+
+    return last_response
+
+
+def generate_ai_character_payload(card_context, language):
+    model = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat").strip() or "deepseek-chat"
+    payload = {
+        "model": model,
+        "messages": build_ai_character_messages(card_context, language),
+        "temperature": 0.4,
+        "max_tokens": 700,
+    }
+
+    response = post_deepseek_chat_completions(payload)
+    if response is None:
+        raise RuntimeError("DeepSeek API endpoint did not respond")
+    if not response.ok:
+        raise RuntimeError(f"DeepSeek API error {response.status_code}: {response.text[:300]}")
+
+    body = response.json()
+    raw_content = body["choices"][0]["message"]["content"]
+    parsed = extract_json_object(raw_content)
+    return parsed, model
+
+
+def render_ai_character_html(payload, language):
+    labels = AI_SECTION_LABELS.get(language, AI_SECTION_LABELS["en"])
+    title = escape((payload.get("title") or "").strip())
+    summary = escape((payload.get("summary") or "").strip())
+    origin = escape((payload.get("origin") or "").strip())
+    collectibility = escape((payload.get("collectibility") or "").strip())
+    card_context = escape((payload.get("card_context") or "").strip())
+    note = escape((payload.get("note") or "").strip())
+    traits = payload.get("traits") or []
+
+    sections = []
+    if title:
+        sections.append(f"<h3>{title}</h3>")
+    if summary:
+        sections.append(f"<h3>{labels['summary']}</h3><p>{summary}</p>")
+    if origin:
+        sections.append(f"<h3>{labels['origin']}</h3><p>{origin}</p>")
+    if traits:
+        items = "".join(f"<li>{escape(str(item).strip())}</li>" for item in traits if str(item).strip())
+        if items:
+            sections.append(f"<h3>{labels['traits']}</h3><ul>{items}</ul>")
+    if collectibility:
+        sections.append(f"<h3>{labels['collectibility']}</h3><p>{collectibility}</p>")
+    if card_context:
+        sections.append(f"<h3>{labels['card_context']}</h3><p>{card_context}</p>")
+    if note:
+        sections.append(f"<h3>{labels['note']}</h3><p>{note}</p>")
+
+    return "".join(sections) or "<p>No information available for this character.</p>"
+
+
 # ========== 主要页面路由 ==========
 
 @app.route("/favicon.ico")
@@ -318,213 +596,70 @@ def upload():
     return render_template("upload.html")
 
 
-# ========== AI角色信息API - 修复多语言 ==========
+# ========== AI Character Information ==========
 
 @app.route("/api/ai_character_info", methods=["POST"])
 def ai_character_info():
-    """获取AI角色信息 - 修复多语言问题"""
     try:
-        data = request.json
-        brand = data.get("brand", "").strip()
-        character = data.get("character", "").strip()
-        language = data.get("language", "en")
-        
-        if not character:
+        data = request.get_json(silent=True) or {}
+        cert_id = (data.get("cert_id") or "").strip()
+        brand = (data.get("brand") or "").strip()
+        character = (data.get("character") or "").strip()
+        language = (data.get("language") or "en").strip().lower()
+
+        if language not in AI_LANGUAGE_NAMES:
+            language = "en"
+
+        card = get_card(cert_id) if cert_id else None
+        card_context = build_ai_card_context(card, fallback_brand=brand, fallback_character=character)
+        if not card_context["card_name"]:
             return jsonify({"status": "error", "msg": "Character name is required"}), 400
-        
-        # 语言名称映射
-        language_names = {
-            "en": "English",
-            "zh": "中文",
-            "es": "Español",
-            "fr": "Français", 
-            "de": "Deutsch",
-            "ja": "日本語",
-            "ko": "한국어"
-        }
-        
-        language_name = language_names.get(language, "English")
-        
-        # 宝可梦品牌的详细内容
-        brand_lower = brand.lower()
-        if "pokemon" in brand_lower or "poke" in brand_lower:
-            # 为每种语言提供不同的内容
-            if language == "zh":  # 中文
-                content = f"""
-                <h3>{character} - 中文信息</h3>
-                <p>语言: <strong>中文</strong></p>
-                
-                <h3>首次出现</h3>
-                <p><strong>{character}</strong> 首次出现在<strong>第一世代</strong>（1996年）。</p>
-                
-                <h3>设计起源</h3>
-                <p>由<strong>杉森建</strong>设计。</p>
-                
-                <h3>关键特征</h3>
-                <ul>
-                    <li><strong>属性：</strong>水</li>
-                    <li><strong>进化：</strong>{character} → 哥达鸭</li>
-                    <li><strong>特性：</strong>湿气</li>
-                </ul>
-                
-                <h3>人气</h3>
-                <p>在2020年投票中排名第53位。</p>
-                
-                <h3>收藏价值</h3>
-                <p>首次出现在基础系列（1999年）。</p>
-                """
-            elif language == "es":  # 西班牙语
-                content = f"""
-                <h3>{character} - Información en Español</h3>
-                <p>Idioma: <strong>Español</strong></p>
-                
-                <h3>Primera Aparición</h3>
-                <p><strong>{character}</strong> apareció en <strong>Generación I</strong> (1996).</p>
-                
-                <h3>Diseño</h3>
-                <p>Diseñado por <strong>Ken Sugimori</strong>.</p>
-                
-                <h3>Características</h3>
-                <ul>
-                    <li><strong>Tipo:</strong> Agua</li>
-                    <li><strong>Evolución:</strong> {character} → Golduck</li>
-                    <li><strong>Habilidad:</strong> Humedad</li>
-                </ul>
-                
-                <h3>Popularidad</h3>
-                <p>Clasificado #53 en 2020.</p>
-                """
-            elif language == "fr":  # 法语
-                content = f"""
-                <h3>{character} - Informations en Français</h3>
-                <p>Langue: <strong>Français</strong></p>
-                
-                <h3>Première Apparition</h3>
-                <p><strong>{character}</strong> est apparu dans <strong>Génération I</strong> (1996).</p>
-                
-                <h3>Design</h3>
-                <p>Conçu par <strong>Ken Sugimori</strong>.</p>
-                
-                <h3>Caractéristiques</h3>
-                <ul>
-                    <li><strong>Type :</strong> Eau</li>
-                    <li><strong>Évolution :</strong> {character} → Akwakwak</li>
-                    <li><strong>Talent :</strong> Moiteur</li>
-                </ul>
-                
-                <h3>Popularité</h3>
-                <p>Classé #53 en 2020.</p>
-                """
-            elif language == "de":  # 德语
-                content = f"""
-                <h3>{character} - Informationen auf Deutsch</h3>
-                <p>Sprache: <strong>Deutsch</strong></p>
-                
-                <h3>Erstes Erscheinen</h3>
-                <p><strong>{character}</strong> erschien in <strong>Generation I</strong> (1996).</p>
-                
-                <h3>Design</h3>
-                <p>Entworfen von <strong>Ken Sugimori</strong>.</p>
-                
-                <h3>Merkmale</h3>
-                <ul>
-                    <li><strong>Typ:</strong> Wasser</li>
-                    <li><strong>Entwicklung:</strong> {character} → Entoron</li>
-                    <li><strong>Fähigkeit:</strong> Feuchtigkeit</li>
-                </ul>
-                
-                <h3>Beliebtheit</h3>
-                <p>Platz #53 in 2020.</p>
-                """
-            elif language == "ja":  # 日语
-                content = f"""
-                <h3>{character} - 日本語情報</h3>
-                <p>言語: <strong>日本語</strong></p>
-                
-                <h3>初登場</h3>
-                <p><strong>{character}</strong>は<strong>第一世代</strong>（1996年）で初登場。</p>
-                
-                <h3>デザイン</h3>
-                <p><strong>杉森建</strong>によってデザイン。</p>
-                
-                <h3>特徴</h3>
-                <ul>
-                    <li><strong>タイプ：</strong>みず</li>
-                    <li><strong>進化：</strong>{character} → ゴルダック</li>
-                    <li><strong>とくせい：</strong>しめりけ</li>
-                </ul>
-                
-                <h3>人気</h3>
-                <p>2020年で53位。</p>
-                """
-            elif language == "ko":  # 韩语
-                content = f"""
-                <h3>{character} - 한국어 정보</h3>
-                <p>언어: <strong>한국어</strong></p>
-                
-                <h3>첫 등장</h3>
-                <p><strong>{character}</strong>는 <strong>1세대</strong> (1996년) 첫 등장.</p>
-                
-                <h3>디자인</h3>
-                <p><strong>Ken Sugimori</strong>가 디자인.</p>
-                
-                <h3>특징</h3>
-                <ul>
-                    <li><strong>타입:</strong> 물</li>
-                    <li><strong>진화:</strong> {character} → 골덕</li>
-                    <li><strong>특성:</strong> 습기</li>
-                </ul>
-                
-                <h3>인기</h3>
-                <p>2020년 53위.</p>
-                """
-            else:  # 英语 (默认)
-                content = f"""
-                <h3>{character} - English Information</h3>
-                <p>Language: <strong>English</strong></p>
-                
-                <h3>First Appearance</h3>
-                <p><strong>{character}</strong> first appeared in <strong>Generation I</strong> (1996).</p>
-                
-                <h3>Design Origin</h3>
-                <p>Designed by <strong>Ken Sugimori</strong>.</p>
-                
-                <h3>Key Characteristics</h3>
-                <ul>
-                    <li><strong>Type:</strong> Water</li>
-                    <li><strong>Evolution:</strong> {character} → Golduck</li>
-                    <li><strong>Ability:</strong> Damp</li>
-                </ul>
-                
-                <h3>Popularity</h3>
-                <p>Ranked #53 in the 2020 Pokémon poll.</p>
-                
-                <h3>Collector Value</h3>
-                <p>First appeared in the Base Set (1999).</p>
-                """
-        else:
-            # 非宝可梦品牌
-            content = f"""
-            <h3>{character} Information</h3>
-            <p>Language: <strong>{language_name}</strong></p>
-            <p>This character is from the <strong>{brand}</strong> franchise.</p>
-            <p>Sample content in {language_name}.</p>
-            """
-        
-        return jsonify({
-            "status": "ok",
-            "content": content,
-            "character": character,
-            "brand": brand,
-            "language": language
-        })
-        
-    except Exception as e:
-        print(f"AI API error: {e}")
-        return jsonify({
-            "status": "error",
-            "msg": f"Internal server error: {str(e)}"
-        }), 500
+
+        prompt_hash = build_ai_character_prompt_hash(card_context, language)
+        cached = get_cached_ai_character_info(card_context["cert_id"], language, prompt_hash)
+        if cached:
+            return jsonify(
+                {
+                    "status": "ok",
+                    "content": cached["content"],
+                    "character": card_context["card_name"],
+                    "brand": card_context["brand"],
+                    "language": language,
+                    "model": cached["model"],
+                    "cached": True,
+                }
+            )
+
+        payload, model = generate_ai_character_payload(card_context, language)
+        rendered_html = render_ai_character_html(payload, language)
+        save_ai_character_cache(
+            card_context["cert_id"],
+            language,
+            prompt_hash,
+            payload,
+            rendered_html,
+            model,
+        )
+
+        return jsonify(
+            {
+                "status": "ok",
+                "content": rendered_html,
+                "character": card_context["card_name"],
+                "brand": card_context["brand"],
+                "language": language,
+                "model": model,
+                "cached": False,
+            }
+        )
+    except Exception as exc:  # noqa: BLE001
+        app.logger.warning("AI character info error: %s", exc)
+        return jsonify(
+            {
+                "status": "error",
+                "msg": "Unable to generate character information right now.",
+            }
+        ), 500
 
 
 if __name__ == "__main__":

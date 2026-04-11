@@ -109,6 +109,77 @@
             document.getElementById('grade_calculation').className = 'text-danger';
         });
     }
+
+    function dispatchFieldUpdate(fieldId) {
+        const element = document.getElementById(fieldId);
+        if (!element) {
+            return;
+        }
+
+        element.dispatchEvent(new Event('input', {bubbles: true}));
+        element.dispatchEvent(new Event('change', {bubbles: true}));
+    }
+
+    function matchCard(button) {
+        const setName = document.getElementById('set_name').value.trim();
+        const cardNumber = document.getElementById('card_number').value.trim();
+
+        if (!setName || !cardNumber) {
+            alert('Please enter both Set Name and Card Number first.');
+            return;
+        }
+
+        const matchButton = button || document.getElementById('match-card-button');
+        const originalText = matchButton ? matchButton.innerHTML : '';
+        if (matchButton) {
+            matchButton.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Matching...';
+            matchButton.disabled = true;
+        }
+
+        fetch('/admin/api/match-card', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                set_name: setName,
+                card_number: cardNumber
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                alert('Match failed: ' + data.error);
+                return;
+            }
+
+            if (!data.found) {
+                alert(data.message || 'No matching card data found.');
+                return;
+            }
+
+            document.getElementById('card_name').value = data.card_name || '';
+            document.getElementById('brand').value = data.brand || '';
+            document.getElementById('language').value = data.language || '';
+            document.getElementById('year').value = data.year || '';
+
+            const varietyField = document.getElementById('variety');
+            if (varietyField) {
+                varietyField.value = data.variety || '';
+            }
+
+            ['card_name', 'brand', 'language', 'year', 'variety'].forEach(dispatchFieldUpdate);
+            alert('Match successful. Card information has been auto-filled.');
+        })
+        .catch(error => {
+            console.error('Error matching card:', error);
+            alert('Match failed: network error, please try again later.');
+        })
+        .finally(() => {
+            if (matchButton) {
+                matchButton.innerHTML = originalText;
+                matchButton.disabled = false;
+            }
+        });
+    }
     
     // Function to validate required fields
     function validateRequiredFields() {
@@ -185,13 +256,16 @@
         
         // Auto-validate required fields
         ['card_name', 'brand', 'language', 'set_name', 'card_number'].forEach(field => {
-            document.getElementById(field).addEventListener('input', function() {
+            const element = document.getElementById(field);
+            const validateField = function() {
                 if (!this.value.trim()) {
                     this.classList.add('is-invalid');
                 } else {
                     this.classList.remove('is-invalid');
                 }
-            });
+            };
+            element.addEventListener('input', validateField);
+            element.addEventListener('change', validateField);
         });
         
         // Function to calculate and update POP
@@ -242,7 +316,9 @@
         
         // Update POP when relevant fields change
         ['card_name', 'set_name', 'card_number', 'language'].forEach(field => {
-            document.getElementById(field).addEventListener('input', calculatePOP);
+            const element = document.getElementById(field);
+            element.addEventListener('input', calculatePOP);
+            element.addEventListener('change', calculatePOP);
         });
         
         // Also update POP when grade changes
@@ -465,15 +541,20 @@
                                 <h6 class="border-bottom pb-2 mb-3">Card Details <span class="text-danger">* Required</span></h6>
                                 
                                 <div class="row">
-                                    <div class="col-md-6 mb-3">
+                                    <div class="col-md-5 mb-3">
                                         <label for="set_name" class="form-label">Set Name *</label>
                                         <input type="text" class="form-control" id="set_name" name="set_name" 
                                                value="{{ card.set_name if card else '' }}" required>
                                     </div>
-                                    <div class="col-md-6 mb-3">
+                                    <div class="col-md-5 mb-3">
                                         <label for="card_number" class="form-label">Card Number *</label>
                                         <input type="text" class="form-control" id="card_number" name="card_number" 
                                                value="{{ card.card_number if card else '' }}" required>
+                                    </div>
+                                    <div class="col-md-2 mb-3 d-flex align-items-end">
+                                        <button type="button" class="btn btn-primary w-100" id="match-card-button" onclick="matchCard(this)">
+                                            <i class="fas fa-search me-1"></i>Match
+                                        </button>
                                     </div>
                                 </div>
                                 
@@ -556,12 +637,12 @@
                                         <div class="form-text mt-1">Uploaded card photos are auto-straightened and cropped on the server when detection succeeds.</div>
                                         
                                         <!-- Current front image preview -->
-                                        {% if card and card.front_image %}
+                                        {% if card and (card.front_image or card.published_front_image) %}
                                         <div class="mt-2">
-                                            <div class="form-text mb-1"><i class="fas fa-image me-1"></i>Current front image:</div>
+                                            <div class="form-text mb-1"><i class="fas fa-image me-1"></i>{% if card.front_image %}Current local front image:{% else %}Current published front image:{% endif %}</div>
                                             <div id="current_front_preview" class="current-image-preview border rounded p-2 bg-light">
                                                 <div class="text-center">
-                                                    <img src="/admin/uploads/{{ card.front_image }}" 
+                                                    <img src="{% if card.front_image %}/admin/uploads/{{ card.front_image }}{% else %}{{ card.published_front_image }}{% endif %}" 
                                                          class="img-thumbnail preview-image" 
                                                          style="max-height: 150px; max-width: 100%;"
                                                          alt="Front image preview"
@@ -571,8 +652,8 @@
                                                     <i class="fas fa-exclamation-triangle me-1"></i>Image file not found in uploads folder
                                                 </div>
                                                 <div class="small text-muted mt-2 text-center">
-                                                    <i class="fas fa-file-image me-1"></i>{{ card.front_image }}
-                                                    <a href="/admin/uploads/{{ card.front_image }}" target="_blank" class="ms-2 text-decoration-none">
+                                                    <i class="fas fa-file-image me-1"></i>{% if card.front_image %}{{ card.front_image }}{% else %}{{ card.published_front_image }}{% endif %}
+                                                    <a href="{% if card.front_image %}/admin/uploads/{{ card.front_image }}{% else %}{{ card.published_front_image }}{% endif %}" target="_blank" class="ms-2 text-decoration-none">
                                                         <i class="fas fa-external-link-alt"></i> Open in new tab
                                                     </a>
                                                     <button type="button" class="btn btn-sm btn-outline-danger ms-2" onclick="removeImage('front')">
@@ -591,12 +672,12 @@
                                         <div class="form-text mt-1">Best results come from one card per photo with clear contrast around the edges.</div>
                                         
                                         <!-- Current back image preview -->
-                                        {% if card and card.back_image %}
+                                        {% if card and (card.back_image or card.published_back_image) %}
                                         <div class="mt-2">
-                                            <div class="form-text mb-1"><i class="fas fa-image me-1"></i>Current back image:</div>
+                                            <div class="form-text mb-1"><i class="fas fa-image me-1"></i>{% if card.back_image %}Current local back image:{% else %}Current published back image:{% endif %}</div>
                                             <div id="current_back_preview" class="current-image-preview border rounded p-2 bg-light">
                                                 <div class="text-center">
-                                                    <img src="/admin/uploads/{{ card.back_image }}" 
+                                                    <img src="{% if card.back_image %}/admin/uploads/{{ card.back_image }}{% else %}{{ card.published_back_image }}{% endif %}" 
                                                          class="img-thumbnail preview-image" 
                                                          style="max-height: 150px; max-width: 100%;"
                                                          alt="Back image preview"
@@ -606,8 +687,8 @@
                                                     <i class="fas fa-exclamation-triangle me-1"></i>Image file not found in uploads folder
                                                 </div>
                                                 <div class="small text-muted mt-2 text-center">
-                                                    <i class="fas fa-file-image me-1"></i>{{ card.back_image }}
-                                                    <a href="/admin/uploads/{{ card.back_image }}" target="_blank" class="ms-2 text-decoration-none">
+                                                    <i class="fas fa-file-image me-1"></i>{% if card.back_image %}{{ card.back_image }}{% else %}{{ card.published_back_image }}{% endif %}
+                                                    <a href="{% if card.back_image %}/admin/uploads/{{ card.back_image }}{% else %}{{ card.published_back_image }}{% endif %}" target="_blank" class="ms-2 text-decoration-none">
                                                         <i class="fas fa-external-link-alt"></i> Open in new tab
                                                     </a>
                                                     <button type="button" class="btn btn-sm btn-outline-danger ms-2" onclick="removeImage('back')">

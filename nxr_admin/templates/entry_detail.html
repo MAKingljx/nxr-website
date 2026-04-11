@@ -62,7 +62,7 @@
                                 </tr>
                                 <tr>
                                     <th>Population:</th>
-                                    <td>{{ entry.pop }}</td>
+                                    <td>{{ entry['pop'] }}</td>
                                 </tr>
                                 <tr>
                                     <th>Card Number:</th>
@@ -154,15 +154,25 @@
                         </tr>
                         <tr>
                             <th>Entry Date:</th>
-                            <td>{{ entry.entry_date }}</td>
+                            <td>{{ entry.entry_date_display }}</td>
+                        </tr>
+                        {% if entry.status == 'approved' %}
+                        <tr>
+                            <th>Approved At:</th>
+                            <td>{{ entry.approved_at_display }}</td>
                         </tr>
                         <tr>
+                            <th>Approval Order:</th>
+                            <td>{{ entry.approval_sequence }}</td>
+                        </tr>
+                        {% endif %}
+                        <tr>
                             <th>Created At:</th>
-                            <td>{{ entry.created_at }}</td>
+                            <td>{{ entry.created_at_display }}</td>
                         </tr>
                         <tr>
                             <th>Updated At:</th>
-                            <td>{{ entry.updated_at }}</td>
+                            <td>{{ entry.updated_at_display }}</td>
                         </tr>
                     </table>
                 </div>

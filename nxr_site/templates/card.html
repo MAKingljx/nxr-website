@@ -166,7 +166,7 @@
       </div>
     </div>
 
-    <div class="card-info" data-card-brand="{{ card.brand or '' }}">
+    <div class="card-info" data-card-brand="{{ card.brand or '' }}" data-cert-id="{{ card.cert_id or cert_id }}">
       <h1 class="card-title">{{ card.card_name }}</h1>
       <div class="card-cert">Certificate ID: {{ card.cert_id }}</div>
       <div class="grade-badge">Final Grade: {{ card.grade }}</div>
@@ -341,7 +341,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function loadAICharacterInfo() {
     const cardTitle = document.querySelector('.card-title')?.textContent?.trim();
-    const cardBrand = document.querySelector('.card-info')?.dataset.cardBrand || 'Unknown';
+    const cardInfo = document.querySelector('.card-info');
+    const cardBrand = cardInfo?.dataset.cardBrand || 'Unknown';
+    const certId = cardInfo?.dataset.certId || '';
 
     aiLoading.style.display = 'block';
     aiContent.style.display = 'none';
@@ -352,6 +354,7 @@ document.addEventListener('DOMContentLoaded', () => {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
+          cert_id: certId,
           brand: cardBrand,
           character: cardTitle,
           language: aiLanguageSelect.value,

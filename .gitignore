@@ -32,6 +32,9 @@ app_backup.py
 .playwright-cli/
 TOOLS.md
 SSH.md
+archive/
+nxr_site.zip
+nxr_website(3).rar
 nxr_admin/__pycache__/
 nxr_admin/uploads/
 nxr_admin/exports/
