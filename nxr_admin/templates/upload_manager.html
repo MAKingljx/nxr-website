@@ -8,6 +8,9 @@
 
 {% block page_actions %}
     <div class="btn-group">
+        <a href="{{ url_for('upload_manager', show_client_pushed=0 if show_client_pushed else 1) }}" class="btn btn-outline-info">
+            <i class="fas fa-eye me-1"></i>{% if show_client_pushed %}Hide Client Pushed{% else %}Show Client Pushed{% endif %}
+        </a>
         <button type="button" class="btn btn-outline-primary" onclick="refreshStats()">
             <i class="fas fa-sync-alt me-1"></i>Refresh
         </button>
@@ -35,6 +38,10 @@
     .status-uploaded {
         background-color: #28a745;
         color: white;
+    }
+    .status-client_pushed {
+        background-color: #0dcaf0;
+        color: #062c33;
     }
     .status-failed {
         background-color: #dc3545;
@@ -106,7 +113,7 @@
         document.getElementById('total_approved').textContent = stats.image_stats.total_approved;
         document.getElementById('ready_for_upload').textContent = stats.image_stats.ready_for_upload;
         document.getElementById('uploaded_count').textContent = stats.uploaded || 0;
-        document.getElementById('failed_count').textContent = stats.failed || 0;
+        document.getElementById('failed_count').textContent = stats.image_stats.client_pushed || 0;
     }
     
     // 选择/取消选择所有条目
@@ -115,6 +122,11 @@
         const selectAllCheckbox = document.getElementById('selectAll');
         
         checkboxes.forEach(checkbox => {
+            if (checkbox.disabled) {
+                checkbox.checked = false;
+                selectedEntries.delete(checkbox.value);
+                return;
+            }
             checkbox.checked = selectAllCheckbox.checked;
             if (checkbox.checked) {
                 selectedEntries.add(checkbox.value);
@@ -229,6 +241,9 @@
                 
                 // 更新行状态
                 updateEntryStatus(entryId, data);
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1000);
             } else {
                 showToast(`Upload failed: ${data.error}`, 'error');
             }
@@ -237,6 +252,36 @@
             hideLoading();
             console.error('Upload error:', error);
             showToast('Upload error occurred', 'error');
+        });
+    }
+
+    function markClientPushed(entryId, certId) {
+        if (!confirm(`Mark ${certId} as pushed to client and hide it from this queue?`)) {
+            return;
+        }
+
+        showLoading(`Marking ${certId} as pushed to client...`);
+
+        fetch(`/admin/api/upload/${entryId}/client-pushed`, {
+            method: 'POST'
+        })
+        .then(response => response.json())
+        .then(data => {
+            hideLoading();
+
+            if (data.success) {
+                showToast(`Marked ${certId} as pushed to client`, 'success');
+                setTimeout(() => {
+                    window.location.reload();
+                }, 600);
+            } else {
+                showToast(`Update failed: ${data.error}`, 'error');
+            }
+        })
+        .catch(error => {
+            hideLoading();
+            console.error('Client pushed update error:', error);
+            showToast('Update error occurred', 'error');
         });
     }
     
@@ -390,13 +435,13 @@
         <div class="col-md-3">
             <div class="stats-card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
                 <div class="stats-number" id="uploaded_count">{{ stats.uploaded|default(0) }}</div>
-                <div class="stats-label">Successfully Uploaded</div>
+                <div class="stats-label">Uploaded to Server</div>
             </div>
         </div>
         <div class="col-md-3">
             <div class="stats-card" style="background: linear-gradient(135deg, #f6d365 0%, #fda085 100%);">
-                <div class="stats-number" id="failed_count">{{ stats.failed|default(0) }}</div>
-                <div class="stats-label">Failed Uploads</div>
+                <div class="stats-number" id="failed_count">{{ stats.image_stats.client_pushed|default(0) }}</div>
+                <div class="stats-label">Client Pushed</div>
             </div>
         </div>
     </div>
@@ -436,8 +481,14 @@
     <!-- 上传条目表格 -->
     <div class="card">
         <div class="card-header">
-            <h6 class="mb-0"><i class="fas fa-list me-2"></i>All Approved Entries</h6>
-                        <small class="text-muted">Entries with complete images can be uploaded to server</small>
+            <h6 class="mb-0"><i class="fas fa-list me-2"></i>{% if show_client_pushed %}All Approved Entries{% else %}Active Upload Queue{% endif %}</h6>
+            <small class="text-muted">
+                {% if show_client_pushed %}
+                    Includes entries already marked as pushed to client.
+                {% else %}
+                    Entries marked as pushed to client are hidden from this queue.
+                {% endif %}
+            </small>
         </div>
         <div class="card-body">
             {% if entries %}
@@ -462,8 +513,10 @@
                             {% for entry in entries %}
                                 <tr data-entry-id="{{ entry.id }}">
                                     <td>
+                                        {% set can_select = entry.upload_status in ['not_started', 'uploading', 'uploaded', 'failed'] %}
                                         <input type="checkbox" class="form-check-input entry-checkbox" 
                                                value="{{ entry.id }}" 
+                                               {% if not can_select %}disabled{% endif %}
                                                onchange="handleEntrySelect(this)">
                                     </td>
                                     <td><strong>{{ entry.cert_id }}</strong></td>
@@ -476,12 +529,34 @@
                                     <td>
                                         <div class="image-status">
                                             <div>
-                                                <i class="fas fa-image me-1 {% if entry.has_front_image_file %}has-image{% else %}no-image{% endif %}"></i>
-                                                Front: {% if entry.has_front_image_file %}<span class="has-image">Ready</span>{% elif entry.front_image %}<span class="no-image">File Missing</span>{% else %}<span class="no-image">Missing</span>{% endif %}
+                                                <i class="fas fa-image me-1 {% if entry.has_front_image_file or entry.has_published_front_image %}has-image{% else %}no-image{% endif %}"></i>
+                                                Front:
+                                                {% if entry.has_front_image_file %}
+                                                    <span class="has-image">Ready</span>
+                                                {% elif entry.has_published_front_image %}
+                                                    <span class="has-image">Published</span>
+                                                {% elif entry.front_image %}
+                                                    <span class="no-image">File Missing</span>
+                                                {% elif entry.published_front_image %}
+                                                    <span class="no-image">Published Missing</span>
+                                                {% else %}
+                                                    <span class="no-image">Missing</span>
+                                                {% endif %}
                                             </div>
                                             <div>
-                                                <i class="fas fa-image me-1 {% if entry.has_back_image_file %}has-image{% else %}no-image{% endif %}"></i>
-                                                Back: {% if entry.has_back_image_file %}<span class="has-image">Ready</span>{% elif entry.back_image %}<span class="no-image">File Missing</span>{% else %}<span class="no-image">Missing</span>{% endif %}
+                                                <i class="fas fa-image me-1 {% if entry.has_back_image_file or entry.has_published_back_image %}has-image{% else %}no-image{% endif %}"></i>
+                                                Back:
+                                                {% if entry.has_back_image_file %}
+                                                    <span class="has-image">Ready</span>
+                                                {% elif entry.has_published_back_image %}
+                                                    <span class="has-image">Published</span>
+                                                {% elif entry.back_image %}
+                                                    <span class="no-image">File Missing</span>
+                                                {% elif entry.published_back_image %}
+                                                    <span class="no-image">Published Missing</span>
+                                                {% else %}
+                                                    <span class="no-image">Missing</span>
+                                                {% endif %}
                                             </div>
                                         </div>
                                     </td>
@@ -498,25 +573,36 @@
                                     </td>
                                     <td>
                                         {% if entry.upload_completed %}
-                                            {{ entry.upload_completed[:19] }}
+                                            {{ entry.upload_completed[:19]|replace('T', ' ') }}
+                                        {% elif entry.approved_at_display %}
+                                            {{ entry.approved_at_display }}
+                                        {% elif entry.display_date %}
+                                            {{ entry.display_date }}
                                         {% elif entry.updated_at %}
-                                            {{ entry.updated_at[:19] }}
+                                            {{ entry.updated_at[:19]|replace('T', ' ') }}
                                         {% else %}
-                                            {{ entry.entry_date[:19] if entry.entry_date else '' }}
+                                            {{ entry.entry_date[:19]|replace('T', ' ') if entry.entry_date else '' }}
                                         {% endif %}
                                     </td>
                                     <td class="upload-actions">
                                         {% if entry.ready_for_upload %}
-                                            {% if entry.upload_status == 'uploaded' %}
-                                                <span class="text-success">
+                                            <button type="button" class="btn btn-sm btn-outline-primary" 
+                                                    onclick="uploadSingle('{{ entry.id }}', '{{ entry.cert_id }}')">
+                                                <i class="fas fa-cloud-upload-alt me-1"></i>{% if entry.upload_status == 'uploaded' %}Re-upload{% else %}Upload{% endif %}
+                                            </button>
+                                        {% elif entry.published_complete and entry.upload_status == 'uploaded' %}
+                                            <div class="d-flex gap-2">
+                                                <span class="text-success small align-self-center">
                                                     <i class="fas fa-check-circle me-1"></i>Uploaded
                                                 </span>
-                                            {% else %}
-                                                <button type="button" class="btn btn-sm btn-outline-primary" 
-                                                        onclick="uploadSingle('{{ entry.id }}', '{{ entry.cert_id }}')">
-                                                    <i class="fas fa-cloud-upload-alt me-1"></i>Upload
+                                                <button type="button" class="btn btn-sm btn-outline-info" onclick="markClientPushed('{{ entry.id }}', '{{ entry.cert_id }}')">
+                                                    <i class="fas fa-check-circle me-1"></i>Mark Client Pushed
                                                 </button>
-                                            {% endif %}
+                                            </div>
+                                        {% elif entry.upload_status == 'client_pushed' %}
+                                            <span class="text-info">
+                                                <i class="fas fa-check-circle me-1"></i>Pushed to Client
+                                            </span>
                                         {% else %}
                                             <span class="text-muted small">
                                                 <i class="fas fa-exclamation-triangle me-1"></i>Images required
@@ -574,9 +660,13 @@
             {% else %}
                 <div class="text-center py-5">
                     <i class="fas fa-cloud-upload-alt fa-3x text-muted mb-3"></i>
-                    <h5>No entries ready for upload</h5>
+                    <h5>{% if show_client_pushed %}No approved entries found{% else %}No entries ready for upload{% endif %}</h5>
                     <p class="text-muted">
-                        Approved entries with both front and back images will appear here.
+                        {% if show_client_pushed %}
+                            There are no approved entries matching the current filter.
+                        {% else %}
+                            Approved entries with both front and back images will appear here.
+                        {% endif %}
                     </p>
                     <a href="{{ url_for('entry_list') }}" class="btn btn-outline-primary">
                         <i class="fas fa-list me-1"></i>View All Entries

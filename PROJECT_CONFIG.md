@@ -23,6 +23,27 @@
 4. Restart the app on the server.
 5. Smoke test `127.0.0.1:8080` and the public site.
 
+## Preferred Future Deploy Workflow
+
+- Target workflow: Git-based deploys, not ad-hoc file sync.
+- Standard path: local commit -> push GitHub -> server pull -> restart -> smoke test.
+- Deployment script: `scripts/deploy_via_git.sh`
+- Detailed process record: `GIT_DEPLOY_WORKFLOW.md`
+
+### Important
+
+- `scripts/deploy_via_git.sh` is intentionally strict.
+- It aborts if the local worktree is dirty.
+- It aborts if the remote worktree is dirty.
+- It is only safe to use after the server repo has been normalized.
+
+## Current Server Git Reality
+
+- The production repo exists at `/root/nxr_website`.
+- It currently needs `git safe.directory` handling.
+- The remote worktree is not clean yet.
+- This means Git pull should not be treated as safe until the one-time cleanup is completed.
+
 ## Key Project Files
 
 - Main site code: `nxr_site/`
@@ -33,6 +54,34 @@
 - Databases: `Data/cards.db`, `Data/temp_cards.db`
 - Project prompt: `AGENTS.md`
 - SSH notes: `SSH.md` (local-only)
+
+## Approved Upload Image Lifecycle
+
+- Scope: approved entries uploaded from the admin upload flow.
+- Local raw uploads live in `nxr_admin/uploads/`.
+- Published site images live in `nxr_site/static/`.
+- `temp_cards.front_image` / `temp_cards.back_image` are local source-image fields only.
+- `temp_cards.published_front_image` / `temp_cards.published_back_image` are published-image path fields only.
+
+### Upload Success Rule
+
+1. Copy the local source images from `nxr_admin/uploads/` into `nxr_site/static/`.
+2. Write the published `/static/...` paths into `published_front_image` and `published_back_image`.
+3. Delete the local source files from `nxr_admin/uploads/`.
+4. Clear `front_image` and `back_image`.
+5. Keep `upload_status = uploaded`.
+
+### Edit / Re-upload Rule
+
+- If a new local image is uploaded later, it is stored again in `front_image` / `back_image`.
+- Existing published images remain in `published_front_image` / `published_back_image` until the next successful upload.
+- After the next successful upload, the new published paths replace the old published paths, and the local source files are deleted again.
+
+### UI Rule
+
+- Upload Manager should treat local source images as `Ready`.
+- Upload Manager should treat published images as `Published`.
+- Edit pages should preview local source images first, then fall back to published images when no local source image exists.
 
 ## Sync Command
 

@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block title %}Admin Users - NXR Card Grading{% endblock %}
+{% block page_title %}Admin User Management{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+    <div class="col-lg-5">
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-user-plus me-2"></i>Create Admin Account
+            </div>
+            <div class="card-body">
+                <form method="post">
+                    <div class="mb-3">
+                        <label for="username" class="form-label">Username</label>
+                        <input type="text" class="form-control" id="username" name="username" maxlength="64" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Password</label>
+                        <input type="password" class="form-control" id="password" name="password" minlength="6" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="email" class="form-label">Email</label>
+                        <input type="email" class="form-control" id="email" name="email" maxlength="255">
+                    </div>
+                    <div class="mb-3">
+                        <label for="role" class="form-label">Role</label>
+                        <select class="form-select" id="role" name="role" required>
+                            {% for option in role_options %}
+                            <option value="{{ option.value }}">{{ option.label }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">Only super admin users can create backend accounts.</div>
+                    </div>
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" value="1" id="inactive" name="inactive">
+                        <label class="form-check-label" for="inactive">
+                            Create as inactive
+                        </label>
+                    </div>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-save me-1"></i>Create Account
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-7">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="fas fa-users-cog me-2"></i>Existing Admin Accounts</span>
+                <span class="badge bg-secondary">{{ admin_accounts|length }}</span>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 align-middle">
+                        <thead>
+                            <tr>
+                                <th>Username</th>
+                                <th>Role</th>
+                                <th>Status</th>
+                                <th>Email</th>
+                                <th>Created</th>
+                                <th>Last Login</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for account in admin_accounts %}
+                            <tr>
+                                <td class="fw-semibold">{{ account.username }}</td>
+                                <td>
+                                    <span class="badge bg-{{ 'danger' if account.role == 'superadmin' else 'success' if account.role == 'admin' else 'info' }}">
+                                        {{ account.role_label }}
+                                    </span>
+                                </td>
+                                <td>
+                                    <span class="badge bg-{{ 'success' if account.is_active else 'secondary' }}">
+                                        {{ 'Active' if account.is_active else 'Inactive' }}
+                                    </span>
+                                </td>
+                                <td>{{ account.email or '-' }}</td>
+                                <td>{{ account.created_at or '-' }}</td>
+                                <td>{{ account.last_login or '-' }}</td>
+                            </tr>
+                            {% endfor %}
+                            {% if not admin_accounts %}
+                            <tr>
+                                <td colspan="6" class="text-center text-muted py-4">No administrator accounts found.</td>
+                            </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

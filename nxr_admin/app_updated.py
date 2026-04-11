@@ -38,6 +38,7 @@ UPLOAD_FOLDER.mkdir(exist_ok=True)
 BRAND_OPTIONS = [
     "Pokemon",
     "One Piece",
+    "Monkey",
     "Sports Cards",
     "Yu-Gi-Oh!",
     "Magic: The Gathering",
@@ -47,6 +48,28 @@ BRAND_OPTIONS = [
     "Disney",
     "Other"
 ]
+
+BRAND_ALIASES = {
+    'pokemon': 'Pokemon',
+    'poke': 'Pokemon',
+    'pokemon jpn': 'Pokemon',
+    '宝可梦': 'Pokemon',
+    'one piece': 'One Piece',
+    'onepiece': 'One Piece',
+    'monkey': 'Monkey',
+    'sports cards': 'Sports Cards',
+    'sports': 'Sports Cards',
+    'yu-gi-oh': 'Yu-Gi-Oh!',
+    'yugioh': 'Yu-Gi-Oh!',
+    'magic': 'Magic: The Gathering',
+    'mtg': 'Magic: The Gathering',
+    'dragon ball': 'Dragon Ball',
+    'marvel': 'Marvel',
+    'dc': 'DC Comics',
+    'dc comics': 'DC Comics',
+    'disney': 'Disney',
+    'other': 'Other',
+}
 
 # Language options (codes)
 LANGUAGE_OPTIONS = [
@@ -68,10 +91,18 @@ app.secret_key = os.environ.get('ADMIN_SECRET_KEY', 'nxr-manual-entry-2026-updat
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 DEFAULT_ADMIN_ACCOUNTS = {
-    'admin': {'password': 'nxr2026', 'role': 'admin'},
+    'admin': {'password': 'nxr2026', 'role': 'superadmin'},
     'reviewer1': {'password': 'review123', 'role': 'reviewer'},
     'reviewer2': {'password': 'review456', 'role': 'reviewer'},
 }
+
+ADMIN_ROLE_LABELS = {
+    'superadmin': 'Super Admin',
+    'admin': 'Admin',
+    'reviewer': 'Reviewer',
+}
+
+MANAGEABLE_ADMIN_ROLES = ('admin', 'reviewer')
 
 LANGUAGE_ALIASES = {
     'en': 'EN',
@@ -112,6 +143,9 @@ IMAGE_MAX_DIMENSION = 2200
 IMAGE_MIN_FOREGROUND_RATIO = 0.02
 IMAGE_ROTATION_LIMIT_DEGREES = 35
 IMAGE_CROP_PADDING_RATIO = 0.03
+STANDARD_GRADE_OPTIONS = ['8', '8.5', '9', '9.5', '10', 'Pristine 10']
+APPROVAL_SEQUENCE_FALLBACK = 9223372036854775807
+CLIENT_PUSHED_UPLOAD_STATUS = 'client_pushed'
 
 
 def load_admin_accounts():
@@ -157,6 +191,17 @@ def hash_admin_password(password):
     if is_password_hash(password):
         return password
     return generate_password_hash(password)
+
+
+def normalize_admin_role(role, default='reviewer'):
+    normalized = (role or '').strip().lower()
+    if normalized in ADMIN_ROLE_LABELS:
+        return normalized
+    return default
+
+
+def is_superadmin_role(role):
+    return normalize_admin_role(role) == 'superadmin'
 
 
 def ensure_admin_users_table(conn):
@@ -224,6 +269,19 @@ def initialize_admin_users(conn):
                 role=config.get('role', 'admin'),
                 email=config.get('email'),
             )
+    else:
+        superadmin_count = conn.execute(
+            "SELECT COUNT(*) FROM admin_users WHERE lower(role) = 'superadmin'"
+        ).fetchone()[0]
+        if superadmin_count == 0:
+            conn.execute(
+                """
+                UPDATE admin_users
+                SET role = 'superadmin'
+                WHERE username = ? COLLATE NOCASE
+                """,
+                ('admin',),
+            )
 
 
 def get_admin_account(username):
@@ -237,7 +295,45 @@ def get_admin_account(username):
 
     if not row or not row['is_active']:
         return None
-    return dict(row)
+    account = dict(row)
+    account['role'] = normalize_admin_role(account.get('role'), default='admin')
+    return account
+
+
+def list_admin_accounts():
+    with get_main_db_connection() as conn:
+        rows = conn.execute(
+            '''
+            SELECT id, username, email, role, is_active, created_at, last_login
+            FROM admin_users
+            ORDER BY
+                CASE lower(role)
+                    WHEN 'superadmin' THEN 0
+                    WHEN 'admin' THEN 1
+                    ELSE 2
+                END,
+                username COLLATE NOCASE
+            '''
+        ).fetchall()
+
+    accounts = []
+    for row in rows:
+        account = dict(row)
+        account['role'] = normalize_admin_role(account.get('role'), default='admin')
+        account['role_label'] = ADMIN_ROLE_LABELS.get(account['role'], account['role'].title())
+        account['is_superadmin'] = is_superadmin_role(account['role'])
+        account['is_active'] = bool(account.get('is_active'))
+        accounts.append(account)
+    return accounts
+
+
+def admin_username_exists(username):
+    with get_main_db_connection() as conn:
+        row = conn.execute(
+            'SELECT 1 FROM admin_users WHERE username = ? COLLATE NOCASE LIMIT 1',
+            (username,),
+        ).fetchone()
+    return bool(row)
 
 
 def update_admin_last_login(username):
@@ -247,6 +343,25 @@ def update_admin_last_login(username):
             (username,),
         )
         conn.commit()
+
+
+@app.context_processor
+def inject_admin_session_context():
+    if 'admin_logged_in' not in session:
+        return {
+            'username': None,
+            'role': None,
+            'role_label': None,
+            'is_superadmin': False,
+        }
+
+    role = normalize_admin_role(session.get('role'), default='admin')
+    return {
+        'username': session.get('username', 'Operator'),
+        'role': role,
+        'role_label': ADMIN_ROLE_LABELS.get(role, role.title()),
+        'is_superadmin': is_superadmin_role(role),
+    }
 
 
 def normalize_language(value):
@@ -263,6 +378,237 @@ def normalize_language(value):
         return upper_value
 
     return raw_value
+
+
+def normalize_brand(value):
+    raw_value = (value or '').strip()
+    if not raw_value:
+        return ''
+
+    alias = BRAND_ALIASES.get(raw_value.lower())
+    if alias:
+        return alias
+
+    for option in BRAND_OPTIONS:
+        if raw_value.lower() == option.lower():
+            return option
+
+    return 'Other'
+
+
+def grade_sort_key(value):
+    grade = (value or '').strip()
+    if not grade:
+        return (2, float('inf'), '')
+    if grade == 'Pristine 10':
+        return (1, 10.1, grade)
+    try:
+        return (0, float(grade), grade)
+    except ValueError:
+        return (2, float('inf'), grade.lower())
+
+
+def normalize_final_grade_text(value):
+    raw_value = (value or '').strip()
+    if not raw_value:
+        return ''
+
+    if raw_value in STANDARD_GRADE_OPTIONS:
+        return raw_value
+
+    compact = ''.join(ch for ch in raw_value.lower() if ch.isalnum() or ch == '.')
+    numeric_aliases = {
+        '8': '8',
+        '8.0': '8',
+        '8.00': '8',
+        '8.5': '8.5',
+        '8.50': '8.5',
+        '9': '9',
+        '9.0': '9',
+        '9.00': '9',
+        '9.5': '9.5',
+        '9.50': '9.5',
+        '10': '10',
+        '10.0': '10',
+        '10.00': '10',
+    }
+    if compact in numeric_aliases:
+        return numeric_aliases[compact]
+
+    if 'pristine10' in compact or 'stine10' in compact:
+        return 'Pristine 10'
+
+    return ''
+
+
+def canonical_grade_sql_expression(column_name='final_grade_text'):
+    compact = f"replace(replace(lower(trim({column_name})), ' ', ''), '-', '')"
+    return f"""
+        CASE
+            WHEN trim({column_name}) IN ('8', '8.0', '8.00') THEN '8'
+            WHEN trim({column_name}) IN ('8.5', '8.50') THEN '8.5'
+            WHEN trim({column_name}) IN ('9', '9.0', '9.00') THEN '9'
+            WHEN trim({column_name}) IN ('9.5', '9.50') THEN '9.5'
+            WHEN trim({column_name}) IN ('10', '10.0', '10.00') THEN '10'
+            WHEN {compact} LIKE '%pristine10%' OR {compact} LIKE '%stine10%' THEN 'Pristine 10'
+            ELSE NULL
+        END
+    """.strip()
+
+
+def get_grade_filter_options(conn, status_filter='all'):
+    canonical_grade = canonical_grade_sql_expression('final_grade_text')
+    query = f'''
+        SELECT DISTINCT canonical_grade
+        FROM (
+            SELECT {canonical_grade} AS canonical_grade, status
+            FROM temp_cards
+        ) grade_rows
+    '''
+    params = []
+    conditions = ['canonical_grade IS NOT NULL']
+    if status_filter != 'all':
+        conditions.append('status = ?')
+        params.append(status_filter)
+    query += ' WHERE ' + ' AND '.join(conditions)
+
+    dynamic_grades = {row[0] for row in conn.execute(query, params).fetchall() if row[0]}
+    return [grade for grade in STANDARD_GRADE_OPTIONS if grade in dynamic_grades]
+
+
+def build_grade_filter_sql(grade_filter, table_alias=''):
+    canonical_grade = canonical_grade_sql_expression(
+        f"{table_alias}.final_grade_text" if table_alias else 'final_grade_text'
+    )
+    return f"{canonical_grade} = ?"
+
+
+def format_export_date_range(df):
+    for column_name in ('approved_at', 'entry_date', 'created_at', 'updated_at'):
+        if column_name not in df.columns:
+            continue
+        values = df[column_name].dropna().astype('string').str.strip()
+        values = values[values != '']
+        if values.empty:
+            continue
+        return f"{values.min()[:10]} 至 {values.max()[:10]}"
+    return '无数据'
+
+
+def load_export_history(export_history_path):
+    if not export_history_path.exists():
+        return []
+    try:
+        with open(export_history_path, 'r', encoding='utf-8') as file_obj:
+            history = json.load(file_obj)
+        if isinstance(history, list):
+            return history
+    except (OSError, json.JSONDecodeError) as exc:
+        app.logger.warning('Failed to read export history %s: %s', export_history_path, exc)
+    return []
+
+
+def approval_timestamp_expression(table_alias=''):
+    qualifier = f'{table_alias}.' if table_alias else ''
+    return f"COALESCE(NULLIF({qualifier}approved_at, ''), {qualifier}updated_at, {qualifier}entry_date, {qualifier}created_at)"
+
+
+def approval_sequence_expression(table_alias=''):
+    qualifier = f'{table_alias}.' if table_alias else ''
+    return f"COALESCE({qualifier}approval_sequence, {APPROVAL_SEQUENCE_FALLBACK})"
+
+
+def build_approved_order_clause(sort_order='desc', table_alias=''):
+    qualifier = f'{table_alias}.' if table_alias else ''
+    direction = 'ASC' if sort_order == 'asc' else 'DESC'
+    return ', '.join([
+        f"{approval_timestamp_expression(table_alias)} {direction}",
+        f"{approval_sequence_expression(table_alias)} ASC",
+        f"{qualifier}id ASC",
+    ])
+
+
+def build_entry_list_order_clause(status_filter, sort_by, sort_order):
+    direction = 'ASC' if sort_order == 'asc' else 'DESC'
+    if status_filter == 'approved' and sort_by == 'entry_date':
+        return build_approved_order_clause(sort_order=sort_order)
+    return f"{sort_by} {direction}, id ASC"
+
+
+def format_display_datetime(value):
+    raw_value = (value or '').strip()
+    if not raw_value:
+        return ''
+    return raw_value.replace('T', ' ')[:19]
+
+
+def get_entry_display_timestamp(entry):
+    if (entry.get('status') or '').strip().lower() == 'approved':
+        return (
+            entry.get('approved_at')
+            or entry.get('updated_at')
+            or entry.get('entry_date')
+            or entry.get('created_at')
+            or ''
+        )
+    return entry.get('entry_date') or entry.get('created_at') or ''
+
+
+def serialize_temp_entry(entry):
+    entry_dict = dict(entry)
+    entry_dict['language'] = normalize_language(entry_dict.get('language'))
+    entry_dict['display_date'] = format_display_datetime(get_entry_display_timestamp(entry_dict))
+    entry_dict['approved_at_display'] = format_display_datetime(entry_dict.get('approved_at') or '')
+    return entry_dict
+
+
+def backfill_approval_metadata(conn):
+    rows = conn.execute(f'''
+        SELECT id, {approval_timestamp_expression()} AS effective_approved_at
+        FROM temp_cards
+        WHERE status = 'approved'
+        ORDER BY {approval_timestamp_expression()} ASC, id ASC
+    ''').fetchall()
+
+    sequence = 1
+    for entry_id, effective_approved_at in rows:
+        approved_at = effective_approved_at or datetime.now().isoformat()
+        conn.execute(
+            '''
+                UPDATE temp_cards
+                SET approved_at = ?, approval_sequence = ?
+                WHERE id = ?
+            ''',
+            (approved_at, sequence, entry_id),
+        )
+        sequence += 1
+
+
+def assign_approval_metadata(conn, entry_ids, approved_at=None):
+    approved_at = approved_at or datetime.now().isoformat()
+    next_sequence = conn.execute(
+        "SELECT COALESCE(MAX(approval_sequence), 0) + 1 FROM temp_cards"
+    ).fetchone()[0]
+    next_sequence = int(next_sequence or 1)
+
+    updated_count = 0
+    for entry_id in entry_ids:
+        cursor = conn.execute(
+            '''
+                UPDATE temp_cards
+                SET status = 'approved',
+                    approved_at = ?,
+                    approval_sequence = ?,
+                    updated_at = ?
+                WHERE id = ? AND status = 'pending'
+            ''',
+            (approved_at, next_sequence, approved_at, entry_id),
+        )
+        if cursor.rowcount > 0:
+            updated_count += 1
+            next_sequence += 1
+
+    return updated_count, approved_at
 
 
 def get_language_variants(value):
@@ -292,6 +638,19 @@ def resolve_uploaded_file_path(filename):
     return Path(app.config['UPLOAD_FOLDER']) / safe_name
 
 
+def resolve_public_image_path(image_url):
+    raw_value = (image_url or '').strip()
+    if not raw_value:
+        return None
+    if raw_value.startswith('/static/'):
+        safe_name = Path(raw_value).name
+        return SITE_STATIC_DIR / safe_name
+    if raw_value.startswith('static/'):
+        safe_name = Path(raw_value).name
+        return SITE_STATIC_DIR / safe_name
+    return None
+
+
 def build_public_image_name(cert_id, side, source_path):
     cert_part = secure_filename((cert_id or '').strip()) or 'card'
     extension = source_path.suffix.lower() or '.jpg'
@@ -305,6 +664,17 @@ def cleanup_public_image_variants(cert_id, side, keep_name=None):
             continue
         if candidate.is_file():
             candidate.unlink()
+
+
+def delete_public_image(image_url):
+    public_path = resolve_public_image_path(image_url)
+    if public_path is None:
+        return
+    try:
+        if public_path.exists():
+            public_path.unlink()
+    except OSError:
+        app.logger.warning('Failed to delete published image: %s', public_path)
 
 
 def sync_uploaded_image_to_site(cert_id, side, filename):
@@ -554,6 +924,7 @@ def initialize_main_database():
         WHERE type = 'table' AND name = 'cards'
     """).fetchone()
     if not has_cards_table:
+        conn.commit()
         conn.close()
         return
 
@@ -564,6 +935,10 @@ def initialize_main_database():
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_cards_updated_at
         ON cards (updated_at)
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_cards_set_name_number
+        ON cards (set_name, card_number)
     ''')
     normalize_language_values(conn, 'cards')
 
@@ -789,9 +1164,13 @@ def init_temp_database():
         final_grade_text TEXT NOT NULL DEFAULT '',
         front_image TEXT DEFAULT '',
         back_image TEXT DEFAULT '',
+        published_front_image TEXT DEFAULT '',
+        published_back_image TEXT DEFAULT '',
         entry_notes TEXT DEFAULT '',
         entry_by TEXT DEFAULT '',
         entry_date TEXT,
+        approved_at TEXT,
+        approval_sequence INTEGER,
         status TEXT DEFAULT 'pending',
         created_at TEXT,
         updated_at TEXT,
@@ -813,11 +1192,15 @@ def init_temp_database():
 
     # Check and add upload-related columns
     upload_columns = [
+        ('approved_at', 'TEXT'),
+        ('approval_sequence', 'INTEGER'),
         ('upload_status', 'TEXT DEFAULT "not_started"'),
         ('upload_started', 'TEXT'),
         ('upload_completed', 'TEXT'),
         ('upload_error', 'TEXT'),
-        ('server_response', 'TEXT')
+        ('server_response', 'TEXT'),
+        ('published_front_image', "TEXT DEFAULT ''"),
+        ('published_back_image', "TEXT DEFAULT ''"),
     ]
 
     for column_name, column_type in upload_columns:
@@ -831,6 +1214,14 @@ def init_temp_database():
         CREATE INDEX IF NOT EXISTS idx_temp_cards_status_entry_date
         ON temp_cards (status, entry_date DESC)
     ''')
+    cursor.execute(f'''
+        CREATE INDEX IF NOT EXISTS idx_temp_cards_status_approved_order
+        ON temp_cards (
+            status,
+            {approval_timestamp_expression()},
+            {approval_sequence_expression()}
+        )
+    ''')
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_temp_cards_identity_grade
         ON temp_cards (card_name, set_name, card_number, language, final_grade_text)
@@ -843,6 +1234,11 @@ def init_temp_database():
         CREATE INDEX IF NOT EXISTS idx_temp_cards_set_name
         ON temp_cards (set_name)
     ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_temp_cards_set_name_number
+        ON temp_cards (set_name, card_number)
+    ''')
+    backfill_approval_metadata(conn)
     normalize_language_values(conn, 'temp_cards')
 
     conn.commit()
@@ -889,23 +1285,32 @@ def save_uploaded_file(file, filename_prefix):
 def get_entry_image_flags(entry):
     front_name = (entry['front_image'] or '').strip()
     back_name = (entry['back_image'] or '').strip()
+    published_front = (entry['published_front_image'] or '').strip()
+    published_back = (entry['published_back_image'] or '').strip()
     front_path = resolve_uploaded_file_path(front_name) if front_name else None
     back_path = resolve_uploaded_file_path(back_name) if back_name else None
+    published_front_path = resolve_public_image_path(published_front) if published_front else None
+    published_back_path = resolve_public_image_path(published_back) if published_back else None
 
     has_front = bool(front_path and front_path.is_file())
     has_back = bool(back_path and back_path.is_file())
+    has_published_front = bool(published_front_path and published_front_path.is_file())
+    has_published_back = bool(published_back_path and published_back_path.is_file())
 
     return {
         'has_front_image_file': has_front,
         'has_back_image_file': has_back,
         'ready_for_upload': has_front and has_back,
+        'has_published_front_image': has_published_front,
+        'has_published_back_image': has_published_back,
+        'published_complete': has_published_front and has_published_back,
     }
 
 
 def get_upload_stats(conn):
     approved_entries = conn.execute(
         '''
-            SELECT id, front_image, back_image, upload_status
+            SELECT id, front_image, back_image, published_front_image, published_back_image, upload_status
             FROM temp_cards
             WHERE status = 'approved'
         '''
@@ -914,6 +1319,7 @@ def get_upload_stats(conn):
     stats = {}
     image_stats = {
         'total_approved': len(approved_entries),
+        'client_pushed': 0,
         'has_front_image': 0,
         'has_back_image': 0,
         'ready_for_upload': 0,
@@ -922,6 +1328,8 @@ def get_upload_stats(conn):
     for entry in approved_entries:
         upload_status = entry['upload_status'] or 'not_started'
         stats[upload_status] = stats.get(upload_status, 0) + 1
+        if upload_status == CLIENT_PUSHED_UPLOAD_STATUS:
+            image_stats['client_pushed'] += 1
 
         flags = get_entry_image_flags(entry)
         if flags['has_front_image_file']:
@@ -1005,6 +1413,19 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+
+def superadmin_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'admin_logged_in' not in session:
+            flash('Please login first', 'warning')
+            return redirect(url_for('admin_login'))
+        if not is_superadmin_role(session.get('role')):
+            flash('Only super admin users can manage administrator accounts.', 'error')
+            return redirect(url_for('dashboard'))
+        return f(*args, **kwargs)
+    return decorated_function
+
 # ========== Login ==========
 @app.route('/admin/login', methods=['GET', 'POST'])
 def admin_login():
@@ -1074,6 +1495,53 @@ def dashboard():
                          brand_options=BRAND_OPTIONS,
                          language_options=LANGUAGE_OPTIONS)
 
+
+@app.route('/admin/users', methods=['GET', 'POST'])
+@superadmin_required
+def admin_users():
+    if request.method == 'POST':
+        username = request.form.get('username', '').strip()
+        password = request.form.get('password', '').strip()
+        email = request.form.get('email', '').strip() or None
+        role = normalize_admin_role(request.form.get('role'), default='admin')
+        is_active = 0 if request.form.get('inactive') == '1' else 1
+
+        if not username:
+            flash('Username is required.', 'error')
+            return redirect(url_for('admin_users'))
+        if not password:
+            flash('Password is required.', 'error')
+            return redirect(url_for('admin_users'))
+        if len(password) < 6:
+            flash('Password must be at least 6 characters long.', 'error')
+            return redirect(url_for('admin_users'))
+        if role not in MANAGEABLE_ADMIN_ROLES:
+            flash('Only admin or reviewer accounts can be created here.', 'error')
+            return redirect(url_for('admin_users'))
+        if admin_username_exists(username):
+            flash(f'Username "{username}" already exists.', 'warning')
+            return redirect(url_for('admin_users'))
+
+        with get_main_db_connection() as conn:
+            upsert_admin_user(
+                conn,
+                username=username,
+                password=password,
+                role=role,
+                email=email,
+                is_active=is_active,
+            )
+            conn.commit()
+
+        flash(f'Administrator account "{username}" created successfully.', 'success')
+        return redirect(url_for('admin_users'))
+
+    return render_template(
+        'admin_users.html',
+        admin_accounts=list_admin_accounts(),
+        role_options=[{'value': role, 'label': ADMIN_ROLE_LABELS[role]} for role in MANAGEABLE_ADMIN_ROLES],
+    )
+
 # ========== New Entry ==========
 @app.route('/admin/entry/new', methods=['GET', 'POST'])
 @login_required
@@ -1140,6 +1608,8 @@ def new_entry():
             'final_grade_text': final_grade_text,
             'front_image': front_image_filename or '',
             'back_image': back_image_filename or '',
+            'published_front_image': '',
+            'published_back_image': '',
             'entry_notes': request.form.get('entry_notes', '').strip(),
             'entry_by': session.get('username', ''),
             'entry_date': datetime.now().isoformat(),
@@ -1208,16 +1678,19 @@ def new_entry():
 def entry_list():
     # Get filter parameters
     status_filter = request.args.get('status', 'all')
+    cert_id_filter = request.args.get('cert_id', '').strip()
     card_name_filter = request.args.get('card_name', '').strip()
     final_grade_filter = request.args.get('final_grade', '').strip()
     set_name_filter = request.args.get('set_name', '').strip()
+    brand_filter = request.args.get('brand', '').strip()
     language_filter = normalize_language(request.args.get('language', '').strip())
+    entered_by_filter = request.args.get('entered_by', '').strip()
     sort_by = request.args.get('sort_by', 'entry_date')
     sort_order = request.args.get('sort_order', 'desc')
     page = max(request.args.get('page', 1, type=int), 1)
     
     # Validate sort parameters
-    valid_sort_columns = ['entry_date', 'card_name', 'final_grade', 'set_name', 'language']
+    valid_sort_columns = ['entry_date', 'card_name', 'final_grade', 'set_name', 'language', 'cert_id', 'brand']
     if sort_by not in valid_sort_columns:
         sort_by = 'entry_date'
     
@@ -1235,6 +1708,14 @@ def entry_list():
         conditions.append("status = ?")
         params.append(status_filter)
     
+    if cert_id_filter:
+        if cert_id_filter.isdigit() and len(cert_id_filter) == 10:
+            conditions.append("cert_id = ?")
+            params.append(cert_id_filter)
+        else:
+            conditions.append("cert_id LIKE ?")
+            params.append(f"%{cert_id_filter}%")
+
     if card_name_filter:
         conditions.append("card_name LIKE ?")
         params.append(f"%{card_name_filter}%")
@@ -1246,12 +1727,20 @@ def entry_list():
     if set_name_filter:
         conditions.append("set_name LIKE ?")
         params.append(f"%{set_name_filter}%")
+
+    if brand_filter:
+        conditions.append("brand LIKE ?")
+        params.append(f"%{brand_filter}%")
     
     if language_filter:
         language_variants = get_language_variants(language_filter)
         placeholders = ', '.join(['?' for _ in language_variants])
         conditions.append(f"language IN ({placeholders})")
         params.extend(language_variants)
+
+    if entered_by_filter:
+        conditions.append("entry_by LIKE ?")
+        params.append(f"%{entered_by_filter}%")
     
     where_clause = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     total_matching = conn.execute(f"SELECT COUNT(*) FROM temp_cards{where_clause}", params).fetchone()[0]
@@ -1263,24 +1752,14 @@ def entry_list():
 
     # Add ORDER BY clause
     query += where_clause
-    query += f" ORDER BY {sort_by} {sort_order.upper()} LIMIT ? OFFSET ?"
+    query += f" ORDER BY {build_entry_list_order_clause(status_filter, sort_by, sort_order)} LIMIT ? OFFSET ?"
 
     # Execute query
     entries = conn.execute(query, [*params, TEMP_LIST_PAGE_SIZE, offset]).fetchall()
     
     # Get available filter options
-    # Get unique final grades for filter dropdown
-    grade_options = []
-    if status_filter == 'approved' or status_filter == 'all':
-        grade_result = conn.execute("""
-            SELECT DISTINCT final_grade_text 
-            FROM temp_cards 
-            WHERE final_grade_text IS NOT NULL AND final_grade_text != ''
-            ORDER BY final_grade_text
-        """).fetchall()
-        grade_options = [row[0] for row in grade_result]
+    grade_options = get_grade_filter_options(conn, status_filter=status_filter)
     
-    # Get unique set names for filter dropdown
     set_options = []
     if status_filter == 'approved' or status_filter == 'all':
         set_result = conn.execute("""
@@ -1290,6 +1769,16 @@ def entry_list():
             ORDER BY set_name
         """).fetchall()
         set_options = [row[0] for row in set_result]
+
+    entered_by_options = [
+        row[0]
+        for row in conn.execute("""
+            SELECT DISTINCT entry_by
+            FROM temp_cards
+            WHERE entry_by IS NOT NULL AND entry_by != ''
+            ORDER BY entry_by
+        """).fetchall()
+    ]
     
     # Get status counts
     status_counts = {
@@ -1302,10 +1791,13 @@ def entry_list():
 
     pagination = build_pagination(page, total_pages, 'entry_list', {
         'status': status_filter,
+        'cert_id': cert_id_filter,
         'card_name': card_name_filter,
         'final_grade': final_grade_filter,
         'set_name': set_name_filter,
+        'brand': brand_filter,
         'language': language_filter,
+        'entered_by': entered_by_filter,
         'sort_by': sort_by,
         'sort_order': sort_order,
     })
@@ -1314,22 +1806,24 @@ def entry_list():
     page_end = min(page * TEMP_LIST_PAGE_SIZE, total_matching)
 
     return render_template('entry_list.html',
-                         entries=[
-                             {**dict(entry), 'language': normalize_language(entry['language'])}
-                             for entry in entries
-                         ],
+                         entries=[serialize_temp_entry(entry) for entry in entries],
                          status_filter=status_filter,
                          status_counts=status_counts,
                          brand_options=BRAND_OPTIONS,
                          language_options=LANGUAGE_OPTIONS,
                          # Filter values
+                         cert_id_filter=cert_id_filter,
                          card_name_filter=card_name_filter,
                          final_grade_filter=final_grade_filter,
                          set_name_filter=set_name_filter,
+                         brand_filter=brand_filter,
                          language_filter=language_filter,
+                         entered_by_filter=entered_by_filter,
                          # Filter options
                          grade_options=grade_options,
                          set_options=set_options,
+                         brand_options_for_filter=BRAND_OPTIONS,
+                         entered_by_options=entered_by_options,
                          # Sort values
                          sort_by=sort_by,
                          sort_order=sort_order,
@@ -1350,7 +1844,10 @@ def entry_detail(entry_id):
         flash('Entry not found', 'error')
         return redirect(url_for('entry_list'))
 
-    entry = {**dict(entry), 'language': normalize_language(entry['language'])}
+    entry = serialize_temp_entry(entry)
+    entry['entry_date_display'] = format_display_datetime(entry.get('entry_date') or '')
+    entry['created_at_display'] = format_display_datetime(entry.get('created_at') or '')
+    entry['updated_at_display'] = format_display_datetime(entry.get('updated_at') or '')
 
     return render_template('entry_detail.html',
                          entry=entry,
@@ -1422,6 +1919,7 @@ def edit_entry(entry_id):
         delete_front_image = request.form.get('delete_front_image') == '1'
         delete_back_image = request.form.get('delete_back_image') == '1'
         files_to_delete = []
+        published_images_to_delete = []
 
         # Update entry
         update_data = {
@@ -1450,8 +1948,11 @@ def edit_entry(entry_id):
                 files_to_delete.append(existing_entry['front_image'])
         elif delete_front_image:
             update_data['front_image'] = ''
+            update_data['published_front_image'] = ''
             if existing_entry['front_image']:
                 files_to_delete.append(existing_entry['front_image'])
+            if existing_entry['published_front_image']:
+                published_images_to_delete.append(existing_entry['published_front_image'])
 
         if back_image_filename:
             update_data['back_image'] = back_image_filename
@@ -1459,8 +1960,11 @@ def edit_entry(entry_id):
                 files_to_delete.append(existing_entry['back_image'])
         elif delete_back_image:
             update_data['back_image'] = ''
+            update_data['published_back_image'] = ''
             if existing_entry['back_image']:
                 files_to_delete.append(existing_entry['back_image'])
+            if existing_entry['published_back_image']:
+                published_images_to_delete.append(existing_entry['published_back_image'])
 
         # Validate required fields
         required_fields = ['card_name', 'brand', 'language', 'set_name', 'card_number']
@@ -1484,6 +1988,8 @@ def edit_entry(entry_id):
 
             for filename in dict.fromkeys(files_to_delete):
                 delete_uploaded_file(filename)
+            for image_url in dict.fromkeys(published_images_to_delete):
+                delete_public_image(image_url)
 
             flash(f"Entry updated successfully. New grade: {final_grade_text}", 'success')
             return redirect(url_for('entry_detail', entry_id=entry_id))
@@ -1514,16 +2020,57 @@ def approve_entry(entry_id):
     conn = get_temp_db_connection()
 
     try:
-        conn.execute("UPDATE temp_cards SET status = 'approved', updated_at = ? WHERE id = ?",
-                    (datetime.now().isoformat(), entry_id))
+        conn.execute('BEGIN IMMEDIATE')
+        updated_count, _ = assign_approval_metadata(conn, [entry_id])
         conn.commit()
-        flash('Entry approved successfully', 'success')
+        if updated_count:
+            flash('Entry approved successfully', 'success')
+        else:
+            flash('Entry is already approved or was not found', 'warning')
     except Exception as e:
         conn.rollback()
         flash(f'Error approving entry: {str(e)}', 'error')
 
     conn.close()
     return redirect(url_for('entry_detail', entry_id=entry_id))
+
+
+@app.route('/admin/entries/batch-approve', methods=['POST'])
+@login_required
+def batch_approve_entries():
+    data = request.get_json(silent=True) or {}
+    raw_entry_ids = data.get('entry_ids', [])
+
+    if not isinstance(raw_entry_ids, list) or not raw_entry_ids:
+        return jsonify({'success': False, 'message': 'No entries selected'}), 400
+
+    entry_ids = []
+    for value in raw_entry_ids:
+        try:
+            entry_ids.append(int(value))
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'message': f'Invalid entry id: {value}'}), 400
+
+    # Preserve request order while removing duplicates.
+    entry_ids = list(dict.fromkeys(entry_ids))
+
+    conn = get_temp_db_connection()
+
+    try:
+        conn.execute('BEGIN IMMEDIATE')
+        updated_count, approved_at = assign_approval_metadata(conn, entry_ids)
+        conn.commit()
+        return jsonify({
+            'success': True,
+            'message': f'Successfully approved {updated_count} entries',
+            'count': updated_count,
+            'approved_at': approved_at,
+        })
+    except Exception as exc:
+        conn.rollback()
+        return jsonify({'success': False, 'message': f'Error approving entries: {exc}'}), 500
+    finally:
+        conn.close()
 
 # ========== Export to Main Database ==========
 @app.route('/admin/export/approved')
@@ -1533,7 +2080,9 @@ def export_approved():
     conn_main = get_main_db_connection()
 
     try:
-        approved_entries = conn_temp.execute("SELECT * FROM temp_cards WHERE status = 'approved'").fetchall()
+        approved_entries = conn_temp.execute(
+            f"SELECT * FROM temp_cards WHERE status = 'approved' ORDER BY {build_approved_order_clause()}"
+        ).fetchall()
 
         inserted = 0
         updated = 0
@@ -1640,6 +2189,78 @@ def api_calculate_pop():
     except Exception as e:
         return jsonify({'error': str(e), 'pop': '1'}), 400
 
+
+@app.route('/admin/api/match-card', methods=['POST'])
+@app.route('/api/match-card', methods=['POST'])
+@login_required
+def api_match_card():
+    """Auto-fill card metadata from existing temp or main records."""
+    try:
+        data = request.get_json() or {}
+        set_name = data.get('set_name', '').strip()
+        card_number = data.get('card_number', '').strip()
+
+        if not set_name or not card_number:
+            return jsonify({'error': 'Set name and card number are required'}), 400
+
+        lookup_sql = '''
+            SELECT card_name, brand, year, variety, language
+            FROM {table_name}
+            WHERE set_name = ? COLLATE NOCASE
+              AND card_number = ? COLLATE NOCASE
+            {order_clause}
+            LIMIT 1
+        '''
+
+        lookups = (
+            (
+                get_temp_db_connection,
+                'temp_cards',
+                '''
+                    ORDER BY
+                        CASE WHEN status = 'approved' THEN 0 ELSE 1 END,
+                        COALESCE(updated_at, entry_date, created_at) DESC,
+                        id DESC
+                ''',
+                'temp_cards',
+            ),
+            (
+                get_main_db_connection,
+                'cards',
+                '''
+                    ORDER BY
+                        COALESCE(updated_at, created_at) DESC,
+                        cert_id DESC
+                ''',
+                'cards',
+            ),
+        )
+
+        for connection_factory, table_name, order_clause, source in lookups:
+            with connection_factory() as conn:
+                row = conn.execute(
+                    lookup_sql.format(table_name=table_name, order_clause=order_clause),
+                    (set_name, card_number),
+                ).fetchone()
+            if not row:
+                continue
+
+            return jsonify({
+                'found': True,
+                'card_name': row['card_name'] or '',
+                'brand': normalize_brand(row['brand']),
+                'year': row['year'] or '',
+                'variety': row['variety'] or '',
+                'language': normalize_language(row['language']),
+                'source': source,
+            })
+
+        return jsonify({'found': False, 'message': 'No matching card found in database'})
+
+    except Exception as exc:
+        app.logger.error('Card matching error: %s', exc)
+        return jsonify({'error': f'Database error: {exc}'}), 500
+
 @app.route('/favicon.ico')
 def favicon():
     return send_from_directory(ADMIN_DIR / 'static' / 'images', 'nxr-logo-circle.png', mimetype='image/png')
@@ -1665,6 +2286,7 @@ def page_not_found(e):
 def upload_manager():
     """上传管理页面"""
     page = request.args.get('page', 1, type=int)
+    show_client_pushed = request.args.get('show_client_pushed', '0') == '1'
     per_page = 50
 
     conn = get_temp_db_connection()
@@ -1673,25 +2295,43 @@ def upload_manager():
     # 获取所有已批准数据（包括图片不完整的）
     offset = (page - 1) * per_page
 
-    cursor.execute('''
+    query = '''
         SELECT * FROM temp_cards
         WHERE status = 'approved'
-        ORDER BY entry_date DESC
+    '''
+    params = []
+    if not show_client_pushed:
+        query += " AND COALESCE(upload_status, 'not_started') != ?"
+        params.append(CLIENT_PUSHED_UPLOAD_STATUS)
+
+    query += '''
+        ORDER BY
+            COALESCE(NULLIF(approved_at, ''), updated_at, entry_date, created_at) DESC,
+            COALESCE(approval_sequence, 9223372036854775807) ASC,
+            id ASC
         LIMIT ? OFFSET ?
-    ''', (per_page, offset))
+    '''
+    params.extend([per_page, offset])
+
+    cursor.execute(query, params)
 
     raw_entries = cursor.fetchall()
     entries = []
     for entry in raw_entries:
-        entry_dict = dict(entry)
+        entry_dict = serialize_temp_entry(entry)
         entry_dict.update(get_entry_image_flags(entry))
         entries.append(entry_dict)
 
     # 获取总数
-    cursor.execute('''
+    total_query = '''
         SELECT COUNT(*) FROM temp_cards
         WHERE status = 'approved'
-    ''')
+    '''
+    total_params = []
+    if not show_client_pushed:
+        total_query += " AND COALESCE(upload_status, 'not_started') != ?"
+        total_params.append(CLIENT_PUSHED_UPLOAD_STATUS)
+    cursor.execute(total_query, total_params)
     total = cursor.fetchone()[0]
 
     stats = get_upload_stats(conn)
@@ -1706,6 +2346,7 @@ def upload_manager():
                          per_page=per_page,
                          total=total,
                          total_pages=total_pages,
+                         show_client_pushed=show_client_pushed,
                          stats=stats,
                          brand_options=BRAND_OPTIONS,
                          language_options=LANGUAGE_OPTIONS)
@@ -1759,6 +2400,11 @@ def api_upload_entry(entry_id):
         export_result = upsert_main_card(entry, conn_main, require_complete=True)
         conn_main.commit()
 
+        local_front_image = entry['front_image'] or ''
+        local_back_image = entry['back_image'] or ''
+        delete_uploaded_file(local_front_image)
+        delete_uploaded_file(local_back_image)
+
         completed_at = datetime.now().isoformat()
         response_payload = {
             'entry_id': entry_id,
@@ -1773,6 +2419,10 @@ def api_upload_entry(entry_id):
                 SET upload_status = 'uploaded',
                     upload_started = ?,
                     upload_completed = ?,
+                    front_image = '',
+                    back_image = '',
+                    published_front_image = ?,
+                    published_back_image = ?,
                     upload_error = NULL,
                     server_response = ?
                 WHERE id = ?
@@ -1780,6 +2430,8 @@ def api_upload_entry(entry_id):
             (
                 started_at,
                 completed_at,
+                export_result['front_image'],
+                export_result['back_image'],
                 json.dumps(response_payload),
                 entry_id,
             ),
@@ -1818,6 +2470,51 @@ def api_upload_entry(entry_id):
     finally:
         conn_temp.close()
         conn_main.close()
+
+
+@app.route('/admin/api/upload/<int:entry_id>/client-pushed', methods=['POST'])
+@app.route('/api/upload/<int:entry_id>/client-pushed', methods=['POST'])
+@login_required
+def api_mark_client_pushed(entry_id):
+    """API: 标记条目已推送给客户端"""
+    conn_temp = get_temp_db_connection()
+    try:
+        entry = conn_temp.execute(
+            '''
+                SELECT id, cert_id, status, upload_status, upload_completed
+                FROM temp_cards
+                WHERE id = ?
+            ''',
+            (entry_id,),
+        ).fetchone()
+        if not entry:
+            return jsonify({'success': False, 'error': 'Entry not found'}), 404
+        if (entry['status'] or '').strip().lower() != 'approved':
+            return jsonify({'success': False, 'error': 'Only approved entries can be marked'}), 400
+        if (entry['upload_status'] or '').strip().lower() != 'uploaded':
+            return jsonify({'success': False, 'error': 'Only uploaded entries can be marked as client pushed'}), 400
+
+        completed_at = entry['upload_completed'] or datetime.now().isoformat()
+        conn_temp.execute(
+            '''
+                UPDATE temp_cards
+                SET upload_status = ?,
+                    upload_completed = ?
+                WHERE id = ?
+            ''',
+            (CLIENT_PUSHED_UPLOAD_STATUS, completed_at, entry_id),
+        )
+        conn_temp.commit()
+
+        return jsonify({
+            'success': True,
+            'entry_id': entry_id,
+            'cert_id': entry['cert_id'],
+            'upload_status': CLIENT_PUSHED_UPLOAD_STATUS,
+            'message': 'Marked as pushed to client',
+        })
+    finally:
+        conn_temp.close()
 
 @app.route('/admin/api/batch-upload', methods=['POST'])
 @app.route('/api/batch-upload', methods=['POST'])
@@ -1861,16 +2558,7 @@ def uploaded_file(filename):
 def get_grade_options_from_db():
     """从数据库获取所有可用的final grade选项"""
     conn = get_temp_db_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT DISTINCT final_grade_text
-        FROM temp_cards
-        WHERE status = 'approved' AND final_grade_text IS NOT NULL AND final_grade_text != ''
-        ORDER BY final_grade_text
-    """)
-
-    grades = [row[0] for row in cursor.fetchall()]
+    grades = get_grade_filter_options(conn, status_filter='approved')
     conn.close()
 
     return grades
@@ -1880,13 +2568,13 @@ def get_grade_stats_from_db():
     conn = get_temp_db_connection()
     cursor = conn.cursor()
 
-    grade_options = get_grade_options_from_db()
+    grade_options = get_grade_filter_options(conn, status_filter='approved')
     grade_stats = {}
 
     for grade in grade_options:
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT COUNT(*) FROM temp_cards
-            WHERE status = 'approved' AND final_grade_text = ?
+            WHERE status = 'approved' AND {build_grade_filter_sql(grade)}
         """, (grade,))
         grade_stats[grade] = cursor.fetchone()[0]
 
@@ -1903,7 +2591,7 @@ def get_grade_stats_from_db():
 def export_excel_page():
     """Excel导出页面"""
     total_approved, grade_stats = get_grade_stats_from_db()
-    grade_options = get_grade_options_from_db()
+    grade_options = [grade for grade in STANDARD_GRADE_OPTIONS if grade_stats.get(grade, 0) > 0]
 
     return render_template('export_excel.html',
                          grade_options=grade_options,
@@ -1917,23 +2605,23 @@ def export_excel_page():
 @login_required
 def generate_excel():
     """生成Excel文件"""
-    import pandas as pd
-
-    grade_filter = request.form.get('grade_filter', '').strip()
-    if grade_filter == 'all':
-        grade_filter = None
-
-    # 构建查询
-    query = "SELECT * FROM temp_cards WHERE status = 'approved'"
-    params = []
-
-    if grade_filter:
-        query += " AND final_grade_text = ?"
-        params.append(grade_filter)
-
-    query += " ORDER BY entry_date DESC"
-
     try:
+        import pandas as pd
+
+        grade_filter = normalize_final_grade_text(request.form.get('grade_filter', '').strip())
+        if request.form.get('grade_filter', '').strip() == 'all':
+            grade_filter = None
+
+        # 构建查询
+        query = "SELECT * FROM temp_cards WHERE status = 'approved'"
+        params = []
+
+        if grade_filter:
+            query += f" AND {build_grade_filter_sql(grade_filter)}"
+            params.append(grade_filter)
+
+        query += f" ORDER BY {build_approved_order_clause()}"
+
         # 执行查询
         conn = get_temp_db_connection()
         df = pd.read_sql_query(query, conn, params=params)
@@ -1944,7 +2632,9 @@ def generate_excel():
             return redirect(url_for('export_excel_page'))
 
         # 添加landing page url列
-        df['landing_page_url'] = df['cert_id'].apply(lambda x: f"nxrgrading.com/card/{x}")
+        df['landing_page_url'] = df['cert_id'].apply(lambda x: f"nxrgrading.com/card/{str(x).strip()}")
+        if 'final_grade_text' in df.columns:
+            df['final_grade_text'] = df['final_grade_text'].apply(normalize_final_grade_text).replace('', pd.NA).fillna(df['final_grade_text'])
 
         # 重新排列列顺序，将landing_page_url放在最后
         columns = [col for col in df.columns if col != 'landing_page_url']
@@ -1970,7 +2660,7 @@ def generate_excel():
                 '导出时间': [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
                 '总记录数': [len(df)],
                 '筛选条件': [f"final_grade_text = {grade_filter}" if grade_filter else "全部"],
-                '数据范围': [f"{df['entry_date'].min()[:10]} 至 {df['entry_date'].max()[:10]}" if len(df) > 0 else "无数据"],
+                '数据范围': [format_export_date_range(df)],
                 '包含字段数': [len(df.columns)],
                 '文件名称': [output_filename]
             }
@@ -1987,10 +2677,7 @@ def generate_excel():
 
         # 记录导出历史
         export_history_path = exports_dir / "export_history.json"
-        history = []
-        if export_history_path.exists():
-            with open(export_history_path, 'r', encoding='utf-8') as f:
-                history = json.load(f)
+        history = load_export_history(export_history_path)
 
         history.append({
             'filename': output_filename,

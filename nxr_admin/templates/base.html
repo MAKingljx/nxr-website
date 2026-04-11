@@ -64,6 +64,11 @@
                         .fa-columns:before { content: "📊 "; }
                         .fa-link:before { content: "🔗 "; }
                         .fa-cogs:before { content: "⚙️ "; }
+                        .fa-user-shield:before { content: "🛡️ "; }
+                        .fa-user-plus:before { content: "👤 "; }
+                        .fa-users-cog:before { content: "👥 "; }
+                        .fa-save:before { content: "💾 "; }
+                        .fa-sign-out-alt:before { content: "🚪 "; }
                         .fa-file-export:before { content: "📤 "; }
                         .fa-file-signature:before { content: "📝 "; }
                         .fa-eye:before { content: "👁️ "; }
@@ -184,8 +189,8 @@
                 <span class="me-3 text-muted">
                     <i class="fas fa-user me-1"></i>{{ username }}
                     {% if role %}
-                        <small class="badge bg-{{ 'success' if role == 'admin' else 'info' }} ms-1">
-                            {{ role|title }}
+                        <small class="badge bg-{{ 'danger' if role == 'superadmin' else 'success' if role == 'admin' else 'info' }} ms-1">
+                            {{ role_label or role|title }}
                         </small>
                     {% endif %}
                 </span>
@@ -228,6 +233,13 @@
                     <a href="{{ url_for('upload_manager') }}" class="{% if request.endpoint == 'upload_manager' %}active{% endif %}">
                         <i class="fas fa-cloud-upload-alt me-2"></i>Upload to Server
                     </a>
+
+                    {% if is_superadmin %}
+                    <h6 class="px-3 text-uppercase text-muted mt-4 mb-3">Administration</h6>
+                    <a href="{{ url_for('admin_users') }}" class="{% if request.endpoint == 'admin_users' %}active{% endif %}">
+                        <i class="fas fa-user-shield me-2"></i>Admin Users
+                    </a>
+                    {% endif %}
                 </div>
             </div>
 
