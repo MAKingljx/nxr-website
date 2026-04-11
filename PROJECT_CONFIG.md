@@ -14,6 +14,7 @@
 - App port: `8080`
 - Reverse proxy: Nginx -> `127.0.0.1:8080`
 - Public domain: `https://nxrgrading.com/`
+- Public admin entry URL: `https://nxrgrading.com/x7k9m2q4r8v6c3p1`
 
 ## Validation Workflow
 
