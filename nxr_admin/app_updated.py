@@ -136,7 +136,11 @@ LANGUAGE_DB_VARIANTS = {
     'Other': ['Other'],
 }
 
-TEMP_LIST_PAGE_SIZE = 25
+PAGE_SIZE_OPTIONS = (10, 25, 50, 100, 200)
+TEMP_LIST_DEFAULT_PAGE_SIZE = 25
+UPLOAD_LIST_DEFAULT_PAGE_SIZE = 50
+ADMIN_USERS_DEFAULT_PAGE_SIZE = 25
+EXPORT_HISTORY_DEFAULT_PAGE_SIZE = 10
 AUTO_PROCESS_UPLOADS = os.environ.get('AUTO_PROCESS_UPLOADS', '1') != '0'
 IMAGE_ANALYSIS_MAX_DIMENSION = 480
 IMAGE_MAX_DIMENSION = 2200
@@ -323,10 +327,14 @@ def get_admin_account_by_id(user_id):
     return account
 
 
-def list_admin_accounts():
+def count_admin_accounts():
     with get_main_db_connection() as conn:
-        rows = conn.execute(
-            '''
+        return conn.execute('SELECT COUNT(*) FROM admin_users').fetchone()[0]
+
+
+def list_admin_accounts(limit=None, offset=0):
+    with get_main_db_connection() as conn:
+        query = '''
             SELECT id, username, email, role, is_active, created_at, last_login
             FROM admin_users
             ORDER BY
@@ -336,8 +344,12 @@ def list_admin_accounts():
                     ELSE 2
                 END,
                 username COLLATE NOCASE
-            '''
-        ).fetchall()
+        '''
+        params = []
+        if limit is not None:
+            query += ' LIMIT ? OFFSET ?'
+            params.extend([limit, offset])
+        rows = conn.execute(query, tuple(params)).fetchall()
 
     accounts = []
     for row in rows:
@@ -1183,6 +1195,13 @@ def build_pagination(page, total_pages, endpoint, params):
     }
 
 
+def get_page_size_arg(name='page_size', default=TEMP_LIST_DEFAULT_PAGE_SIZE):
+    page_size = request.args.get(name, default, type=int)
+    if page_size not in PAGE_SIZE_OPTIONS:
+        return default
+    return page_size
+
+
 def resolve_export_file_path(filename):
     safe_name = secure_filename(filename or '')
     if not safe_name or safe_name != Path(filename).name or not safe_name.lower().endswith('.xlsx'):
@@ -1556,7 +1575,13 @@ def dashboard():
 @superadmin_required
 def admin_users():
     edit_user_id = request.args.get('edit', type=int)
+    page = max(request.args.get('page', 1, type=int), 1)
+    page_size = get_page_size_arg(default=ADMIN_USERS_DEFAULT_PAGE_SIZE)
     if request.method == 'POST':
+        page = max(request.form.get('page', page, type=int), 1)
+        page_size = request.form.get('page_size', page_size, type=int)
+        if page_size not in PAGE_SIZE_OPTIONS:
+            page_size = ADMIN_USERS_DEFAULT_PAGE_SIZE
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '').strip()
         email = request.form.get('email', '').strip() or None
@@ -1565,19 +1590,19 @@ def admin_users():
 
         if not username:
             flash('Username is required.', 'error')
-            return redirect(url_for('admin_users'))
+            return redirect(url_for('admin_users', page=page, page_size=page_size))
         if not password:
             flash('Password is required.', 'error')
-            return redirect(url_for('admin_users'))
+            return redirect(url_for('admin_users', page=page, page_size=page_size))
         if len(password) < 6:
             flash('Password must be at least 6 characters long.', 'error')
-            return redirect(url_for('admin_users'))
+            return redirect(url_for('admin_users', page=page, page_size=page_size))
         if role not in MANAGEABLE_ADMIN_ROLES:
             flash('Only admin or reviewer accounts can be created here.', 'error')
-            return redirect(url_for('admin_users'))
+            return redirect(url_for('admin_users', page=page, page_size=page_size))
         if admin_username_exists(username):
             flash(f'Username "{username}" already exists.', 'warning')
-            return redirect(url_for('admin_users'))
+            return redirect(url_for('admin_users', page=page, page_size=page_size))
 
         with get_main_db_connection() as conn:
             upsert_admin_user(
@@ -1591,24 +1616,44 @@ def admin_users():
             conn.commit()
 
         flash(f'Administrator account "{username}" created successfully.', 'success')
-        return redirect(url_for('admin_users'))
+        return redirect(url_for('admin_users', page=page, page_size=page_size))
+
+    total_accounts = count_admin_accounts()
+    total_pages = max((total_accounts + page_size - 1) // page_size, 1)
+    if page > total_pages:
+        page = total_pages
 
     return render_template(
         'admin_users.html',
-        admin_accounts=list_admin_accounts(),
+        admin_accounts=list_admin_accounts(limit=page_size, offset=(page - 1) * page_size),
         editing_account=get_admin_account_by_id(edit_user_id) if edit_user_id else None,
         role_options=[{'value': role, 'label': ADMIN_ROLE_LABELS[role]} for role in MANAGEABLE_ADMIN_ROLES],
         edit_role_options=[{'value': role, 'label': ADMIN_ROLE_LABELS[role]} for role in ('superadmin',) + MANAGEABLE_ADMIN_ROLES],
+        total_accounts=total_accounts,
+        page_size=page_size,
+        page_size_options=PAGE_SIZE_OPTIONS,
+        pagination=build_pagination(
+            page,
+            total_pages,
+            'admin_users',
+            {'edit': edit_user_id, 'page_size': page_size},
+        ),
+        page_start=((page - 1) * page_size) + 1 if total_accounts else 0,
+        page_end=min(page * page_size, total_accounts),
     )
 
 
 @app.route('/admin/users/<int:user_id>/edit', methods=['POST'])
 @superadmin_required
 def update_admin_user_route(user_id):
+    page = max(request.form.get('page', 1, type=int), 1)
+    page_size = request.form.get('page_size', ADMIN_USERS_DEFAULT_PAGE_SIZE, type=int)
+    if page_size not in PAGE_SIZE_OPTIONS:
+        page_size = ADMIN_USERS_DEFAULT_PAGE_SIZE
     existing_account = get_admin_account_by_id(user_id)
     if not existing_account:
         flash('Administrator account not found.', 'error')
-        return redirect(url_for('admin_users'))
+        return redirect(url_for('admin_users', page=page, page_size=page_size))
 
     username = request.form.get('username', '').strip()
     password = request.form.get('password', '').strip()
@@ -1618,21 +1663,21 @@ def update_admin_user_route(user_id):
 
     if not username:
         flash('Username is required.', 'error')
-        return redirect(url_for('admin_users', edit=user_id))
+        return redirect(url_for('admin_users', edit=user_id, page=page, page_size=page_size))
     if password and len(password) < 6:
         flash('Password must be at least 6 characters long when updating it.', 'error')
-        return redirect(url_for('admin_users', edit=user_id))
+        return redirect(url_for('admin_users', edit=user_id, page=page, page_size=page_size))
     if role not in ADMIN_ROLE_LABELS:
         flash('Invalid administrator role.', 'error')
-        return redirect(url_for('admin_users', edit=user_id))
+        return redirect(url_for('admin_users', edit=user_id, page=page, page_size=page_size))
     if admin_username_exists(username, exclude_user_id=user_id):
         flash(f'Username "{username}" already exists.', 'warning')
-        return redirect(url_for('admin_users', edit=user_id))
+        return redirect(url_for('admin_users', edit=user_id, page=page, page_size=page_size))
 
     if existing_account['is_superadmin'] and (role != 'superadmin' or not is_active):
         if count_active_superadmins(exclude_user_id=user_id) == 0:
             flash('You must keep at least one active super admin account.', 'error')
-            return redirect(url_for('admin_users', edit=user_id))
+            return redirect(url_for('admin_users', edit=user_id, page=page, page_size=page_size))
 
     with get_main_db_connection() as conn:
         update_admin_user(
@@ -1658,7 +1703,7 @@ def update_admin_user_route(user_id):
         return redirect(url_for('admin_login'))
     if is_current_session_user and not is_superadmin_role(role):
         return redirect(url_for('dashboard'))
-    return redirect(url_for('admin_users', edit=user_id))
+    return redirect(url_for('admin_users', edit=user_id, page=page, page_size=page_size))
 
 # ========== New Entry ==========
 @app.route('/admin/entry/new', methods=['GET', 'POST'])
@@ -1806,6 +1851,7 @@ def entry_list():
     sort_by = request.args.get('sort_by', 'entry_date')
     sort_order = request.args.get('sort_order', 'desc')
     page = max(request.args.get('page', 1, type=int), 1)
+    page_size = get_page_size_arg(default=TEMP_LIST_DEFAULT_PAGE_SIZE)
     
     # Validate sort parameters
     valid_sort_columns = ['entry_date', 'card_name', 'final_grade', 'set_name', 'language', 'cert_id', 'brand']
@@ -1862,18 +1908,18 @@ def entry_list():
     
     where_clause = f" WHERE {' AND '.join(conditions)}" if conditions else ""
     total_matching = conn.execute(f"SELECT COUNT(*) FROM temp_cards{where_clause}", params).fetchone()[0]
-    total_pages = max((total_matching + TEMP_LIST_PAGE_SIZE - 1) // TEMP_LIST_PAGE_SIZE, 1)
+    total_pages = max((total_matching + page_size - 1) // page_size, 1)
     if page > total_pages:
         page = total_pages
 
-    offset = (page - 1) * TEMP_LIST_PAGE_SIZE
+    offset = (page - 1) * page_size
 
     # Add ORDER BY clause
     query += where_clause
     query += f" ORDER BY {build_entry_list_order_clause(status_filter, sort_by, sort_order)} LIMIT ? OFFSET ?"
 
     # Execute query
-    entries = conn.execute(query, [*params, TEMP_LIST_PAGE_SIZE, offset]).fetchall()
+    entries = conn.execute(query, [*params, page_size, offset]).fetchall()
     
     # Get available filter options
     grade_options = get_grade_filter_options(conn, status_filter=status_filter)
@@ -1918,10 +1964,11 @@ def entry_list():
         'entered_by': entered_by_filter,
         'sort_by': sort_by,
         'sort_order': sort_order,
+        'page_size': page_size,
     })
 
-    page_start = ((page - 1) * TEMP_LIST_PAGE_SIZE) + 1 if total_matching else 0
-    page_end = min(page * TEMP_LIST_PAGE_SIZE, total_matching)
+    page_start = ((page - 1) * page_size) + 1 if total_matching else 0
+    page_end = min(page * page_size, total_matching)
 
     return render_template('entry_list.html',
                          entries=[serialize_temp_entry(entry) for entry in entries],
@@ -1947,6 +1994,8 @@ def entry_list():
                          sort_order=sort_order,
                          total_matching=total_matching,
                          pagination=pagination,
+                         page_size=page_size,
+                         page_size_options=PAGE_SIZE_OPTIONS,
                          page_start=page_start,
                          page_end=page_end)
 
@@ -2403,15 +2452,15 @@ def page_not_found(e):
 @login_required
 def upload_manager():
     """上传管理页面"""
-    page = request.args.get('page', 1, type=int)
+    page = max(request.args.get('page', 1, type=int), 1)
     show_client_pushed = request.args.get('show_client_pushed', '0') == '1'
-    per_page = 50
+    page_size = get_page_size_arg(default=UPLOAD_LIST_DEFAULT_PAGE_SIZE)
 
     conn = get_temp_db_connection()
     cursor = conn.cursor()
 
     # 获取所有已批准数据（包括图片不完整的）
-    offset = (page - 1) * per_page
+    offset = (page - 1) * page_size
 
     query = '''
         SELECT * FROM temp_cards
@@ -2429,7 +2478,7 @@ def upload_manager():
             id ASC
         LIMIT ? OFFSET ?
     '''
-    params.extend([per_page, offset])
+    params.extend([page_size, offset])
 
     cursor.execute(query, params)
 
@@ -2454,17 +2503,38 @@ def upload_manager():
 
     stats = get_upload_stats(conn)
 
-    conn.close()
+    total_pages = max((total + page_size - 1) // page_size, 1)
+    if page > total_pages:
+        page = total_pages
+        offset = (page - 1) * page_size
+        params[-2:] = [page_size, offset]
+        cursor.execute(query, params)
+        raw_entries = cursor.fetchall()
+        entries = []
+        for entry in raw_entries:
+            entry_dict = serialize_temp_entry(entry)
+            entry_dict.update(get_entry_image_flags(entry))
+            entries.append(entry_dict)
 
-    total_pages = (total + per_page - 1) // per_page
+    conn.close()
 
     return render_template('upload_manager.html',
                          entries=entries,
                          page=page,
-                         per_page=per_page,
+                         per_page=page_size,
                          total=total,
                          total_pages=total_pages,
                          show_client_pushed=show_client_pushed,
+                         pagination=build_pagination(
+                             page,
+                             total_pages,
+                             'upload_manager',
+                             {'show_client_pushed': 1 if show_client_pushed else 0, 'page_size': page_size},
+                         ),
+                         page_size=page_size,
+                         page_size_options=PAGE_SIZE_OPTIONS,
+                         page_start=((page - 1) * page_size) + 1 if total else 0,
+                         page_end=min(page * page_size, total),
                          stats=stats,
                          brand_options=BRAND_OPTIONS,
                          language_options=LANGUAGE_OPTIONS)
@@ -2715,6 +2785,8 @@ def export_excel_page():
                          grade_options=grade_options,
                          total_approved=total_approved,
                          grade_stats=grade_stats,
+                         export_history_default_page_size=EXPORT_HISTORY_DEFAULT_PAGE_SIZE,
+                         page_size_options=PAGE_SIZE_OPTIONS,
                          brand_options=BRAND_OPTIONS,
                          language_options=LANGUAGE_OPTIONS)
 
@@ -2838,18 +2910,35 @@ def download_excel(filename):
 def list_exports():
     """列出所有导出文件"""
     exports_dir = ADMIN_DIR / "exports"
+    page = max(request.args.get('page', 1, type=int), 1)
+    page_size = get_page_size_arg(default=EXPORT_HISTORY_DEFAULT_PAGE_SIZE)
 
     if not exports_dir.exists():
-        return jsonify({'exports': []})
+        return jsonify({
+            'exports': [],
+            'page': page,
+            'page_size': page_size,
+            'page_size_options': list(PAGE_SIZE_OPTIONS),
+            'total': 0,
+            'total_pages': 1,
+            'has_prev': False,
+            'has_next': False,
+        })
 
     # 获取所有Excel文件
     excel_files = list(exports_dir.glob("*.xlsx"))
 
     # 按修改时间排序
     excel_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+    total = len(excel_files)
+    total_pages = max((total + page_size - 1) // page_size, 1)
+    if page > total_pages:
+        page = total_pages
+    start = (page - 1) * page_size
+    end = start + page_size
 
     exports = []
-    for file in excel_files:
+    for file in excel_files[start:end]:
         file_stat = file.stat()
         exports.append({
             'name': file.name,
@@ -2858,7 +2947,16 @@ def list_exports():
             'url': url_for('download_excel', filename=file.name)
         })
 
-    return jsonify({'exports': exports})
+    return jsonify({
+        'exports': exports,
+        'page': page,
+        'page_size': page_size,
+        'page_size_options': list(PAGE_SIZE_OPTIONS),
+        'total': total,
+        'total_pages': total_pages,
+        'has_prev': page > 1,
+        'has_next': page < total_pages,
+    })
 
 # ========== Delete Export File ==========
 @app.route('/admin/export/delete/<filename>', methods=['POST'])

@@ -64,13 +64,19 @@
 
 {% block extra_js %}
 <script>
+    let exportHistoryPage = 1;
+    let exportHistoryPageSize = {{ export_history_default_page_size }};
+
     // 加载导出文件列表
-    function loadExportList() {
-        fetch('/admin/export/list')
+    function loadExportList(page = exportHistoryPage) {
+        exportHistoryPage = page;
+        fetch(`/admin/export/list?page=${page}&page_size=${exportHistoryPageSize}`)
             .then(response => response.json())
             .then(data => {
                 const container = document.getElementById('exportList');
                 if (!container) return;
+                exportHistoryPage = data.page || 1;
+                exportHistoryPageSize = data.page_size || exportHistoryPageSize;
                 
                 if (data.exports && data.exports.length > 0) {
                     let html = '<h6 class="mb-3"><i class="fas fa-history me-2"></i>Recent Exports</h6>';
@@ -98,6 +104,35 @@
                             </div>
                         `;
                     });
+
+                    html += `
+                        <div class="d-flex flex-column gap-3 mt-3 pt-3 border-top">
+                            <div class="d-flex justify-content-between align-items-center gap-3 flex-wrap">
+                                <form class="d-flex align-items-center gap-2 mb-0" onsubmit="return false;">
+                                    <label for="export-history-page-size" class="form-label mb-0 small text-muted">Per page</label>
+                                    <select id="export-history-page-size" class="form-select form-select-sm" onchange="changeExportPageSize(this.value)">
+                                        ${data.page_size_options.map(option => `<option value="${option}" ${option === data.page_size ? 'selected' : ''}>${option}</option>`).join('')}
+                                    </select>
+                                </form>
+                                <div class="text-muted small">
+                                    Showing ${((data.page - 1) * data.page_size) + 1}-${Math.min(data.page * data.page_size, data.total)} of ${data.total}
+                                </div>
+                            </div>
+                            ${data.total_pages > 1 ? `
+                                <nav aria-label="Export pagination">
+                                    <ul class="pagination pagination-sm justify-content-center mb-0">
+                                        <li class="page-item ${data.has_prev ? '' : 'disabled'}">
+                                            <a class="page-link" href="javascript:void(0)" onclick="loadExportList(${data.page - 1})">Previous</a>
+                                        </li>
+                                        ${buildExportPaginationItems(data.page, data.total_pages)}
+                                        <li class="page-item ${data.has_next ? '' : 'disabled'}">
+                                            <a class="page-link" href="javascript:void(0)" onclick="loadExportList(${data.page + 1})">Next</a>
+                                        </li>
+                                    </ul>
+                                </nav>
+                            ` : ''}
+                        </div>
+                    `;
                     
                     container.innerHTML = html;
                 } else {
@@ -105,6 +140,12 @@
                         <div class="text-center py-4">
                             <i class="fas fa-file-excel fa-3x text-muted mb-3"></i>
                             <p class="text-muted">No export files yet</p>
+                            <div class="d-flex justify-content-center align-items-center gap-2 mt-3">
+                                <label for="export-history-page-size-empty" class="form-label mb-0 small text-muted">Per page</label>
+                                <select id="export-history-page-size-empty" class="form-select form-select-sm w-auto" onchange="changeExportPageSize(this.value)">
+                                    ${data.page_size_options.map(option => `<option value="${option}" ${option === data.page_size ? 'selected' : ''}>${option}</option>`).join('')}
+                                </select>
+                            </div>
                         </div>
                     `;
                 }
@@ -112,6 +153,25 @@
             .catch(error => {
                 console.error('Error loading export list:', error);
             });
+    }
+
+    function buildExportPaginationItems(page, totalPages) {
+        const pages = [];
+        const start = Math.max(1, page - 2);
+        const end = Math.min(totalPages, page + 2);
+        for (let current = start; current <= end; current += 1) {
+            pages.push(`
+                <li class="page-item ${current === page ? 'active' : ''}">
+                    <a class="page-link" href="javascript:void(0)" onclick="loadExportList(${current})">${current}</a>
+                </li>
+            `);
+        }
+        return pages.join('');
+    }
+
+    function changeExportPageSize(value) {
+        exportHistoryPageSize = Number(value) || exportHistoryPageSize;
+        loadExportList(1);
     }
     
     // 删除导出文件
@@ -129,7 +189,7 @@
         })
         .then(response => {
             if (response.ok) {
-                loadExportList();
+                loadExportList(exportHistoryPage);
                 showToast('File deleted successfully', 'success');
             } else {
                 showToast('Error deleting file', 'error');
