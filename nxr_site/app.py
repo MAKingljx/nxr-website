@@ -20,72 +20,23 @@ DB_PATH = DATA_DIR / "cards.db"
 STATIC_PREFIX = "/static/"
 PLACEHOLDER_IMAGE = f"{STATIC_PREFIX}placeholder.png"
 EMAIL_PATTERN = re.compile(r"^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$", re.IGNORECASE)
-AI_CHARACTER_PROMPT_VERSION = "v1"
 AI_LANGUAGE_NAMES = {
     "en": "English",
     "zh": "中文",
     "es": "Español",
     "fr": "Français",
     "de": "Deutsch",
+    "nl": "Nederlands",
     "ja": "日本語",
     "ko": "한국어",
 }
-AI_SECTION_LABELS = {
-    "en": {
-        "summary": "Overview",
-        "origin": "Origin",
-        "traits": "Key Traits",
-        "collectibility": "Collector Relevance",
-        "card_context": "This Card",
-        "note": "Note",
-    },
-    "zh": {
-        "summary": "概览",
-        "origin": "背景",
-        "traits": "关键特点",
-        "collectibility": "收藏视角",
-        "card_context": "这张卡",
-        "note": "备注",
-    },
-    "es": {
-        "summary": "Resumen",
-        "origin": "Origen",
-        "traits": "Rasgos Clave",
-        "collectibility": "Valor para Coleccionistas",
-        "card_context": "Esta Carta",
-        "note": "Nota",
-    },
-    "fr": {
-        "summary": "Vue d'ensemble",
-        "origin": "Origine",
-        "traits": "Traits Clés",
-        "collectibility": "Intérêt Collection",
-        "card_context": "Cette Carte",
-        "note": "Note",
-    },
-    "de": {
-        "summary": "Überblick",
-        "origin": "Herkunft",
-        "traits": "Wichtige Merkmale",
-        "collectibility": "Sammlerwert",
-        "card_context": "Diese Karte",
-        "note": "Hinweis",
-    },
-    "ja": {
-        "summary": "概要",
-        "origin": "背景",
-        "traits": "主な特徴",
-        "collectibility": "コレクター視点",
-        "card_context": "このカードについて",
-        "note": "補足",
-    },
-    "ko": {
-        "summary": "개요",
-        "origin": "배경",
-        "traits": "핵심 특징",
-        "collectibility": "수집 관점",
-        "card_context": "이 카드",
-        "note": "참고",
+AI_CHARACTER_PROMPT_VERSION = "v2"
+AI_ANIME_CONTEXT_HINTS = {
+    "pokemon": {
+        "pikachu": "可以自然融入动画中的场景设定，例如皮卡丘山谷这类地点会通过皮毛与外观特征强化角色辨识度与出身背景。",
+        "charizard": "可以自然融入喷火龙山谷这类动画场景，用来体现喷火龙的成长、力量与族群生态。",
+        "psyduck": "可以自然融入动画中头痛引发超能力爆发的桥段，用来体现这一角色平时迟钝、关键时刻失控发力的反差感。",
+        "mewtwo": "可以自然融入实验室、新岛、复制体等动画叙事情境，用来体现其人工诞生与身份认同冲突。",
     },
 }
 
@@ -370,24 +321,52 @@ def save_ai_character_cache(cert_id, language, prompt_hash, payload, rendered_ht
         conn.commit()
 
 
+def normalize_ai_character_key(value):
+    normalized = re.sub(r"[^a-z0-9]+", " ", (value or "").strip().lower())
+    return " ".join(normalized.split())
+
+
+def get_ai_anime_context_hint(card_context):
+    brand_key = normalize_ai_character_key(card_context.get("brand"))
+    character_key = normalize_ai_character_key(card_context.get("card_name"))
+    if not brand_key or not character_key:
+        return ""
+
+    brand_hints = AI_ANIME_CONTEXT_HINTS.get(brand_key, {})
+    for hint_key, hint_text in brand_hints.items():
+        if hint_key in character_key:
+            return hint_text
+    return ""
+
+
 def build_ai_character_messages(card_context, language):
     language_name = AI_LANGUAGE_NAMES.get(language, AI_LANGUAGE_NAMES["en"])
+    anime_hint = get_ai_anime_context_hint(card_context)
     system_prompt = (
-        "You write concise, accurate collectible card character descriptions. "
-        "Use only broadly known franchise facts plus the provided card context. "
-        "If something is uncertain, say so briefly instead of inventing details. "
-        "Return raw JSON only with these keys: "
-        "title, summary, origin, traits, collectibility, card_context, note. "
-        "traits must be an array of 3 to 5 short strings. "
-        f"Write all prose in {language_name}."
+        "You are a careful collectible card detail-page writer. "
+        "Generate a concise role overview for the named character and write all prose in "
+        f"{language_name}. "
+        "Return exactly two short HTML paragraphs using <p> tags only. "
+        "Do not return headings, lists, JSON, markdown, or source labels. "
+        "In paragraph one, describe the character's appearance, most recognizable traits, "
+        "and core abilities. In paragraph two, describe the character's typical role in the "
+        "anime or narrative, and naturally blend anime setting details into the prose instead "
+        "of separating them as a source note. Prefer scene, location, or story-setting context "
+        "over episode-title lists unless the user explicitly gives a scene hint. "
+        "Use only high-confidence, broadly known facts plus the supplied hint. If uncertain, "
+        "omit the detail instead of inventing it. Avoid designers, rankings, prices, release years, "
+        "and market commentary."
     )
     user_prompt = (
-        "Generate AI character information for this trading card.\n"
-        "Focus on the named character, creature, or card identity implied by the card name.\n"
-        "If the card name includes rarity or variant markers, explain them only when useful.\n"
-        "Keep the whole response readable in a modal: concise but informative.\n"
+        "Write the character overview for this trading card detail page.\n"
+        "The final text must be suitable for direct display inside a modal.\n"
         "Card context:\n"
-        f"{json.dumps(card_context, ensure_ascii=False, indent=2)}"
+        f"{json.dumps(card_context, ensure_ascii=False, indent=2)}\n"
+    )
+    if anime_hint:
+        user_prompt += f"Known anime setting hint:\n{anime_hint}\n"
+    user_prompt += (
+        "Blend any reliable anime-setting detail naturally into paragraph two, not as a separate source line."
     )
     return [
         {"role": "system", "content": system_prompt},
@@ -395,22 +374,30 @@ def build_ai_character_messages(card_context, language):
     ]
 
 
-def extract_json_object(text):
+def sanitize_ai_character_html(text):
     raw = (text or "").strip()
-    if raw.startswith("```"):
-        parts = raw.split("```")
-        for chunk in parts:
-            chunk = chunk.strip()
-            if chunk.startswith("json"):
-                chunk = chunk[4:].strip()
-            if chunk.startswith("{") and chunk.endswith("}"):
-                raw = chunk
-                break
-    start = raw.find("{")
-    end = raw.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        raise ValueError("Model did not return a JSON object")
-    return json.loads(raw[start : end + 1])
+    paragraph_matches = re.findall(r"<p\b[^>]*>(.*?)</p>", raw, flags=re.IGNORECASE | re.DOTALL)
+
+    if paragraph_matches:
+        paragraphs = paragraph_matches
+    else:
+        normalized = re.sub(r"<br\s*/?>", "\n", raw, flags=re.IGNORECASE)
+        normalized = re.sub(r"</p\s*>", "\n\n", normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r"<[^>]+>", "", normalized)
+        paragraphs = [part.strip() for part in re.split(r"\n\s*\n+", normalized) if part.strip()]
+
+    cleaned = []
+    for paragraph in paragraphs:
+        text_only = re.sub(r"<[^>]+>", "", paragraph).strip()
+        if text_only:
+            cleaned.append(f"<p>{escape(text_only)}</p>")
+        if len(cleaned) == 2:
+            break
+
+    if not cleaned:
+        raise ValueError("Model did not return usable paragraph content")
+
+    return "".join(cleaned)
 
 
 def post_deepseek_chat_completions(payload):
@@ -444,7 +431,7 @@ def generate_ai_character_payload(card_context, language):
     payload = {
         "model": model,
         "messages": build_ai_character_messages(card_context, language),
-        "temperature": 0.4,
+        "temperature": 0.2,
         "max_tokens": 700,
     }
 
@@ -456,39 +443,8 @@ def generate_ai_character_payload(card_context, language):
 
     body = response.json()
     raw_content = body["choices"][0]["message"]["content"]
-    parsed = extract_json_object(raw_content)
-    return parsed, model
-
-
-def render_ai_character_html(payload, language):
-    labels = AI_SECTION_LABELS.get(language, AI_SECTION_LABELS["en"])
-    title = escape((payload.get("title") or "").strip())
-    summary = escape((payload.get("summary") or "").strip())
-    origin = escape((payload.get("origin") or "").strip())
-    collectibility = escape((payload.get("collectibility") or "").strip())
-    card_context = escape((payload.get("card_context") or "").strip())
-    note = escape((payload.get("note") or "").strip())
-    traits = payload.get("traits") or []
-
-    sections = []
-    if title:
-        sections.append(f"<h3>{title}</h3>")
-    if summary:
-        sections.append(f"<h3>{labels['summary']}</h3><p>{summary}</p>")
-    if origin:
-        sections.append(f"<h3>{labels['origin']}</h3><p>{origin}</p>")
-    if traits:
-        items = "".join(f"<li>{escape(str(item).strip())}</li>" for item in traits if str(item).strip())
-        if items:
-            sections.append(f"<h3>{labels['traits']}</h3><ul>{items}</ul>")
-    if collectibility:
-        sections.append(f"<h3>{labels['collectibility']}</h3><p>{collectibility}</p>")
-    if card_context:
-        sections.append(f"<h3>{labels['card_context']}</h3><p>{card_context}</p>")
-    if note:
-        sections.append(f"<h3>{labels['note']}</h3><p>{note}</p>")
-
-    return "".join(sections) or "<p>No information available for this character.</p>"
+    rendered_html = sanitize_ai_character_html(raw_content)
+    return {"html": rendered_html, "raw_content": raw_content}, model
 
 
 # ========== 主要页面路由 ==========
@@ -631,7 +587,7 @@ def ai_character_info():
             )
 
         payload, model = generate_ai_character_payload(card_context, language)
-        rendered_html = render_ai_character_html(payload, language)
+        rendered_html = payload["html"]
         save_ai_character_cache(
             card_context["cert_id"],
             language,
