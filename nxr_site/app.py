@@ -30,6 +30,36 @@ AI_LANGUAGE_NAMES = {
     "ja": "日本語",
     "ko": "한국어",
 }
+CARD_LANGUAGE_NAMES = {
+    "EN": "English",
+    "ENGLISH": "English",
+    "JP": "Japanese",
+    "JA": "Japanese",
+    "JAPANESE": "Japanese",
+    "CT": "Chinese Traditional",
+    "TRADITIONAL CHINESE": "Chinese Traditional",
+    "CHINESE TRADITIONAL": "Chinese Traditional",
+    "CS": "Chinese Simplified",
+    "SIMPLIFIED CHINESE": "Chinese Simplified",
+    "CHINESE SIMPLIFIED": "Chinese Simplified",
+    "ZH": "Chinese",
+    "CHINESE": "Chinese",
+    "IN": "Indonesian",
+    "INDONESIAN": "Indonesian",
+    "KO": "Korean",
+    "KOREAN": "Korean",
+    "TH": "Thai",
+    "THAI": "Thai",
+    "NL": "Dutch",
+    "DUTCH": "Dutch",
+    "DE": "German",
+    "GERMAN": "German",
+    "FR": "French",
+    "FRENCH": "French",
+    "ES": "Spanish",
+    "SPANISH": "Spanish",
+    "OTHER": "Other",
+}
 AI_CHARACTER_PROMPT_VERSION = "v2"
 AI_ANIME_CONTEXT_HINTS = {
     "pokemon": {
@@ -226,6 +256,13 @@ def normalize_asset_path(asset_path, fallback=PLACEHOLDER_IMAGE):
     return f"{STATIC_PREFIX}{asset_path.lstrip('/')}"
 
 
+def get_card_language_label(language_value):
+    raw_value = (language_value or "").strip()
+    if not raw_value:
+        return ""
+    return CARD_LANGUAGE_NAMES.get(raw_value.upper(), raw_value)
+
+
 def get_card(cert_id):
     lookup = (cert_id or "").strip()
     if not lookup:
@@ -245,6 +282,7 @@ def get_card(cert_id):
             card["back_image"] = back_image
             card["front_img"] = front_image
             card["back_img"] = back_image
+            card["language_label"] = get_card_language_label(card.get("language"))
             return card
     return None
 
