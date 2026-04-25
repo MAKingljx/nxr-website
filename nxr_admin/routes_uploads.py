@@ -1,4 +1,166 @@
+import io
+import re
+import uuid
+import zipfile
+from pathlib import Path
+
 from nxr_admin.admin_core import *
+
+
+IMAGE_IMPORT_PATTERN = re.compile(
+    r'(^|/)(?P<image_id>\d{10})_(?P<side>[AB])(?:_\d+)?\.(?P<ext>webp|jpg|jpeg|png)$',
+    re.IGNORECASE,
+)
+ALLOWED_IMAGE_IMPORT_EXTENSIONS = {'.webp', '.jpg', '.jpeg', '.png'}
+
+
+def normalize_import_side(raw_side):
+    side = (raw_side or '').strip().upper()
+    if side == 'A':
+        return 'front'
+    if side == 'B':
+        return 'back'
+    return ''
+
+
+def parse_import_image_name(filename):
+    match = IMAGE_IMPORT_PATTERN.search(filename or '')
+    if not match:
+        return None
+    return {
+        'image_id': match.group('image_id'),
+        'side': normalize_import_side(match.group('side')),
+        'extension': f".{match.group('ext').lower()}",
+        'filename': filename,
+    }
+
+
+def save_imported_image_file(cert_id, side, extension, file_bytes):
+    normalized_extension = (extension or '').lower()
+    if normalized_extension not in ALLOWED_IMAGE_IMPORT_EXTENSIONS:
+        raise ValueError(f'Unsupported image extension for {cert_id} {side}')
+
+    safe_side = 'front' if side == 'front' else 'back'
+    output_name = f'{safe_side}_{cert_id}_{uuid.uuid4().hex[:8]}{normalized_extension}'
+    output_path = Path(app.config['UPLOAD_FOLDER']) / output_name
+    output_path.write_bytes(file_bytes)
+    return output_name
+
+
+def build_image_import_candidates(zip_file):
+    candidates = {}
+    duplicate_names = []
+    invalid_names = []
+
+    for member in zip_file.infolist():
+        if member.is_dir():
+            continue
+        parsed = parse_import_image_name(member.filename)
+        if not parsed:
+            if not Path(member.filename).name.startswith('.'):
+                invalid_names.append(member.filename)
+            continue
+
+        key = (parsed['image_id'], parsed['side'])
+        if key in candidates:
+            duplicate_names.append(member.filename)
+            continue
+        candidates[key] = {
+            'zip_name': member.filename,
+            'image_id': parsed['image_id'],
+            'side': parsed['side'],
+            'extension': parsed['extension'],
+        }
+
+    return candidates, invalid_names, duplicate_names
+
+
+def import_zip_images_to_temp_cards(zip_file, conn):
+    candidates, invalid_names, duplicate_names = build_image_import_candidates(zip_file)
+    image_ids = sorted({image_id for image_id, _ in candidates.keys()})
+    if not image_ids:
+        return {
+            'matched_entries': 0,
+            'saved_files': 0,
+            'updated_sides': 0,
+            'missing_ids': [],
+            'invalid_names': invalid_names,
+            'duplicate_names': duplicate_names,
+            'updated_entry_ids': [],
+        }
+
+    placeholders = ', '.join(['?' for _ in image_ids])
+    rows = conn.execute(
+        f'''
+            SELECT id, cert_id, front_image, back_image
+            FROM temp_cards
+            WHERE status = 'approved'
+              AND cert_id IN ({placeholders})
+        ''',
+        image_ids,
+    ).fetchall()
+    rows_by_cert_id = {row['cert_id']: row for row in rows}
+
+    matched_entries = 0
+    saved_files = 0
+    updated_sides = 0
+    updated_entry_ids = []
+    files_to_delete = []
+
+    for cert_id in image_ids:
+        row = rows_by_cert_id.get(cert_id)
+        if not row:
+            continue
+
+        matched_entries += 1
+        update_data = {}
+
+        for side in ('front', 'back'):
+            candidate = candidates.get((cert_id, side))
+            if not candidate:
+                continue
+
+            with zip_file.open(candidate['zip_name']) as source_file:
+                file_bytes = source_file.read()
+
+            saved_name = save_imported_image_file(
+                cert_id=cert_id,
+                side=side,
+                extension=candidate['extension'],
+                file_bytes=file_bytes,
+            )
+            saved_files += 1
+            updated_sides += 1
+            update_data[f'{side}_image'] = saved_name
+
+            existing_name = (row[f'{side}_image'] or '').strip()
+            if existing_name and existing_name != saved_name:
+                files_to_delete.append(existing_name)
+
+        if not update_data:
+            continue
+
+        update_data['updated_at'] = datetime.now().isoformat()
+        set_clause = ', '.join([f'{column} = ?' for column in update_data.keys()])
+        conn.execute(
+            f'UPDATE temp_cards SET {set_clause} WHERE id = ?',
+            [*update_data.values(), row['id']],
+        )
+        updated_entry_ids.append(row['id'])
+
+    for filename in dict.fromkeys(files_to_delete):
+        delete_uploaded_file(filename)
+
+    missing_ids = [image_id for image_id in image_ids if image_id not in rows_by_cert_id]
+    return {
+        'matched_entries': matched_entries,
+        'saved_files': saved_files,
+        'updated_sides': updated_sides,
+        'missing_ids': missing_ids,
+        'invalid_names': invalid_names,
+        'duplicate_names': duplicate_names,
+        'updated_entry_ids': updated_entry_ids,
+    }
 
 # ========== Upload Manager ==========
 @app.route('/admin/upload')
@@ -8,68 +170,127 @@ def upload_manager():
     page = max(request.args.get('page', 1, type=int), 1)
     show_client_pushed = request.args.get('show_client_pushed', '0') == '1'
     page_size = get_page_size_arg(default=UPLOAD_LIST_DEFAULT_PAGE_SIZE)
+    cert_id_filter = request.args.get('cert_id', '').strip()
+    card_name_filter = request.args.get('card_name', '').strip()
+    brand_filter = normalize_brand(request.args.get('brand', '').strip())
+    language_filter = normalize_language(request.args.get('language', '').strip())
+    final_grade_filter = normalize_final_grade_text(request.args.get('final_grade', '').strip())
+    upload_status_filter = (request.args.get('upload_status', '') or '').strip().lower()
+    image_status_filter = (request.args.get('image_status', '') or '').strip().lower()
+
+    upload_status_options = (
+        ('not_started', 'Not Started'),
+        ('uploading', 'Uploading'),
+        ('uploaded', 'Uploaded'),
+        ('failed', 'Failed'),
+        (CLIENT_PUSHED_UPLOAD_STATUS, 'Client Pushed'),
+    )
+    valid_upload_status_filters = {value for value, _ in upload_status_options}
+    if upload_status_filter and upload_status_filter not in valid_upload_status_filters:
+        upload_status_filter = ''
+
+    image_status_options = (
+        ('ready', 'Ready for Upload'),
+        ('published', 'Published Complete'),
+        ('missing_any', 'Missing Any Image'),
+        ('missing_front', 'Missing Front Image'),
+        ('missing_back', 'Missing Back Image'),
+    )
+    valid_image_status_filters = {value for value, _ in image_status_options}
+    if image_status_filter and image_status_filter not in valid_image_status_filters:
+        image_status_filter = ''
 
     conn = get_temp_db_connection()
-    cursor = conn.cursor()
-
-    # 获取所有已批准数据（包括图片不完整的）
-    offset = (page - 1) * page_size
+    stats = get_upload_stats(conn)
 
     query = '''
         SELECT * FROM temp_cards
         WHERE status = 'approved'
     '''
     params = []
+
     if not show_client_pushed:
         query += " AND COALESCE(upload_status, 'not_started') != ?"
         params.append(CLIENT_PUSHED_UPLOAD_STATUS)
+
+    if cert_id_filter:
+        if cert_id_filter.isdigit() and len(cert_id_filter) == 10:
+            query += " AND cert_id = ?"
+            params.append(cert_id_filter)
+        else:
+            query += " AND cert_id LIKE ?"
+            params.append(f"%{cert_id_filter}%")
+
+    if card_name_filter:
+        query += " AND card_name LIKE ?"
+        params.append(f"%{card_name_filter}%")
+
+    if brand_filter:
+        query += " AND brand = ?"
+        params.append(brand_filter)
+
+    if language_filter:
+        language_variants = get_language_variants(language_filter)
+        placeholders = ', '.join(['?' for _ in language_variants])
+        query += f" AND language IN ({placeholders})"
+        params.extend(language_variants)
+
+    if final_grade_filter:
+        query += f" AND {build_grade_filter_sql(final_grade_filter)}"
+        params.append(final_grade_filter)
+
+    if upload_status_filter:
+        query += " AND COALESCE(upload_status, 'not_started') = ?"
+        params.append(upload_status_filter)
 
     query += '''
         ORDER BY
             COALESCE(NULLIF(approved_at, ''), updated_at, entry_date, created_at) DESC,
             COALESCE(approval_sequence, 9223372036854775807) ASC,
             id ASC
-        LIMIT ? OFFSET ?
     '''
-    params.extend([page_size, offset])
 
-    cursor.execute(query, params)
-
-    raw_entries = cursor.fetchall()
-    entries = []
+    grade_options = get_grade_filter_options(conn, status_filter='approved')
+    raw_entries = conn.execute(query, params).fetchall()
+    filtered_entries = []
     for entry in raw_entries:
         entry_dict = serialize_temp_entry(entry)
         entry_dict.update(get_entry_image_flags(entry))
-        entries.append(entry_dict)
+        has_any_front = entry_dict['has_front_image_file'] or entry_dict['has_published_front_image']
+        has_any_back = entry_dict['has_back_image_file'] or entry_dict['has_published_back_image']
+        if image_status_filter == 'ready' and not entry_dict['ready_for_upload']:
+            continue
+        if image_status_filter == 'published' and not entry_dict['published_complete']:
+            continue
+        if image_status_filter == 'missing_any' and has_any_front and has_any_back:
+            continue
+        if image_status_filter == 'missing_front' and has_any_front:
+            continue
+        if image_status_filter == 'missing_back' and has_any_back:
+            continue
+        filtered_entries.append(entry_dict)
 
-    # 获取总数
-    total_query = '''
-        SELECT COUNT(*) FROM temp_cards
-        WHERE status = 'approved'
-    '''
-    total_params = []
-    if not show_client_pushed:
-        total_query += " AND COALESCE(upload_status, 'not_started') != ?"
-        total_params.append(CLIENT_PUSHED_UPLOAD_STATUS)
-    cursor.execute(total_query, total_params)
-    total = cursor.fetchone()[0]
-
-    stats = get_upload_stats(conn)
-
+    total = len(filtered_entries)
     total_pages = max((total + page_size - 1) // page_size, 1)
     if page > total_pages:
         page = total_pages
-        offset = (page - 1) * page_size
-        params[-2:] = [page_size, offset]
-        cursor.execute(query, params)
-        raw_entries = cursor.fetchall()
-        entries = []
-        for entry in raw_entries:
-            entry_dict = serialize_temp_entry(entry)
-            entry_dict.update(get_entry_image_flags(entry))
-            entries.append(entry_dict)
+
+    offset = (page - 1) * page_size
+    entries = filtered_entries[offset:offset + page_size]
 
     conn.close()
+
+    pagination_params = {
+        'show_client_pushed': 1 if show_client_pushed else 0,
+        'cert_id': cert_id_filter,
+        'card_name': card_name_filter,
+        'brand': brand_filter,
+        'language': language_filter,
+        'final_grade': final_grade_filter,
+        'upload_status': upload_status_filter,
+        'image_status': image_status_filter,
+        'page_size': page_size,
+    }
 
     return render_template('upload_manager.html',
                          entries=entries,
@@ -82,15 +303,73 @@ def upload_manager():
                              page,
                              total_pages,
                              'upload_manager',
-                             {'show_client_pushed': 1 if show_client_pushed else 0, 'page_size': page_size},
+                             pagination_params,
                          ),
                          page_size=page_size,
                          page_size_options=PAGE_SIZE_OPTIONS,
                          page_start=((page - 1) * page_size) + 1 if total else 0,
                          page_end=min(page * page_size, total),
                          stats=stats,
+                         cert_id_filter=cert_id_filter,
+                         card_name_filter=card_name_filter,
+                         brand_filter=brand_filter,
+                         language_filter=language_filter,
+                         final_grade_filter=final_grade_filter,
+                         upload_status_filter=upload_status_filter,
+                         image_status_filter=image_status_filter,
+                         grade_options=grade_options,
+                         upload_status_options=upload_status_options,
+                         image_status_options=image_status_options,
                          brand_options=BRAND_OPTIONS,
                          language_options=LANGUAGE_OPTIONS)
+
+
+@app.route('/admin/upload/import-images', methods=['POST'])
+@login_required
+def import_images_by_id():
+    archive_file = request.files.get('image_archive')
+    if not archive_file or not archive_file.filename:
+        flash('Please choose a ZIP archive first.', 'warning')
+        return redirect(url_for('upload_manager'))
+
+    archive_name = archive_file.filename.strip()
+    if not archive_name.lower().endswith('.zip'):
+        flash('Only ZIP archives are supported for image import.', 'error')
+        return redirect(url_for('upload_manager'))
+
+    try:
+        zip_bytes = archive_file.read()
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zip_file:
+            conn = get_temp_db_connection()
+            try:
+                summary = import_zip_images_to_temp_cards(zip_file, conn)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+    except zipfile.BadZipFile:
+        flash('The uploaded archive is not a valid ZIP file.', 'error')
+        return redirect(url_for('upload_manager'))
+    except Exception as exc:
+        app.logger.error('Batch image import failed: %s', exc)
+        flash(f'Batch image import failed: {exc}', 'error')
+        return redirect(url_for('upload_manager'))
+
+    message_parts = [
+        f"Imported {summary['saved_files']} image files",
+        f"updated {len(summary['updated_entry_ids'])} approved entries",
+    ]
+    if summary['missing_ids']:
+        message_parts.append(f"{len(summary['missing_ids'])} image IDs had no approved match")
+    if summary['duplicate_names']:
+        message_parts.append(f"{len(summary['duplicate_names'])} duplicate files ignored")
+    if summary['invalid_names']:
+        message_parts.append(f"{len(summary['invalid_names'])} invalid filenames skipped")
+
+    flash('. '.join(message_parts) + '.', 'success' if summary['updated_entry_ids'] else 'warning')
+    return redirect(url_for('upload_manager'))
 
 @app.route('/admin/api/upload-stats')
 @app.route('/api/upload-stats')

@@ -8,7 +8,7 @@
 
 {% block page_actions %}
     <div class="btn-group">
-        <a href="{{ url_for('upload_manager', show_client_pushed=0 if show_client_pushed else 1, page_size=page_size) }}" class="btn btn-outline-info">
+        <a href="{{ url_for('upload_manager', show_client_pushed=0 if show_client_pushed else 1, page_size=page_size, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, language=language_filter, final_grade=final_grade_filter, upload_status=upload_status_filter, image_status=image_status_filter) }}" class="btn btn-outline-info">
             <i class="fas fa-eye me-1"></i>{% if show_client_pushed %}Hide Client Pushed{% else %}Show Client Pushed{% endif %}
         </a>
         <button type="button" class="btn btn-outline-primary" onclick="refreshStats()">
@@ -75,6 +75,22 @@
         padding: 20px;
         margin-bottom: 20px;
     }
+    .stats-card-link {
+        display: block;
+        text-decoration: none;
+        color: inherit;
+    }
+    .stats-card-link:hover {
+        color: inherit;
+    }
+    .stats-card.is-clickable {
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+        cursor: pointer;
+    }
+    .stats-card.is-clickable:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+    }
     .stats-number {
         font-size: 2.5rem;
         font-weight: bold;
@@ -83,6 +99,10 @@
     .stats-label {
         font-size: 0.9rem;
         opacity: 0.9;
+    }
+    .zip-import-card {
+        border: 1px dashed #8bb8ff;
+        background: linear-gradient(135deg, #f7fbff 0%, #eef5ff 100%);
     }
 </style>
 {% endblock %}
@@ -421,28 +441,66 @@
     <!-- 统计卡片 -->
     <div class="row mb-4">
         <div class="col-md-3">
-            <div class="stats-card">
-                <div class="stats-number" id="total_approved">{{ stats.image_stats.total_approved }}</div>
-                <div class="stats-label">Total Approved</div>
-            </div>
+            <a class="stats-card-link" href="{{ url_for('upload_manager', show_client_pushed=1, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, language=language_filter, final_grade=final_grade_filter, page_size=page_size) }}">
+                <div class="stats-card is-clickable">
+                    <div class="stats-number" id="total_approved">{{ stats.image_stats.total_approved }}</div>
+                    <div class="stats-label">Total Approved</div>
+                </div>
+            </a>
         </div>
         <div class="col-md-3">
-            <div class="stats-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
-                <div class="stats-number" id="ready_for_upload">{{ stats.image_stats.ready_for_upload }}</div>
-                <div class="stats-label">Ready for Upload</div>
-            </div>
+            <a class="stats-card-link" href="{{ url_for('upload_manager', show_client_pushed=show_client_pushed|int, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, language=language_filter, final_grade=final_grade_filter, image_status='ready', page_size=page_size) }}">
+                <div class="stats-card is-clickable" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                    <div class="stats-number" id="ready_for_upload">{{ stats.image_stats.ready_for_upload }}</div>
+                    <div class="stats-label">Ready for Upload</div>
+                </div>
+            </a>
         </div>
         <div class="col-md-3">
-            <div class="stats-card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
-                <div class="stats-number" id="uploaded_count">{{ stats.uploaded|default(0) }}</div>
-                <div class="stats-label">Uploaded to Server</div>
-            </div>
+            <a class="stats-card-link" href="{{ url_for('upload_manager', show_client_pushed=show_client_pushed|int, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, language=language_filter, final_grade=final_grade_filter, upload_status='uploaded', page_size=page_size) }}">
+                <div class="stats-card is-clickable" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
+                    <div class="stats-number" id="uploaded_count">{{ stats.uploaded|default(0) }}</div>
+                    <div class="stats-label">Uploaded to Server</div>
+                </div>
+            </a>
         </div>
         <div class="col-md-3">
-            <div class="stats-card" style="background: linear-gradient(135deg, #f6d365 0%, #fda085 100%);">
-                <div class="stats-number" id="failed_count">{{ stats.image_stats.client_pushed|default(0) }}</div>
-                <div class="stats-label">Client Pushed</div>
+            <a class="stats-card-link" href="{{ url_for('upload_manager', show_client_pushed=1, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, language=language_filter, final_grade=final_grade_filter, upload_status='client_pushed', page_size=page_size) }}">
+                <div class="stats-card is-clickable" style="background: linear-gradient(135deg, #f6d365 0%, #fda085 100%);">
+                    <div class="stats-number" id="failed_count">{{ stats.image_stats.client_pushed|default(0) }}</div>
+                    <div class="stats-label">Client Pushed</div>
+                </div>
+            </a>
+        </div>
+    </div>
+
+    <div class="card mb-4 zip-import-card">
+        <div class="card-body">
+            <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-3">
+                <div>
+                    <h6 class="mb-1"><i class="fas fa-file-archive me-2"></i>Import Images by Image ID</h6>
+                    <div class="text-muted small">
+                        Upload a ZIP archive with names like <code>1234567890_A.webp</code> or <code>1234567890_B_1.webp</code>.
+                        <code>A</code> maps to Front, <code>B</code> maps to Back, and the leading 10-digit image ID is matched to the approved entry Cert ID.
+                    </div>
+                </div>
             </div>
+            <form method="post" action="{{ url_for('import_images_by_id') }}" enctype="multipart/form-data" class="row g-3 align-items-end">
+                <div class="col-lg-8">
+                    <label class="form-label">ZIP Archive</label>
+                    <input type="file" class="form-control" name="image_archive" accept=".zip" required>
+                </div>
+                <div class="col-lg-4">
+                    <button type="submit" class="btn btn-primary w-100">
+                        <i class="fas fa-upload me-1"></i>Import ZIP to Queue
+                    </button>
+                </div>
+                <div class="col-12">
+                    <small class="text-muted">
+                        Only approved entries are updated. Existing local queue images for the same side are replaced; published site images stay unchanged until the normal upload step runs.
+                    </small>
+                </div>
+            </form>
         </div>
     </div>
 
@@ -475,6 +533,92 @@
                     </button>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-header">
+            <h6 class="mb-0"><i class="fas fa-filter me-2"></i>Filter Upload Queue</h6>
+        </div>
+        <div class="card-body">
+            <form method="get" action="{{ url_for('upload_manager') }}" class="row g-3">
+                <input type="hidden" name="show_client_pushed" value="{{ 1 if show_client_pushed else 0 }}">
+                <input type="hidden" name="page_size" value="{{ page_size }}">
+
+                <div class="col-md-2">
+                    <label class="form-label">Cert ID</label>
+                    <input type="text" class="form-control" name="cert_id" value="{{ cert_id_filter }}" placeholder="Search cert ID...">
+                </div>
+
+                <div class="col-md-3">
+                    <label class="form-label">Card Name</label>
+                    <input type="text" class="form-control" name="card_name" value="{{ card_name_filter }}" placeholder="Search card name...">
+                </div>
+
+                <div class="col-md-2">
+                    <label class="form-label">Brand</label>
+                    <select class="form-select" name="brand">
+                        <option value="">All Brands</option>
+                        {% for brand in brand_options %}
+                        <option value="{{ brand }}" {% if brand_filter == brand %}selected{% endif %}>{{ brand }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-md-2">
+                    <label class="form-label">Language</label>
+                    <select class="form-select" name="language">
+                        <option value="">All Languages</option>
+                        {% for lang in language_options %}
+                        <option value="{{ lang }}" {% if language_filter == lang %}selected{% endif %}>{{ lang }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-md-2">
+                    <label class="form-label">Final Grade</label>
+                    <select class="form-select" name="final_grade">
+                        <option value="">All Grades</option>
+                        {% for grade in grade_options %}
+                        <option value="{{ grade }}" {% if final_grade_filter == grade %}selected{% endif %}>{{ grade }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-md-2">
+                    <label class="form-label">Upload Status</label>
+                    <select class="form-select" name="upload_status">
+                        <option value="">All Statuses</option>
+                        {% for value, label in upload_status_options %}
+                        <option value="{{ value }}" {% if upload_status_filter == value %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-md-2">
+                    <label class="form-label">Image Status</label>
+                    <select class="form-select" name="image_status">
+                        <option value="">All Image States</option>
+                        {% for value, label in image_status_options %}
+                        <option value="{{ value }}" {% if image_status_filter == value %}selected{% endif %}>{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-12">
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-search me-1"></i>Apply Filters
+                        </button>
+                        <a href="{{ url_for('upload_manager', show_client_pushed=1 if show_client_pushed else 0, page_size=page_size) }}" class="btn btn-outline-secondary">
+                            <i class="fas fa-times me-1"></i>Clear Filters
+                        </a>
+                        <div class="ms-auto text-muted">
+                            <i class="fas fa-info-circle me-1"></i>Found {{ total }} entries
+                        </div>
+                    </div>
+                </div>
+            </form>
         </div>
     </div>
 
@@ -619,6 +763,13 @@
                 <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mt-3">
                     <form method="get" action="{{ url_for('upload_manager') }}" class="d-flex align-items-center gap-2 mb-0">
                         <input type="hidden" name="show_client_pushed" value="{{ 1 if show_client_pushed else 0 }}">
+                        <input type="hidden" name="cert_id" value="{{ cert_id_filter }}">
+                        <input type="hidden" name="card_name" value="{{ card_name_filter }}">
+                        <input type="hidden" name="brand" value="{{ brand_filter }}">
+                        <input type="hidden" name="language" value="{{ language_filter }}">
+                        <input type="hidden" name="final_grade" value="{{ final_grade_filter }}">
+                        <input type="hidden" name="upload_status" value="{{ upload_status_filter }}">
+                        <input type="hidden" name="image_status" value="{{ image_status_filter }}">
                         <input type="hidden" name="page" value="1">
                         <label for="upload-page-size" class="form-label mb-0 small text-muted">Per page</label>
                         <select id="upload-page-size" class="form-select form-select-sm" name="page_size" onchange="this.form.submit()">
