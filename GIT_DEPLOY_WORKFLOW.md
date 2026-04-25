@@ -67,9 +67,14 @@ For admin/backend changes, also run targeted route checks or a Flask test client
 After restart, verify:
 
 - `curl -I http://127.0.0.1:8080/`
-- `curl -I http://127.0.0.1:8080/admin/login`
+- `curl -I http://127.0.0.1:8081/admin/login`
 
 For admin-only fixes, also run an authenticated smoke test manually or with a cookie jar.
+
+Important:
+
+- Do not use `https://nxrgrading.com/admin` as the public admin check. That path is intentionally blocked and should return `404`.
+- The public admin entry URL is `https://nxrgrading.com/x7k9m2q4r8v6c3p1`.
 
 ## Database Rule
 

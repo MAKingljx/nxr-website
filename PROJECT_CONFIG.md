@@ -16,6 +16,13 @@
 - Public domain: `https://nxrgrading.com/`
 - Public admin entry URL: `https://nxrgrading.com/x7k9m2q4r8v6c3p1`
 
+### Admin Route Rules
+
+- Public `https://nxrgrading.com/admin` is intentionally blocked and should return `404`.
+- The real public admin entry path is the hidden route `https://nxrgrading.com/x7k9m2q4r8v6c3p1`.
+- On the server, the admin Flask app listens on `127.0.0.1:8081` behind Nginx rewrite/proxy rules.
+- Direct public access to `:8081` should not be relied on and should remain blocked externally.
+
 ## Validation Workflow
 
 1. Change code locally first.
@@ -54,6 +61,12 @@
 - Databases: `Data/cards.db`, `Data/temp_cards.db`
 - Project prompt: `AGENTS.md`
 - SSH notes: `SSH.md` (local-only)
+
+## Backup Retention Rule
+
+- Local backup retention limit: keep at most 2 backup snapshots.
+- Prefer keeping the 2 most recent backups in `local_backups/`.
+- Old backup archives should be deleted or archived elsewhere once newer validated backups exist.
 
 ## Approved Upload Image Lifecycle
 
