@@ -190,37 +190,122 @@
             return;
         }
 
-        const formData = new FormData(form);
-        const xhr = new XMLHttpRequest();
-        xhr.open('POST', form.action, true);
-        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
-
         if (submitButton) {
             submitButton.disabled = true;
         }
 
-        setFolderImportProgress(0, `Starting upload for ${selectedFiles.length} files...`, 'info');
+        const batches = buildFolderImportBatches(selectedFiles);
+        const totalBytes = selectedFiles.reduce((sum, file) => sum + (file.size || 0), 0);
+        const aggregateSummary = {
+            saved_files: 0,
+            updated_entry_ids: new Set(),
+            missing_cert_ids: new Set(),
+            duplicate_names: 0,
+            invalid_names: 0,
+        };
+
+        setFolderImportProgress(0, `Starting upload for ${selectedFiles.length} files in ${batches.length} batches...`, 'info');
+
+        uploadFolderImportBatch({
+            form,
+            batches,
+            batchIndex: 0,
+            totalBytes,
+            uploadedBytes: 0,
+            aggregateSummary,
+            submitButton,
+        });
+    }
+
+    function buildFolderImportBatches(files) {
+        const maxBatchBytes = 24 * 1024 * 1024;
+        const maxBatchFiles = 12;
+        const batches = [];
+        let currentBatch = [];
+        let currentBytes = 0;
+
+        files.forEach((file) => {
+            const fileSize = file.size || 0;
+            const wouldExceedBytes = currentBatch.length > 0 && currentBytes + fileSize > maxBatchBytes;
+            const wouldExceedCount = currentBatch.length >= maxBatchFiles;
+            if (wouldExceedBytes || wouldExceedCount) {
+                batches.push(currentBatch);
+                currentBatch = [];
+                currentBytes = 0;
+            }
+            currentBatch.push(file);
+            currentBytes += fileSize;
+        });
+
+        if (currentBatch.length > 0) {
+            batches.push(currentBatch);
+        }
+
+        return batches;
+    }
+
+    function uploadFolderImportBatch(context) {
+        const {
+            form,
+            batches,
+            batchIndex,
+            totalBytes,
+            uploadedBytes,
+            aggregateSummary,
+            submitButton,
+        } = context;
+
+        if (batchIndex >= batches.length) {
+            const importedFiles = aggregateSummary.saved_files || 0;
+            const updatedEntries = aggregateSummary.updated_entry_ids.size || 0;
+            const skippedCertIds = aggregateSummary.missing_cert_ids.size || 0;
+            const successMessage = `Folder import completed. Imported ${importedFiles} image files and updated ${updatedEntries} approved entries.${skippedCertIds ? ` Skipped ${skippedCertIds} unmatched cert IDs.` : ''}`;
+            setFolderImportProgress(100, successMessage, 'success');
+            if (submitButton) {
+                submitButton.disabled = false;
+            }
+            showToast(successMessage, 'success');
+            setTimeout(() => {
+                window.location.reload();
+            }, 1200);
+            return;
+        }
+
+        const batchFiles = batches[batchIndex];
+        const batchBytes = batchFiles.reduce((sum, file) => sum + (file.size || 0), 0);
+        const formData = new FormData();
+        batchFiles.forEach((file) => {
+            formData.append('image_files', file, file.webkitRelativePath || file.name);
+        });
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', form.action, true);
+        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
 
         xhr.upload.addEventListener('progress', function(event) {
-            if (!event.lengthComputable) {
-                setFolderImportProgress(5, 'Uploading folder...', 'info');
-                return;
-            }
-            const percent = Math.round((event.loaded / event.total) * 100);
-            setFolderImportProgress(percent, `Uploading files... ${percent}%`, 'info');
+            const loadedBytes = event.lengthComputable ? event.loaded : 0;
+            const overallLoaded = uploadedBytes + loadedBytes;
+            const percent = totalBytes > 0 ? Math.min(99, Math.round((overallLoaded / totalBytes) * 100)) : 0;
+            setFolderImportProgress(
+                percent,
+                `Uploading batch ${batchIndex + 1}/${batches.length}... ${percent}%`,
+                'info',
+            );
         });
 
         xhr.upload.addEventListener('load', function() {
-            setFolderImportProgress(100, 'Upload complete. Processing files on server...', 'info');
+            const overallLoaded = uploadedBytes + batchBytes;
+            const percent = totalBytes > 0 ? Math.min(99, Math.round((overallLoaded / totalBytes) * 100)) : 99;
+            setFolderImportProgress(
+                percent,
+                `Processing batch ${batchIndex + 1}/${batches.length} on server...`,
+                'info',
+            );
         });
 
         xhr.onreadystatechange = function() {
             if (xhr.readyState !== XMLHttpRequest.DONE) {
                 return;
-            }
-
-            if (submitButton) {
-                submitButton.disabled = false;
             }
 
             let response = null;
@@ -230,21 +315,34 @@
                 response = null;
             }
 
-            if (xhr.status >= 200 && xhr.status < 300 && response && response.success) {
-                const successMessage = response.message || 'Folder import completed.';
-                setFolderImportProgress(100, successMessage, 'success');
-                showToast(successMessage, 'success');
-                setTimeout(() => {
-                    window.location.reload();
-                }, 1200);
+            if (!(xhr.status >= 200 && xhr.status < 300 && response && response.success)) {
+                const errorMessage = response && response.message
+                    ? response.message
+                    : `Folder import failed on batch ${batchIndex + 1}.`;
+                if (submitButton) {
+                    submitButton.disabled = false;
+                }
+                setFolderImportProgress(100, errorMessage, 'error');
+                showToast(errorMessage, 'error');
                 return;
             }
 
-            const errorMessage = response && response.message
-                ? response.message
-                : 'Folder import failed.';
-            setFolderImportProgress(100, errorMessage, 'error');
-            showToast(errorMessage, 'error');
+            const summary = response.summary || {};
+            aggregateSummary.saved_files += summary.saved_files || 0;
+            aggregateSummary.duplicate_names += summary.duplicate_names ? summary.duplicate_names.length : 0;
+            aggregateSummary.invalid_names += summary.invalid_names ? summary.invalid_names.length : 0;
+            (summary.updated_entry_ids || []).forEach((entryId) => aggregateSummary.updated_entry_ids.add(entryId));
+            (summary.missing_cert_ids || []).forEach((certId) => aggregateSummary.missing_cert_ids.add(certId));
+
+            uploadFolderImportBatch({
+                form,
+                batches,
+                batchIndex: batchIndex + 1,
+                totalBytes,
+                uploadedBytes: uploadedBytes + batchBytes,
+                aggregateSummary,
+                submitButton,
+            });
         };
 
         xhr.onerror = function() {

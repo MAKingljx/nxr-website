@@ -1,4 +1,5 @@
 import re
+import shutil
 import uuid
 from pathlib import Path
 
@@ -33,7 +34,7 @@ def parse_import_image_name(filename):
     }
 
 
-def save_imported_image_file(cert_id, side, extension, file_bytes):
+def save_imported_image_upload(cert_id, side, extension, uploaded_file):
     normalized_extension = (extension or '').lower()
     if normalized_extension not in ALLOWED_IMAGE_IMPORT_EXTENSIONS:
         raise ValueError(f'Unsupported image extension for {cert_id} {side}')
@@ -41,7 +42,16 @@ def save_imported_image_file(cert_id, side, extension, file_bytes):
     safe_side = 'front' if side == 'front' else 'back'
     output_name = f'{safe_side}_{cert_id}_{uuid.uuid4().hex[:8]}{normalized_extension}'
     output_path = Path(app.config['UPLOAD_FOLDER']) / output_name
-    output_path.write_bytes(file_bytes)
+
+    try:
+        if hasattr(uploaded_file, 'stream') and hasattr(uploaded_file.stream, 'seek'):
+            uploaded_file.stream.seek(0)
+    except (OSError, ValueError):
+        pass
+
+    with output_path.open('wb') as output_file:
+        shutil.copyfileobj(uploaded_file.stream, output_file, length=1024 * 1024)
+
     return output_name
 
 
@@ -70,7 +80,7 @@ def build_image_import_candidates_from_files(uploaded_files):
             'cert_id': parsed['cert_id'],
             'side': parsed['side'],
             'extension': parsed['extension'],
-            'file_bytes': uploaded_file.read(),
+            'uploaded_file': uploaded_file,
         }
 
     return candidates, invalid_names, duplicate_names
@@ -120,11 +130,11 @@ def import_image_candidates_to_temp_cards(candidates, invalid_names, duplicate_n
             if not candidate:
                 continue
 
-            saved_name = save_imported_image_file(
+            saved_name = save_imported_image_upload(
                 cert_id=cert_id,
                 side=side,
                 extension=candidate['extension'],
-                file_bytes=candidate['file_bytes'],
+                uploaded_file=candidate['uploaded_file'],
             )
             saved_files += 1
             updated_sides += 1
