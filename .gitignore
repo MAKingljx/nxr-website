@@ -15,6 +15,7 @@ __pycache__/
 cards.db
 cards_backup.db
 cards.db.backup*
+Data/
 Data/*.db
 Data/cards_backup.db
 Data/*.before_delete_*
@@ -39,9 +40,14 @@ nxr_admin/__pycache__/
 nxr_admin/uploads/
 nxr_admin/exports/
 nxr_site/__pycache__/
+nxr_site/static/*_front.*
+nxr_site/static/*_back.*
 nxr_site/static/[0-9]*_front.*
 nxr_site/static/[0-9]*_back.*
 slabs photo/
 testpis/
 *.xlsx
 *.mov
+local_backups/
+recovery/
+processed_12.zip

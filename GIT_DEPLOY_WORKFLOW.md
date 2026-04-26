@@ -82,6 +82,12 @@ Git deploy is for code only.
 
 Database files under `Data/` are ignored by Git and must be handled separately when schema or content changes are part of the release.
 
+Strong rule:
+
+- Without explicit user authorization in the current session, do not sync, replace, restore, or overwrite any production database file.
+- Prior approval does not carry forward. Every database-changing action needs a fresh explicit instruction from the user.
+- `scripts/sync_to_server.sh` is code-only and must not be used to push `Data/`.
+
 Before any database change on production:
 
 1. Archive the current database files.
@@ -108,6 +114,7 @@ Until the server repo is normalized, emergency releases may still use targeted f
 If that exception is used:
 
 - sync only the intended files
+- keep `Data/` excluded unless the user explicitly authorizes a database operation in the current session
 - archive the previous server files first
 - record the exception in the task notes
 - return to Git-based deploy as the default path after normalization

@@ -6,6 +6,9 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEPLOY_TARGET="${DEPLOY_TARGET:-root@147.182.183.201}"
 DEPLOY_ROOT="${DEPLOY_ROOT:-/root/nxr_website}"
 
+echo "Code-only sync: Data/ is excluded by policy." >&2
+echo "Database sync/overwrite is forbidden without explicit user authorization in the current session." >&2
+
 rsync -avz --delete \
   --exclude '.git/' \
   --exclude '.playwright-cli/' \
@@ -17,6 +20,7 @@ rsync -avz --delete \
   --exclude '*.log' \
   --exclude 'output.log' \
   --exclude 'venv/' \
+  --exclude 'Data/' \
   --exclude 'nxr_admin/uploads/' \
   --exclude 'nxr_admin/exports/' \
   --exclude 'slabs photo/' \

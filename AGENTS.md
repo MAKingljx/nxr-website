@@ -7,7 +7,7 @@ Work locally first. Do not treat the production server as the primary editing en
 1. Make code and template changes locally in `/Users/phoenix/Documents/Phoenxi/nxr_website`.
 2. Run local validation before touching the server.
 3. Verify the affected routes, templates, and data paths with targeted tests or quick scripts.
-4. Only after local verification passes, sync the changed files to the server at `/root/nxr_website`, including the `Data/` directory when database changes are part of the fix.
+4. Only after local verification passes, sync the changed files to the server at `/root/nxr_website`. Do not sync `Data/` through the normal file-sync path.
 5. Restart the app on the server and run a live smoke test against `127.0.0.1:8080`.
 6. Keep GitHub in sync after the fix is verified.
 
@@ -29,6 +29,8 @@ Work locally first. Do not treat the production server as the primary editing en
 - Avoid editing production files first when the same work can be done locally.
 - Prefer archiving obsolete backups to a dated archive directory instead of deleting them immediately.
 - Keep the production directory tidy: only live app files should remain in `/root/nxr_website`.
+- Strong database rule: without explicit user authorization in the current session, do not sync, replace, restore, or overwrite any production database under `Data/`.
+- Do not reuse an earlier approval for later database actions. Every database write needs a fresh explicit user instruction.
 
 ## Deployment Notes
 

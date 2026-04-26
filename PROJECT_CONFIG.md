@@ -27,9 +27,15 @@
 
 1. Change code locally first.
 2. Run local validation before touching production.
-3. Sync verified files to `/root/nxr_website`. If the change touches databases, sync `Data/` as well.
+3. Sync verified code and asset files to `/root/nxr_website`. Do not sync `Data/` through the normal file-sync path.
 4. Restart the app on the server.
 5. Smoke test `127.0.0.1:8080` and the public site.
+
+Important override:
+
+- `scripts/sync_to_server.sh` is now code-only and excludes `Data/` by default.
+- Database sync, database replacement, database rollback, and any overwrite under `Data/` are forbidden unless the user gives explicit authorization in the current session.
+- Do not treat prior approvals as reusable. Each database-changing action requires a fresh explicit user instruction.
 
 ## Preferred Future Deploy Workflow
 
@@ -68,6 +74,13 @@
 - Prefer keeping the 2 most recent backups in `local_backups/`.
 - Old backup archives should be deleted or archived elsewhere once newer validated backups exist.
 
+## Database Safety Rule
+
+- Strong rule: without explicit user authorization in the current session, do not sync, replace, restore, or overwrite any production database file.
+- This applies to `Data/cards.db`, `Data/temp_cards.db`, and any other SQLite payload under `Data/`.
+- Code deploys and file syncs must assume `Data/` is immutable unless the user explicitly says otherwise.
+- If a future task needs a database change, stop and obtain explicit approval first, then create a dated backup before any write.
+
 ## Approved Upload Image Lifecycle
 
 - Scope: approved entries uploaded from the admin upload flow.
@@ -101,3 +114,4 @@
 - Preferred sync command: `./scripts/sync_to_server.sh`
 - Override target host if needed: `DEPLOY_TARGET=root@your-server ./scripts/sync_to_server.sh`
 - Override remote root if needed: `DEPLOY_ROOT=/root/nxr_website ./scripts/sync_to_server.sh`
+- `Data/` is excluded from this sync command by policy.
