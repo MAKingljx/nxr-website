@@ -11,6 +11,12 @@ Work locally first. Do not treat the production server as the primary editing en
 5. Restart the app on the server and run a live smoke test against `127.0.0.1:8080`.
 6. Keep GitHub in sync after the fix is verified.
 
+Important override:
+
+- The public admin URL is fixed at `https://nxrgrading.com/x7k9m2q4r8v6c3p1`.
+- `https://nxrgrading.com/admin` is intentionally not the public admin entry and should not be used for user-facing guidance.
+- The production main site and admin backend are separate processes and must be treated separately during restart/debug work.
+
 ## Validation Expectations
 
 - At minimum, run `python3 -m py_compile nxr_site/app.py nxr_admin/app_updated.py` after Python changes.
@@ -39,6 +45,10 @@ Work locally first. Do not treat the production server as the primary editing en
 - Database directory: `/Users/phoenix/Documents/Phoenxi/nxr_website/Data/` -> `/root/nxr_website/Data/`
 - Local main site entrypoint: `/Users/phoenix/Documents/Phoenxi/nxr_website/nxr_site/app.py`
 - Local admin entrypoint: `/Users/phoenix/Documents/Phoenxi/nxr_website/nxr_admin/app_updated.py`
-- Current production start command: `/usr/bin/python3 app.py`
-- Current app port: `8080`
+- Current production main-site start command: `/usr/bin/python3 app.py`
+- Current production admin start command: `/usr/bin/python3 /root/nxr_website/nxr_admin/app_updated.py`
+- Current main-site port: `8080`
+- Current admin port: `8081`
 - Public site is served through Nginx and proxied to `127.0.0.1:8080`
+- Public admin path is served through Nginx rewrite/proxy to `127.0.0.1:8081`
+- Preferred remote restart helper: `/Users/phoenix/Documents/Phoenxi/nxr_website/scripts/restart_remote_apps.sh`

@@ -9,9 +9,12 @@
 ## Production App
 
 - Production root: `/root/nxr_website`
-- Current production start command: `cd /root/nxr_website && /usr/bin/python3 app.py`
-- Current running process: `/usr/bin/python3 app.py`
-- App port: `8080`
+- Main site start command: `cd /root/nxr_website && /usr/bin/python3 app.py`
+- Admin backend start command: `cd /root/nxr_website && /usr/bin/python3 nxr_admin/app_updated.py`
+- Main site process pattern: `/usr/bin/python3 app.py`
+- Admin process pattern: `/usr/bin/python3 /root/nxr_website/nxr_admin/app_updated.py`
+- Main site port: `8080`
+- Admin port: `8081`
 - Reverse proxy: Nginx -> `127.0.0.1:8080`
 - Public domain: `https://nxrgrading.com/`
 - Public admin entry URL: `https://nxrgrading.com/x7k9m2q4r8v6c3p1`
@@ -42,6 +45,7 @@ Important override:
 - Target workflow: Git-based deploys, not ad-hoc file sync.
 - Standard path: local commit -> push GitHub -> server pull -> restart -> smoke test.
 - Deployment script: `scripts/deploy_via_git.sh`
+- Remote restart helper: `scripts/restart_remote_apps.sh`
 - Detailed process record: `GIT_DEPLOY_WORKFLOW.md`
 
 ### Important
@@ -115,3 +119,11 @@ Important override:
 - Override target host if needed: `DEPLOY_TARGET=root@your-server ./scripts/sync_to_server.sh`
 - Override remote root if needed: `DEPLOY_ROOT=/root/nxr_website ./scripts/sync_to_server.sh`
 - `Data/` is excluded from this sync command by policy.
+
+## Remote Restart Rule
+
+- Restart the main site and admin backend as two separate processes.
+- Main site must be reachable at `127.0.0.1:8080`.
+- Admin backend must be reachable at `127.0.0.1:8081/admin/login`.
+- Preferred restart command: `./scripts/restart_remote_apps.sh`
+- Do not assume restarting `app.py` also refreshes the admin backend. `nxr_admin/app_updated.py` must be restarted explicitly when admin code or templates change.

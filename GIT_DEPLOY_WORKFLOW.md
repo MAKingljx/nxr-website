@@ -54,6 +54,12 @@ Once the server repo is clean, always use this flow:
 7. Verify the service on `127.0.0.1:8080`.
 8. Verify the affected public or admin routes.
 
+When admin Python code or admin templates change, restart both processes, not just the main site:
+
+- Main site: `/usr/bin/python3 app.py`
+- Admin backend: `/usr/bin/python3 /root/nxr_website/nxr_admin/app_updated.py`
+- Preferred helper: `./scripts/restart_remote_apps.sh`
+
 ## Local Validation Minimum
 
 At minimum:
@@ -68,6 +74,11 @@ After restart, verify:
 
 - `curl -I http://127.0.0.1:8080/`
 - `curl -I http://127.0.0.1:8081/admin/login`
+
+Important restart note:
+
+- The admin backend is a separate Flask process on `8081`.
+- Updating admin templates on disk is not enough; the `nxr_admin/app_updated.py` process must be restarted to pick up template changes reliably.
 
 For admin-only fixes, also run an authenticated smoke test manually or with a cookie jar.
 
