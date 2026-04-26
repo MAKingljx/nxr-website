@@ -113,7 +113,7 @@
     let currentPage = {{ page }};
     let totalPages = {{ total_pages }};
     
-    // 刷新统计信息
+    // Refresh stats
     function refreshStats() {
         fetch('/admin/api/upload-stats')
             .then(response => response.json())
@@ -127,16 +127,16 @@
             });
     }
     
-    // 更新统计显示
+    // Update stats display
     function updateStatsDisplay(stats) {
-        // 更新统计卡片
+        // Update stat cards
         document.getElementById('total_approved').textContent = stats.image_stats.total_approved;
         document.getElementById('ready_for_upload').textContent = stats.image_stats.ready_for_upload;
         document.getElementById('uploaded_count').textContent = stats.uploaded || 0;
         document.getElementById('failed_count').textContent = stats.image_stats.client_pushed || 0;
     }
     
-    // 选择/取消选择所有条目
+    // Select or deselect all visible entries
     function toggleSelectAll() {
         const checkboxes = document.querySelectorAll('.entry-checkbox');
         const selectAllCheckbox = document.getElementById('selectAll');
@@ -158,7 +158,7 @@
         updateSelectedCount();
     }
     
-    // 处理单个条目选择
+    // Handle individual entry selection
     function handleEntrySelect(checkbox) {
         if (checkbox.checked) {
             selectedEntries.add(checkbox.value);
@@ -170,12 +170,12 @@
         updateSelectedCount();
     }
     
-    // 更新选中数量显示
+    // Update selected count display
     function updateSelectedCount() {
         const count = selectedEntries.size;
         document.getElementById('selectedCount').textContent = count;
         
-        // 更新按钮状态
+        // Update button state
         const uploadBtn = document.getElementById('uploadSelectedBtn');
         const retryBtn = document.getElementById('retryFailedBtn');
         
@@ -183,7 +183,7 @@
         retryBtn.disabled = count === 0;
     }
     
-    // 上传选中的条目
+    // Upload selected entries
     function uploadSelected() {
         if (selectedEntries.size === 0) {
             showToast('Please select entries to upload', 'warning');
@@ -212,7 +212,7 @@
             if (data.success) {
                 showToast(`Upload completed: ${data.success_count} successful, ${data.failed_count} failed`, 'success');
                 
-                // 刷新页面
+                // Refresh the page
                 setTimeout(() => {
                     window.location.reload();
                 }, 2000);
@@ -227,7 +227,7 @@
         });
     }
     
-    // 重试失败的条目
+    // Retry failed entries
     function retryFailed() {
         if (selectedEntries.size === 0) {
             showToast('Please select entries to retry', 'warning');
@@ -238,10 +238,10 @@
             return;
         }
         
-        uploadSelected(); // 使用相同的上传逻辑
+        uploadSelected(); // Reuse the same upload flow
     }
     
-    // 上传单个条目
+    // Upload a single entry
     function uploadSingle(entryId, certId) {
         if (!confirm(`Upload entry ${certId} to server?`)) {
             return;
@@ -259,7 +259,7 @@
             if (data.success) {
                 showToast(`Upload successful: ${certId}`, 'success');
                 
-                // 更新行状态
+                // Update row state
                 updateEntryStatus(entryId, data);
                 setTimeout(() => {
                     window.location.reload();
@@ -305,19 +305,19 @@
         });
     }
     
-    // 更新条目状态显示
+    // Update entry status display
     function updateEntryStatus(entryId, data) {
         const row = document.querySelector(`tr[data-entry-id="${entryId}"]`);
         if (!row) return;
         
-        // 更新状态标签
+        // Update status badge
         const statusCell = row.querySelector('.upload-status');
         if (statusCell) {
             statusCell.className = `upload-status status-${data.upload_status || 'uploaded'}`;
             statusCell.textContent = data.upload_status || 'uploaded';
         }
         
-        // 更新操作按钮
+        // Update action buttons
         const actionCell = row.querySelector('.upload-actions');
         if (actionCell && data.upload_status === 'uploaded') {
             actionCell.innerHTML = `
@@ -328,7 +328,7 @@
         }
     }
     
-    // 分页导航
+    // Pagination navigation
     function goToPage(page) {
         if (page < 1 || page > totalPages) return;
         
@@ -337,7 +337,7 @@
         window.location.href = url.toString();
     }
     
-    // 显示加载指示器
+    // Show loading overlay
     function showLoading(message = 'Loading...') {
         let loadingDiv = document.getElementById('loadingOverlay');
         if (!loadingDiv) {
@@ -352,7 +352,7 @@
             `;
             document.body.appendChild(loadingDiv);
             
-            // 添加样式
+            // Inject styles
             const style = document.createElement('style');
             style.textContent = `
                 .loading-overlay {
@@ -377,7 +377,7 @@
         }
     }
     
-    // 隐藏加载指示器
+    // Hide loading overlay
     function hideLoading() {
         const loadingDiv = document.getElementById('loadingOverlay');
         if (loadingDiv) {
@@ -385,9 +385,9 @@
         }
     }
     
-    // 显示Toast消息
+    // Show toast message
     function showToast(message, type = 'info') {
-        // 创建或获取toast容器
+        // Create or reuse the toast container
         let toastContainer = document.getElementById('toastContainer');
         if (!toastContainer) {
             toastContainer = document.createElement('div');
@@ -401,7 +401,7 @@
             document.body.appendChild(toastContainer);
         }
         
-        // 创建toast
+        // Create toast
         const toastId = 'toast-' + Date.now();
         const toast = document.createElement('div');
         toast.id = toastId;
@@ -418,7 +418,7 @@
         
         toastContainer.appendChild(toast);
         
-        // 自动移除
+        // Remove automatically
         setTimeout(() => {
             if (document.getElementById(toastId)) {
                 document.getElementById(toastId).remove();
@@ -426,19 +426,19 @@
         }, 5000);
     }
     
-    // 页面加载完成
+    // Page ready
     document.addEventListener('DOMContentLoaded', function() {
-        // 初始化统计信息
+        // Initialize stats
         refreshStats();
         
-        // 更新选中数量
+        // Initialize selected count
         updateSelectedCount();
     });
 </script>
 {% endblock %}
 
 {% block content %}
-    <!-- 统计卡片 -->
+    <!-- Stats cards -->
     <div class="row mb-4">
         <div class="col-md-3">
             <a class="stats-card-link" href="{{ url_for('upload_manager', show_client_pushed=1, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, language=language_filter, final_grade=final_grade_filter, page_size=page_size) }}">
@@ -504,7 +504,7 @@
         </div>
     </div>
 
-    <!-- 批量控制面板 -->
+    <!-- Batch action panel -->
     <div class="batch-controls">
         <div class="row align-items-center">
             <div class="col-md-4">
@@ -622,7 +622,7 @@
         </div>
     </div>
 
-    <!-- 上传条目表格 -->
+    <!-- Upload entries table -->
     <div class="card">
         <div class="card-header">
             <h6 class="mb-0"><i class="fas fa-list me-2"></i>{% if show_client_pushed %}All Approved Entries{% else %}Active Upload Queue{% endif %}</h6>
@@ -759,7 +759,7 @@
                     </table>
                 </div>
 
-                <!-- 分页控件 -->
+                <!-- Pagination controls -->
                 <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mt-3">
                     <form method="get" action="{{ url_for('upload_manager') }}" class="d-flex align-items-center gap-2 mb-0">
                         <input type="hidden" name="show_client_pushed" value="{{ 1 if show_client_pushed else 0 }}">
@@ -840,7 +840,7 @@
         </div>
     </div>
 
-    <!-- 使用说明 -->
+    <!-- Usage notes -->
     <div class="card mt-4">
         <div class="card-header">
             <h6 class="mb-0"><i class="fas fa-info-circle me-2"></i>Upload Instructions</h6>
