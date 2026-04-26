@@ -329,14 +329,27 @@ def upload_manager():
 @app.route('/admin/upload/import-images', methods=['POST'])
 @login_required
 def import_images_by_id():
+    is_ajax_request = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+
+    def respond_with_message(message, category='error', status_code=400, summary=None):
+        if is_ajax_request:
+            payload = {
+                'success': category != 'error',
+                'message': message,
+            }
+            if summary is not None:
+                payload['summary'] = summary
+            return jsonify(payload), status_code
+        flash(message, category)
+        return redirect(url_for('upload_manager'))
+
     uploaded_files = [
         file_obj
         for file_obj in request.files.getlist('image_files')
         if file_obj and (file_obj.filename or '').strip()
     ]
     if not uploaded_files:
-        flash('Please choose an image folder first.', 'warning')
-        return redirect(url_for('upload_manager'))
+        return respond_with_message('Please choose an image folder first.', 'warning', 400)
 
     try:
         conn = get_temp_db_connection()
@@ -350,8 +363,7 @@ def import_images_by_id():
             conn.close()
     except Exception as exc:
         app.logger.error('Folder image import failed: %s', exc)
-        flash(f'Folder image import failed: {exc}', 'error')
-        return redirect(url_for('upload_manager'))
+        return respond_with_message(f'Folder image import failed: {exc}', 'error', 500)
 
     message_parts = [
         f"Imported {summary['saved_files']} image files",
@@ -364,8 +376,14 @@ def import_images_by_id():
     if summary['invalid_names']:
         message_parts.append(f"{len(summary['invalid_names'])} invalid filenames skipped")
 
-    flash('. '.join(message_parts) + '.', 'success' if summary['updated_entry_ids'] else 'warning')
-    return redirect(url_for('upload_manager'))
+    message = '. '.join(message_parts) + '.'
+    category = 'success' if summary['updated_entry_ids'] else 'warning'
+    return respond_with_message(
+        message,
+        category,
+        200,
+        summary=summary,
+    )
 
 @app.route('/admin/api/upload-stats')
 @app.route('/api/upload-stats')

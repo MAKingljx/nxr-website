@@ -115,6 +115,21 @@
         color: #6c757d;
         word-break: break-all;
     }
+    .folder-import-progress {
+        display: none;
+    }
+    .folder-import-progress.is-visible {
+        display: block;
+    }
+    .folder-import-progress .progress {
+        height: 14px;
+        border-radius: 999px;
+        background: rgba(13, 110, 253, 0.12);
+        overflow: hidden;
+    }
+    .folder-import-progress .progress-bar {
+        transition: width 0.2s ease;
+    }
 </style>
 {% endblock %}
 
@@ -123,6 +138,125 @@
     let selectedEntries = new Set();
     let currentPage = {{ page }};
     let totalPages = {{ total_pages }};
+
+    function setFolderImportProgress(percent, message, tone = 'info') {
+        const progressWrap = document.getElementById('folderImportProgress');
+        const progressBar = document.getElementById('folderImportProgressBar');
+        const progressText = document.getElementById('folderImportProgressText');
+        if (!progressWrap || !progressBar || !progressText) {
+            return;
+        }
+
+        const safePercent = Math.max(0, Math.min(100, Number(percent) || 0));
+        const toneClass = tone === 'success'
+            ? 'bg-success'
+            : tone === 'error'
+                ? 'bg-danger'
+                : tone === 'warning'
+                    ? 'bg-warning'
+                    : 'bg-primary';
+
+        progressWrap.classList.add('is-visible');
+        progressBar.style.width = `${safePercent}%`;
+        progressBar.setAttribute('aria-valuenow', String(safePercent));
+        progressBar.className = `progress-bar progress-bar-striped progress-bar-animated ${toneClass}`;
+        if (safePercent >= 100 && tone !== 'info') {
+            progressBar.classList.remove('progress-bar-animated');
+        }
+        progressText.textContent = message || `${safePercent}%`;
+    }
+
+    function resetFolderImportProgress() {
+        const progressWrap = document.getElementById('folderImportProgress');
+        const progressBar = document.getElementById('folderImportProgressBar');
+        const progressText = document.getElementById('folderImportProgressText');
+        if (!progressWrap || !progressBar || !progressText) {
+            return;
+        }
+
+        progressWrap.classList.remove('is-visible');
+        progressBar.style.width = '0%';
+        progressBar.setAttribute('aria-valuenow', '0');
+        progressBar.className = 'progress-bar progress-bar-striped progress-bar-animated bg-primary';
+        progressText.textContent = 'Waiting to upload...';
+    }
+
+    function submitFolderImportForm(form) {
+        const submitButton = document.getElementById('folderImportSubmitBtn');
+        const fileInput = document.getElementById('imageArchiveInput');
+        const selectedFiles = fileInput && fileInput.files ? Array.from(fileInput.files) : [];
+        if (!selectedFiles.length) {
+            showToast('Please choose an image folder first', 'warning');
+            return;
+        }
+
+        const formData = new FormData(form);
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', form.action, true);
+        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+
+        if (submitButton) {
+            submitButton.disabled = true;
+        }
+
+        setFolderImportProgress(0, `Starting upload for ${selectedFiles.length} files...`, 'info');
+
+        xhr.upload.addEventListener('progress', function(event) {
+            if (!event.lengthComputable) {
+                setFolderImportProgress(5, 'Uploading folder...', 'info');
+                return;
+            }
+            const percent = Math.round((event.loaded / event.total) * 100);
+            setFolderImportProgress(percent, `Uploading files... ${percent}%`, 'info');
+        });
+
+        xhr.upload.addEventListener('load', function() {
+            setFolderImportProgress(100, 'Upload complete. Processing files on server...', 'info');
+        });
+
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState !== XMLHttpRequest.DONE) {
+                return;
+            }
+
+            if (submitButton) {
+                submitButton.disabled = false;
+            }
+
+            let response = null;
+            try {
+                response = JSON.parse(xhr.responseText || '{}');
+            } catch (error) {
+                response = null;
+            }
+
+            if (xhr.status >= 200 && xhr.status < 300 && response && response.success) {
+                const successMessage = response.message || 'Folder import completed.';
+                setFolderImportProgress(100, successMessage, 'success');
+                showToast(successMessage, 'success');
+                setTimeout(() => {
+                    window.location.reload();
+                }, 1200);
+                return;
+            }
+
+            const errorMessage = response && response.message
+                ? response.message
+                : 'Folder import failed.';
+            setFolderImportProgress(100, errorMessage, 'error');
+            showToast(errorMessage, 'error');
+        };
+
+        xhr.onerror = function() {
+            if (submitButton) {
+                submitButton.disabled = false;
+            }
+            setFolderImportProgress(100, 'Upload request failed. Please try again.', 'error');
+            showToast('Upload request failed. Please try again.', 'error');
+        };
+
+        xhr.send(formData);
+    }
     
     // Refresh stats
     function refreshStats() {
@@ -447,19 +581,29 @@
 
         const archiveInput = document.getElementById('imageArchiveInput');
         const archiveName = document.getElementById('imageArchiveName');
+        const folderImportForm = document.getElementById('folderImportForm');
         if (archiveInput && archiveName) {
             archiveInput.addEventListener('change', function() {
                 const selectedFiles = archiveInput.files ? Array.from(archiveInput.files) : [];
                 if (selectedFiles.length === 0) {
                     archiveName.textContent = 'No folder selected';
+                    resetFolderImportProgress();
                     return;
                 }
 
                 const firstRelativePath = selectedFiles[0].webkitRelativePath || selectedFiles[0].name || '';
                 const folderName = firstRelativePath.includes('/') ? firstRelativePath.split('/')[0] : 'Selected folder';
                 archiveName.textContent = `${folderName} (${selectedFiles.length} files)`;
+                resetFolderImportProgress();
             });
         }
+        if (folderImportForm) {
+            folderImportForm.addEventListener('submit', function(event) {
+                event.preventDefault();
+                submitFolderImportForm(folderImportForm);
+            });
+        }
+        resetFolderImportProgress();
     });
 </script>
 {% endblock %}
@@ -512,7 +656,7 @@
                     </div>
                 </div>
             </div>
-            <form method="post" action="{{ url_for('import_images_by_id') }}" enctype="multipart/form-data" class="row g-3 align-items-end">
+            <form method="post" action="{{ url_for('import_images_by_id') }}" enctype="multipart/form-data" class="row g-3 align-items-end" id="folderImportForm">
                 <div class="col-lg-8">
                     <label class="form-label" for="imageArchiveInput">Image Folder</label>
                     <input type="file" class="d-none" id="imageArchiveInput" name="image_files" accept=".webp,.jpg,.jpeg,.png" webkitdirectory directory multiple required>
@@ -524,7 +668,7 @@
                     </div>
                 </div>
                 <div class="col-lg-4">
-                    <button type="submit" class="btn btn-primary w-100">
+                    <button type="submit" class="btn btn-primary w-100" id="folderImportSubmitBtn">
                         <i class="fas fa-upload me-1"></i>Import Folder to Queue
                     </button>
                 </div>
@@ -532,6 +676,25 @@
                     <small class="text-muted">
                         Only approved entries with exact cert ID matches are updated. Existing local queue images for the same side are replaced; unmatched files are skipped, and published site images stay unchanged until the normal upload step runs.
                     </small>
+                </div>
+                <div class="col-12">
+                    <div class="folder-import-progress" id="folderImportProgress">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <strong class="small">Upload Progress</strong>
+                            <span class="small text-muted" id="folderImportProgressText">Waiting to upload...</span>
+                        </div>
+                        <div class="progress">
+                            <div
+                                class="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+                                id="folderImportProgressBar"
+                                role="progressbar"
+                                style="width: 0%;"
+                                aria-valuenow="0"
+                                aria-valuemin="0"
+                                aria-valuemax="100"
+                            ></div>
+                        </div>
+                    </div>
                 </div>
             </form>
         </div>
