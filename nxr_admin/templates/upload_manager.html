@@ -104,6 +104,17 @@
         border: 1px dashed #8bb8ff;
         background: linear-gradient(135deg, #f7fbff 0%, #eef5ff 100%);
     }
+    .custom-file-picker {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.75rem;
+    }
+    .custom-file-name {
+        min-width: 220px;
+        color: #6c757d;
+        word-break: break-all;
+    }
 </style>
 {% endblock %}
 
@@ -433,6 +444,15 @@
         
         // Initialize selected count
         updateSelectedCount();
+
+        const archiveInput = document.getElementById('imageArchiveInput');
+        const archiveName = document.getElementById('imageArchiveName');
+        if (archiveInput && archiveName) {
+            archiveInput.addEventListener('change', function() {
+                const selectedFile = archiveInput.files && archiveInput.files[0];
+                archiveName.textContent = selectedFile ? selectedFile.name : 'No file selected';
+            });
+        }
     });
 </script>
 {% endblock %}
@@ -487,8 +507,14 @@
             </div>
             <form method="post" action="{{ url_for('import_images_by_id') }}" enctype="multipart/form-data" class="row g-3 align-items-end">
                 <div class="col-lg-8">
-                    <label class="form-label">ZIP Archive</label>
-                    <input type="file" class="form-control" name="image_archive" accept=".zip" required>
+                    <label class="form-label" for="imageArchiveInput">ZIP Archive</label>
+                    <input type="file" class="d-none" id="imageArchiveInput" name="image_archive" accept=".zip" required>
+                    <div class="custom-file-picker">
+                        <label for="imageArchiveInput" class="btn btn-outline-primary mb-0">
+                            <i class="fas fa-folder-open me-1"></i>Choose ZIP File
+                        </label>
+                        <span class="custom-file-name" id="imageArchiveName">No file selected</span>
+                    </div>
                 </div>
                 <div class="col-lg-4">
                     <button type="submit" class="btn btn-primary w-100">
