@@ -8,7 +8,7 @@ from nxr_admin.admin_core import *
 
 
 IMAGE_IMPORT_PATTERN = re.compile(
-    r'(^|/)(?P<image_id>\d{10})_(?P<side>[AB])(?:_\d+)?\.(?P<ext>webp|jpg|jpeg|png)$',
+    r'(^|/)(?P<cert_id>\d{10})_(?P<side>[AB])(?:_\d+)?\.(?P<ext>webp|jpg|jpeg|png)$',
     re.IGNORECASE,
 )
 ALLOWED_IMAGE_IMPORT_EXTENSIONS = {'.webp', '.jpg', '.jpeg', '.png'}
@@ -28,7 +28,7 @@ def parse_import_image_name(filename):
     if not match:
         return None
     return {
-        'image_id': match.group('image_id'),
+        'cert_id': match.group('cert_id'),
         'side': normalize_import_side(match.group('side')),
         'extension': f".{match.group('ext').lower()}",
         'filename': filename,
@@ -61,13 +61,13 @@ def build_image_import_candidates(zip_file):
                 invalid_names.append(member.filename)
             continue
 
-        key = (parsed['image_id'], parsed['side'])
+        key = (parsed['cert_id'], parsed['side'])
         if key in candidates:
             duplicate_names.append(member.filename)
             continue
         candidates[key] = {
             'zip_name': member.filename,
-            'image_id': parsed['image_id'],
+            'cert_id': parsed['cert_id'],
             'side': parsed['side'],
             'extension': parsed['extension'],
         }
@@ -77,19 +77,19 @@ def build_image_import_candidates(zip_file):
 
 def import_zip_images_to_temp_cards(zip_file, conn):
     candidates, invalid_names, duplicate_names = build_image_import_candidates(zip_file)
-    image_ids = sorted({image_id for image_id, _ in candidates.keys()})
-    if not image_ids:
+    cert_ids = sorted({cert_id for cert_id, _ in candidates.keys()})
+    if not cert_ids:
         return {
             'matched_entries': 0,
             'saved_files': 0,
             'updated_sides': 0,
-            'missing_ids': [],
+            'missing_cert_ids': [],
             'invalid_names': invalid_names,
             'duplicate_names': duplicate_names,
             'updated_entry_ids': [],
         }
 
-    placeholders = ', '.join(['?' for _ in image_ids])
+    placeholders = ', '.join(['?' for _ in cert_ids])
     rows = conn.execute(
         f'''
             SELECT id, cert_id, front_image, back_image
@@ -97,7 +97,7 @@ def import_zip_images_to_temp_cards(zip_file, conn):
             WHERE status = 'approved'
               AND cert_id IN ({placeholders})
         ''',
-        image_ids,
+        cert_ids,
     ).fetchall()
     rows_by_cert_id = {row['cert_id']: row for row in rows}
 
@@ -107,7 +107,7 @@ def import_zip_images_to_temp_cards(zip_file, conn):
     updated_entry_ids = []
     files_to_delete = []
 
-    for cert_id in image_ids:
+    for cert_id in cert_ids:
         row = rows_by_cert_id.get(cert_id)
         if not row:
             continue
@@ -151,12 +151,12 @@ def import_zip_images_to_temp_cards(zip_file, conn):
     for filename in dict.fromkeys(files_to_delete):
         delete_uploaded_file(filename)
 
-    missing_ids = [image_id for image_id in image_ids if image_id not in rows_by_cert_id]
+    missing_cert_ids = [cert_id for cert_id in cert_ids if cert_id not in rows_by_cert_id]
     return {
         'matched_entries': matched_entries,
         'saved_files': saved_files,
         'updated_sides': updated_sides,
-        'missing_ids': missing_ids,
+        'missing_cert_ids': missing_cert_ids,
         'invalid_names': invalid_names,
         'duplicate_names': duplicate_names,
         'updated_entry_ids': updated_entry_ids,
@@ -361,8 +361,8 @@ def import_images_by_id():
         f"Imported {summary['saved_files']} image files",
         f"updated {len(summary['updated_entry_ids'])} approved entries",
     ]
-    if summary['missing_ids']:
-        message_parts.append(f"{len(summary['missing_ids'])} image IDs had no approved match")
+    if summary['missing_cert_ids']:
+        message_parts.append(f"{len(summary['missing_cert_ids'])} cert IDs had no approved exact match")
     if summary['duplicate_names']:
         message_parts.append(f"{len(summary['duplicate_names'])} duplicate files ignored")
     if summary['invalid_names']:
