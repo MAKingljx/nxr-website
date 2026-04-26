@@ -1,7 +1,5 @@
-import io
 import re
 import uuid
-import zipfile
 from pathlib import Path
 
 from nxr_admin.admin_core import *
@@ -47,36 +45,38 @@ def save_imported_image_file(cert_id, side, extension, file_bytes):
     return output_name
 
 
-def build_image_import_candidates(zip_file):
+def build_image_import_candidates_from_files(uploaded_files):
     candidates = {}
     duplicate_names = []
     invalid_names = []
 
-    for member in zip_file.infolist():
-        if member.is_dir():
+    for uploaded_file in uploaded_files:
+        raw_name = (uploaded_file.filename or '').strip()
+        if not raw_name:
             continue
-        parsed = parse_import_image_name(member.filename)
+        parsed = parse_import_image_name(raw_name)
         if not parsed:
-            if not Path(member.filename).name.startswith('.'):
-                invalid_names.append(member.filename)
+            if not Path(raw_name).name.startswith('.'):
+                invalid_names.append(raw_name)
             continue
 
         key = (parsed['cert_id'], parsed['side'])
         if key in candidates:
-            duplicate_names.append(member.filename)
+            duplicate_names.append(raw_name)
             continue
+
         candidates[key] = {
-            'zip_name': member.filename,
+            'source_name': raw_name,
             'cert_id': parsed['cert_id'],
             'side': parsed['side'],
             'extension': parsed['extension'],
+            'file_bytes': uploaded_file.read(),
         }
 
     return candidates, invalid_names, duplicate_names
 
 
-def import_zip_images_to_temp_cards(zip_file, conn):
-    candidates, invalid_names, duplicate_names = build_image_import_candidates(zip_file)
+def import_image_candidates_to_temp_cards(candidates, invalid_names, duplicate_names, conn):
     cert_ids = sorted({cert_id for cert_id, _ in candidates.keys()})
     if not cert_ids:
         return {
@@ -120,14 +120,11 @@ def import_zip_images_to_temp_cards(zip_file, conn):
             if not candidate:
                 continue
 
-            with zip_file.open(candidate['zip_name']) as source_file:
-                file_bytes = source_file.read()
-
             saved_name = save_imported_image_file(
                 cert_id=cert_id,
                 side=side,
                 extension=candidate['extension'],
-                file_bytes=file_bytes,
+                file_bytes=candidate['file_bytes'],
             )
             saved_files += 1
             updated_sides += 1
@@ -161,6 +158,11 @@ def import_zip_images_to_temp_cards(zip_file, conn):
         'duplicate_names': duplicate_names,
         'updated_entry_ids': updated_entry_ids,
     }
+
+
+def import_uploaded_images_to_temp_cards(uploaded_files, conn):
+    candidates, invalid_names, duplicate_names = build_image_import_candidates_from_files(uploaded_files)
+    return import_image_candidates_to_temp_cards(candidates, invalid_names, duplicate_names, conn)
 
 # ========== Upload Manager ==========
 @app.route('/admin/upload')
@@ -327,34 +329,28 @@ def upload_manager():
 @app.route('/admin/upload/import-images', methods=['POST'])
 @login_required
 def import_images_by_id():
-    archive_file = request.files.get('image_archive')
-    if not archive_file or not archive_file.filename:
-        flash('Please choose a ZIP archive first.', 'warning')
-        return redirect(url_for('upload_manager'))
-
-    archive_name = archive_file.filename.strip()
-    if not archive_name.lower().endswith('.zip'):
-        flash('Only ZIP archives are supported for image import.', 'error')
+    uploaded_files = [
+        file_obj
+        for file_obj in request.files.getlist('image_files')
+        if file_obj and (file_obj.filename or '').strip()
+    ]
+    if not uploaded_files:
+        flash('Please choose an image folder first.', 'warning')
         return redirect(url_for('upload_manager'))
 
     try:
-        zip_bytes = archive_file.read()
-        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zip_file:
-            conn = get_temp_db_connection()
-            try:
-                summary = import_zip_images_to_temp_cards(zip_file, conn)
-                conn.commit()
-            except Exception:
-                conn.rollback()
-                raise
-            finally:
-                conn.close()
-    except zipfile.BadZipFile:
-        flash('The uploaded archive is not a valid ZIP file.', 'error')
-        return redirect(url_for('upload_manager'))
+        conn = get_temp_db_connection()
+        try:
+            summary = import_uploaded_images_to_temp_cards(uploaded_files, conn)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
     except Exception as exc:
-        app.logger.error('Batch image import failed: %s', exc)
-        flash(f'Batch image import failed: {exc}', 'error')
+        app.logger.error('Folder image import failed: %s', exc)
+        flash(f'Folder image import failed: {exc}', 'error')
         return redirect(url_for('upload_manager'))
 
     message_parts = [
@@ -362,7 +358,7 @@ def import_images_by_id():
         f"updated {len(summary['updated_entry_ids'])} approved entries",
     ]
     if summary['missing_cert_ids']:
-        message_parts.append(f"{len(summary['missing_cert_ids'])} cert IDs had no approved exact match")
+        message_parts.append(f"{len(summary['missing_cert_ids'])} cert IDs had no approved exact match and were skipped")
     if summary['duplicate_names']:
         message_parts.append(f"{len(summary['duplicate_names'])} duplicate files ignored")
     if summary['invalid_names']:

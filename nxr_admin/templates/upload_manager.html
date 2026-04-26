@@ -449,8 +449,15 @@
         const archiveName = document.getElementById('imageArchiveName');
         if (archiveInput && archiveName) {
             archiveInput.addEventListener('change', function() {
-                const selectedFile = archiveInput.files && archiveInput.files[0];
-                archiveName.textContent = selectedFile ? selectedFile.name : 'No file selected';
+                const selectedFiles = archiveInput.files ? Array.from(archiveInput.files) : [];
+                if (selectedFiles.length === 0) {
+                    archiveName.textContent = 'No folder selected';
+                    return;
+                }
+
+                const firstRelativePath = selectedFiles[0].webkitRelativePath || selectedFiles[0].name || '';
+                const folderName = firstRelativePath.includes('/') ? firstRelativePath.split('/')[0] : 'Selected folder';
+                archiveName.textContent = `${folderName} (${selectedFiles.length} files)`;
             });
         }
     });
@@ -498,32 +505,32 @@
         <div class="card-body">
             <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mb-3">
                 <div>
-                    <h6 class="mb-1"><i class="fas fa-file-archive me-2"></i>Import Images by Image ID</h6>
+                    <h6 class="mb-1"><i class="fas fa-folder-open me-2"></i>Import Images by Image ID</h6>
                     <div class="text-muted small">
-                        Upload a ZIP archive with names like <code>1234567890_A.webp</code> or <code>1234567890_B_1.webp</code>.
+                        Choose a folder containing images named like <code>1234567890_A.webp</code> or <code>1234567890_B_1.webp</code>.
                         <code>A</code> maps to Front, <code>B</code> maps to Back, and the 10-digit filename ID must exactly match the approved entry Cert ID.
                     </div>
                 </div>
             </div>
             <form method="post" action="{{ url_for('import_images_by_id') }}" enctype="multipart/form-data" class="row g-3 align-items-end">
                 <div class="col-lg-8">
-                    <label class="form-label" for="imageArchiveInput">ZIP Archive</label>
-                    <input type="file" class="d-none" id="imageArchiveInput" name="image_archive" accept=".zip" required>
+                    <label class="form-label" for="imageArchiveInput">Image Folder</label>
+                    <input type="file" class="d-none" id="imageArchiveInput" name="image_files" accept=".webp,.jpg,.jpeg,.png" webkitdirectory directory multiple required>
                     <div class="custom-file-picker">
                         <label for="imageArchiveInput" class="btn btn-outline-primary mb-0">
-                            <i class="fas fa-folder-open me-1"></i>Choose ZIP File
+                            <i class="fas fa-folder-open me-1"></i>Choose Folder
                         </label>
-                        <span class="custom-file-name" id="imageArchiveName">No file selected</span>
+                        <span class="custom-file-name" id="imageArchiveName">No folder selected</span>
                     </div>
                 </div>
                 <div class="col-lg-4">
                     <button type="submit" class="btn btn-primary w-100">
-                        <i class="fas fa-upload me-1"></i>Import ZIP to Queue
+                        <i class="fas fa-upload me-1"></i>Import Folder to Queue
                     </button>
                 </div>
                 <div class="col-12">
                     <small class="text-muted">
-                        Only approved entries are updated. Existing local queue images for the same side are replaced; published site images stay unchanged until the normal upload step runs.
+                        Only approved entries with exact cert ID matches are updated. Existing local queue images for the same side are replaced; unmatched files are skipped, and published site images stay unchanged until the normal upload step runs.
                     </small>
                 </div>
             </form>
