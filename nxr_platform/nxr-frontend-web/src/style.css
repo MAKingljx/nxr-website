@@ -1,0 +1,50 @@
+:root {
+  font-family: "Space Grotesk", "PingFang SC", "Helvetica Neue", sans-serif;
+  color: #11151f;
+  background: #f4efe7;
+  line-height: 1.5;
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  --page-bg: #f4efe7;
+  --panel: rgba(255, 255, 255, 0.78);
+  --text: #11151f;
+  --muted: #5c667a;
+  --line: rgba(17, 21, 31, 0.1);
+  --accent: #cc4b1f;
+  --accent-dark: #8e2d12;
+  --deep: #1f304f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+  color: var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(204, 75, 31, 0.16), transparent 28%),
+    radial-gradient(circle at top right, rgba(31, 48, 79, 0.18), transparent 26%),
+    linear-gradient(180deg, #f7f3ec 0%, var(--page-bg) 100%);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input {
+  font: inherit;
+}
