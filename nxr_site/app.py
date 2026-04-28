@@ -8,6 +8,7 @@ import json
 from email.message import EmailMessage
 from html import escape
 from pathlib import Path
+from urllib.parse import quote
 
 import requests
 from flask import Flask, render_template, request, jsonify, redirect, send_from_directory
@@ -263,6 +264,88 @@ def get_card_language_label(language_value):
     return CARD_LANGUAGE_NAMES.get(raw_value.upper(), raw_value)
 
 
+def normalize_video_brand_key(raw_brand):
+    brand = (raw_brand or "").lower().strip()
+    if brand in ("pokemon", "poke", "pokemon jpn", "宝可梦"):
+        return "pokemon"
+    if brand in ("yu-gi-oh!", "游戏王"):
+        return "yugioh"
+    if brand in ("dragon ball", "龙珠"):
+        return "dragonball"
+    if brand in ("one piece", "海贼王", "海贼"):
+        return "onepiece"
+    if brand in (
+        "sports cards",
+        "sports card",
+        "panini prizm",
+        "panini",
+        "upper deck",
+        "topps",
+        "bowman chrome",
+    ):
+        return "sports"
+    return "generic"
+
+
+def clean_video_subject(raw_value):
+    subject = (raw_value or "").strip()
+    if not subject:
+        return ""
+
+    subject = re.sub(r"\s*\d{10}$", "", subject).strip()
+    subject = re.sub(r"\s+(EX|GX|VMAX|VSTAR|V)\s*$", "", subject, flags=re.IGNORECASE).strip()
+    subject = re.sub(r"\s+(Rookie|Auto|Logoman|RPA)\s*$", "", subject, flags=re.IGNORECASE).strip()
+    subject = re.sub(r"\s{2,}", " ", subject).strip(" -_/")
+    return subject
+
+
+def build_card_video_search_url(card):
+    brand_key = normalize_video_brand_key(card.get("brand"))
+    raw_name = (card.get("card_name") or "").strip()
+    raw_player = (card.get("player") or "").strip()
+
+    if not raw_name:
+        return "", "", ""
+
+    base_name = clean_video_subject(raw_name)
+    player_name = clean_video_subject(raw_player)
+
+    if brand_key == "sports":
+        subject = player_name or base_name
+    else:
+        subject = base_name or player_name
+
+    if not subject:
+        return "", "", ""
+
+    if brand_key == "pokemon":
+        query = f"Pokemon {subject} anime"
+        label = "Watch Anime"
+        subtext = "Open a YouTube search for related anime clips"
+    elif brand_key == "yugioh":
+        query = f"Yu-Gi-Oh! {subject} anime"
+        label = "Watch Anime"
+        subtext = "Open a YouTube search for related anime clips"
+    elif brand_key == "dragonball":
+        query = f"Dragon Ball {subject} anime"
+        label = "Watch Anime"
+        subtext = "Open a YouTube search for related anime clips"
+    elif brand_key == "onepiece":
+        query = f"One Piece {subject} anime"
+        label = "Watch Anime"
+        subtext = "Open a YouTube search for related anime clips"
+    elif brand_key == "sports":
+        query = f"{subject} rookie highlights"
+        label = "Watch Highlights"
+        subtext = "Open a YouTube search for player highlights"
+    else:
+        query = f"{subject} card overview"
+        label = "Search on YouTube"
+        subtext = "Open a YouTube search for related card videos"
+
+    return f"https://www.youtube.com/results?search_query={quote(query, safe='')}", subject, label, subtext
+
+
 def get_card(cert_id):
     lookup = (cert_id or "").strip()
     if not lookup:
@@ -283,6 +366,12 @@ def get_card(cert_id):
             card["front_img"] = front_image
             card["back_img"] = back_image
             card["language_label"] = get_card_language_label(card.get("language"))
+            (
+                card["youtube_url"],
+                card["youtube_name"],
+                card["youtube_label"],
+                card["youtube_subtext"],
+            ) = build_card_video_search_url(card)
             return card
     return None
 

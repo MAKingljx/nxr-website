@@ -76,6 +76,9 @@
 .ai-character-btn:active{transform:translateY(0)}
 .ai-character-btn::before{content:'';position:absolute;top:0;left:0;right:0;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.1),transparent);transform:translateX(-100%);transition:transform .6s}
 .ai-character-btn:hover::before{transform:translateX(100%)}
+.yt-btn{background:linear-gradient(135deg,#e8394a,#b01020);text-decoration:none}
+.yt-btn:hover{background:linear-gradient(135deg,#c0222f,#8b0d18);box-shadow:0 8px 24px rgba(232,57,74,.3)}
+.yt-btn svg{width:16px;height:16px;flex-shrink:0}
 .ai-icon{display:block;font-size:32px;margin-bottom:8px}
 .ai-text{display:block;font-size:16px;font-weight:700;margin-bottom:4px}
 .ai-subtext{display:block;font-size:12px;color:rgba(255,255,255,.8);font-weight:500}
@@ -155,6 +158,13 @@
           <span class="ai-subtext">Learn about this character</span>
         </button>
         <p class="ai-note">Powered by DeepSeek AI • Available in 8 languages</p>
+        {% if card.youtube_url %}
+        <a href="{{ card.youtube_url }}" target="_blank" rel="noopener" class="ai-character-btn yt-btn">
+          <span class="ai-icon"><svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg></span>
+          <span class="ai-text">{{ card.youtube_label or "Search on YouTube" }}</span>
+          <span class="ai-subtext">{{ card.youtube_subtext or "Open a related YouTube search" }}</span>
+        </a>
+        {% endif %}
       </div>
 
       <div class="verification-info">
