@@ -11,7 +11,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 import requests
-from flask import Flask, render_template, request, jsonify, redirect, send_from_directory
+from flask import Flask, Response, render_template, request, jsonify, redirect, send_from_directory, stream_with_context
 
 SITE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SITE_DIR.parent
@@ -28,6 +28,7 @@ AI_LANGUAGE_NAMES = {
     "fr": "Français",
     "de": "Deutsch",
     "nl": "Nederlands",
+    "id": "Bahasa Indonesia",
     "ja": "日本語",
     "ko": "한국어",
 }
@@ -61,7 +62,7 @@ CARD_LANGUAGE_NAMES = {
     "SPANISH": "Spanish",
     "OTHER": "Other",
 }
-AI_CHARACTER_PROMPT_VERSION = "v2"
+AI_CHARACTER_PROMPT_VERSION = "v3"
 AI_ANIME_CONTEXT_HINTS = {
     "pokemon": {
         "pikachu": "可以自然融入动画中的场景设定，例如皮卡丘山谷这类地点会通过皮毛与外观特征强化角色辨识度与出身背景。",
@@ -473,8 +474,8 @@ def build_ai_character_messages(card_context, language):
         "You are a careful collectible card detail-page writer. "
         "Generate a concise role overview for the named character and write all prose in "
         f"{language_name}. "
-        "Return exactly two short HTML paragraphs using <p> tags only. "
-        "Do not return headings, lists, JSON, markdown, or source labels. "
+        "Return exactly two short paragraphs separated by a blank line. "
+        "Do not return HTML, headings, lists, JSON, markdown, or source labels. "
         "In paragraph one, describe the character's appearance, most recognizable traits, "
         "and core abilities. In paragraph two, describe the character's typical role in the "
         "anime or narrative, and naturally blend anime setting details into the prose instead "
@@ -544,13 +545,70 @@ def post_deepseek_chat_completions(payload):
     ]
 
     last_response = None
+    stream = bool(payload.get("stream"))
     for url in candidate_urls:
-        response = requests.post(url, headers=headers, json=payload, timeout=30)
+        response = requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=(10, 120) if stream else 30,
+            stream=stream,
+        )
         if response.status_code != 404:
             return response
         last_response = response
 
     return last_response
+
+
+def iter_deepseek_stream_content(response):
+    data_lines = []
+    try:
+        for line in response.iter_lines(decode_unicode=True):
+            if line is None:
+                continue
+            if not line:
+                if not data_lines:
+                    continue
+
+                payload_text = "\n".join(data_lines)
+                data_lines = []
+                if payload_text == "[DONE]":
+                    break
+
+                body = json.loads(payload_text)
+                choices = body.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+                content = delta.get("content")
+                if content:
+                    yield content
+                continue
+
+            if line.startswith("data:"):
+                data_lines.append(line[5:].lstrip())
+    finally:
+        response.close()
+
+
+def stream_ai_character_payload(card_context, language):
+    model = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat").strip() or "deepseek-chat"
+    payload = {
+        "model": model,
+        "messages": build_ai_character_messages(card_context, language),
+        "temperature": 0.2,
+        "max_tokens": 700,
+        "stream": True,
+    }
+
+    response = post_deepseek_chat_completions(payload)
+    if response is None:
+        raise RuntimeError("DeepSeek API endpoint did not respond")
+    if not response.ok:
+        raise RuntimeError(f"DeepSeek API error {response.status_code}: {response.text[:300]}")
+
+    return iter_deepseek_stream_content(response), model
 
 
 def generate_ai_character_payload(card_context, language):
@@ -572,6 +630,30 @@ def generate_ai_character_payload(card_context, language):
     raw_content = body["choices"][0]["message"]["content"]
     rendered_html = sanitize_ai_character_html(raw_content)
     return {"html": rendered_html, "raw_content": raw_content}, model
+
+
+def resolve_ai_character_request():
+    data = request.get_json(silent=True) or {}
+    cert_id = (data.get("cert_id") or "").strip()
+    brand = (data.get("brand") or "").strip()
+    character = (data.get("character") or "").strip()
+    language = (data.get("language") or "en").strip().lower()
+
+    if language not in AI_LANGUAGE_NAMES:
+        language = "en"
+
+    card = get_card(cert_id) if cert_id else None
+    card_context = build_ai_card_context(card, fallback_brand=brand, fallback_character=character)
+    if not card_context["card_name"]:
+        raise ValueError("Character name is required")
+
+    prompt_hash = build_ai_character_prompt_hash(card_context, language)
+    cached = get_cached_ai_character_info(card_context["cert_id"], language, prompt_hash)
+    return card_context, language, prompt_hash, cached
+
+
+def sse_message(event, payload):
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 # ========== 主要页面路由 ==========
@@ -684,22 +766,7 @@ def upload():
 @app.route("/api/ai_character_info", methods=["POST"])
 def ai_character_info():
     try:
-        data = request.get_json(silent=True) or {}
-        cert_id = (data.get("cert_id") or "").strip()
-        brand = (data.get("brand") or "").strip()
-        character = (data.get("character") or "").strip()
-        language = (data.get("language") or "en").strip().lower()
-
-        if language not in AI_LANGUAGE_NAMES:
-            language = "en"
-
-        card = get_card(cert_id) if cert_id else None
-        card_context = build_ai_card_context(card, fallback_brand=brand, fallback_character=character)
-        if not card_context["card_name"]:
-            return jsonify({"status": "error", "msg": "Character name is required"}), 400
-
-        prompt_hash = build_ai_character_prompt_hash(card_context, language)
-        cached = get_cached_ai_character_info(card_context["cert_id"], language, prompt_hash)
+        card_context, language, prompt_hash, cached = resolve_ai_character_request()
         if cached:
             return jsonify(
                 {
@@ -735,6 +802,8 @@ def ai_character_info():
                 "cached": False,
             }
         )
+    except ValueError as exc:
+        return jsonify({"status": "error", "msg": str(exc)}), 400
     except Exception as exc:  # noqa: BLE001
         app.logger.warning("AI character info error: %s", exc)
         return jsonify(
@@ -743,6 +812,74 @@ def ai_character_info():
                 "msg": "Unable to generate character information right now.",
             }
         ), 500
+
+
+@app.route("/api/ai_character_info/stream", methods=["POST"])
+def ai_character_info_stream():
+    try:
+        card_context, language, prompt_hash, cached = resolve_ai_character_request()
+    except ValueError as exc:
+        return jsonify({"status": "error", "msg": str(exc)}), 400
+
+    def generate():
+        try:
+            if cached:
+                yield sse_message(
+                    "done",
+                    {
+                        "html": cached["content"],
+                        "character": card_context["card_name"],
+                        "brand": card_context["brand"],
+                        "language": language,
+                        "model": cached["model"],
+                        "cached": True,
+                    },
+                )
+                return
+
+            stream_iter, model = stream_ai_character_payload(card_context, language)
+            raw_parts = []
+            for chunk in stream_iter:
+                raw_parts.append(chunk)
+                yield sse_message("chunk", {"content": chunk})
+
+            raw_content = "".join(raw_parts)
+            rendered_html = sanitize_ai_character_html(raw_content)
+            payload = {"html": rendered_html, "raw_content": raw_content}
+            save_ai_character_cache(
+                card_context["cert_id"],
+                language,
+                prompt_hash,
+                payload,
+                rendered_html,
+                model,
+            )
+            yield sse_message(
+                "done",
+                {
+                    "html": rendered_html,
+                    "character": card_context["card_name"],
+                    "brand": card_context["brand"],
+                    "language": language,
+                    "model": model,
+                    "cached": False,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            app.logger.warning("AI character stream error: %s", exc)
+            yield sse_message(
+                "error",
+                {"msg": "Unable to generate character information right now."},
+            )
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 if __name__ == "__main__":

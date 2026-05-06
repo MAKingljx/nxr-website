@@ -99,6 +99,7 @@
 .ai-loading-text{color:var(--text2);font-size:14px}
 .ai-content{display:none}
 .ai-character-info{line-height:1.7;color:var(--text2)}
+.ai-character-info.streaming{white-space:pre-wrap}
 .ai-character-info h3{color:var(--text);margin:20px 0 12px;font-size:16px;font-weight:700}
 .ai-character-info h3:first-child{margin-top:0}
 .ai-character-info p{margin-bottom:16px}
@@ -157,7 +158,7 @@
           <span class="ai-text">AI Character Info</span>
           <span class="ai-subtext">Learn about this character</span>
         </button>
-        <p class="ai-note">Powered by DeepSeek AI • Available in 8 languages</p>
+        <p class="ai-note">Powered by DeepSeek AI • Available in 9 languages</p>
         {% if card.youtube_url %}
         <a href="{{ card.youtube_url }}" target="_blank" rel="noopener" class="ai-character-btn yt-btn">
           <span class="ai-icon"><svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg></span>
@@ -280,6 +281,7 @@
             <option value="fr">Français (French)</option>
             <option value="de">Deutsch (German)</option>
             <option value="nl">Nederlands (Dutch)</option>
+            <option value="id">Bahasa Indonesia</option>
             <option value="ja">日本語 (Japanese)</option>
             <option value="ko">한국어 (Korean)</option>
           </select>
@@ -350,21 +352,59 @@ document.addEventListener('DOMContentLoaded', () => {
   const aiContent = document.getElementById('aiContent');
   const aiCharacterInfo = document.getElementById('aiCharacterInfo');
   const aiLanguageSelect = document.getElementById('aiLanguageSelect');
+  let aiStreamController = null;
+
+  function resetAIRequest() {
+    if (aiStreamController) {
+      aiStreamController.abort();
+      aiStreamController = null;
+    }
+  }
+
+  function parseSSEFrame(frame) {
+    const payloadLines = [];
+    let eventName = 'message';
+
+    frame.split(/\r?\n/).forEach((line) => {
+      if (line.startsWith('event:')) {
+        eventName = line.slice(6).trim();
+        return;
+      }
+      if (line.startsWith('data:')) {
+        payloadLines.push(line.slice(5).trimStart());
+      }
+    });
+
+    let payload = {};
+    if (payloadLines.length) {
+      payload = JSON.parse(payloadLines.join('\n'));
+    }
+
+    return {eventName, payload};
+  }
 
   async function loadAICharacterInfo() {
+    resetAIRequest();
+    aiStreamController = new AbortController();
+    const {signal} = aiStreamController;
     const cardTitle = document.querySelector('.card-title')?.textContent?.trim();
     const cardInfo = document.querySelector('.card-info');
     const cardBrand = cardInfo?.dataset.cardBrand || 'Unknown';
     const certId = cardInfo?.dataset.certId || '';
+    let streamedText = '';
+    let finalHtml = '';
+    let receivedChunk = false;
 
     aiLoading.style.display = 'block';
     aiContent.style.display = 'none';
     aiCharacterInfo.innerHTML = '';
+    aiCharacterInfo.classList.add('streaming');
 
     try {
-      const response = await fetch('/api/ai_character_info', {
+      const response = await fetch('/api/ai_character_info/stream', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
+        signal,
         body: JSON.stringify({
           cert_id: certId,
           brand: cardBrand,
@@ -377,18 +417,84 @@ document.addEventListener('DOMContentLoaded', () => {
         throw new Error(`API error: ${response.status}`);
       }
 
-      const data = await response.json();
-      aiCharacterInfo.innerHTML = data.content || '<p>No information available for this character.</p>';
+      if (!response.body) {
+        throw new Error('Streaming body is not available');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const {value, done} = await reader.read();
+        if (done) {
+          break;
+        }
+
+        buffer += decoder.decode(value, {stream: true});
+        let separatorIndex = buffer.indexOf('\n\n');
+
+        while (separatorIndex !== -1) {
+          const frame = buffer.slice(0, separatorIndex).trim();
+          buffer = buffer.slice(separatorIndex + 2);
+          separatorIndex = buffer.indexOf('\n\n');
+
+          if (!frame) {
+            continue;
+          }
+
+          const {eventName, payload} = parseSSEFrame(frame);
+          if (eventName === 'chunk') {
+            receivedChunk = true;
+            streamedText += payload.content || '';
+            aiCharacterInfo.textContent = streamedText;
+            aiLoading.style.display = 'none';
+            aiContent.style.display = 'block';
+            continue;
+          }
+
+          if (eventName === 'done') {
+            finalHtml = payload.html || '';
+            continue;
+          }
+
+          if (eventName === 'error') {
+            throw new Error(payload.msg || 'Unable to load character information.');
+          }
+        }
+      }
+
+      if (buffer.trim()) {
+        const {eventName, payload} = parseSSEFrame(buffer.trim());
+        if (eventName === 'done') {
+          finalHtml = payload.html || '';
+        } else if (eventName === 'error') {
+          throw new Error(payload.msg || 'Unable to load character information.');
+        }
+      }
+
+      aiCharacterInfo.classList.remove('streaming');
+      aiCharacterInfo.innerHTML = finalHtml || '<p>No information available for this character.</p>';
     } catch (error) {
+      if (error.name === 'AbortError') {
+        return;
+      }
       console.error('AI request failed:', error);
+      aiCharacterInfo.classList.remove('streaming');
       aiCharacterInfo.innerHTML = `
         <h3>Error</h3>
         <p>Unable to load character information at this time.</p>
         <p>Please try again later or check your connection.</p>
       `;
     } finally {
+      if (receivedChunk && !finalHtml) {
+        aiCharacterInfo.textContent = streamedText;
+      }
       aiLoading.style.display = 'none';
       aiContent.style.display = 'block';
+      if (aiStreamController?.signal === signal) {
+        aiStreamController = null;
+      }
     }
   }
 
@@ -399,6 +505,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function closeAIModal() {
+    resetAIRequest();
     aiModal.classList.remove('active');
     document.body.style.overflow = '';
   }
