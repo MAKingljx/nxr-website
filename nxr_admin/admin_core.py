@@ -43,6 +43,8 @@ BRAND_OPTIONS = [
     "Marvel",
     "DC Comics",
     "Disney",
+    "Demon Slayer",
+    "Naruto",
     "Other"
 ]
 
@@ -65,6 +67,12 @@ BRAND_ALIASES = {
     'dc': 'DC Comics',
     'dc comics': 'DC Comics',
     'disney': 'Disney',
+    'demon slayer': 'Demon Slayer',
+    'kimetsu no yaiba': 'Demon Slayer',
+    '鬼灭之刃': 'Demon Slayer',
+    '鬼滅之刃': 'Demon Slayer',
+    'naruto': 'Naruto',
+    '火影忍者': 'Naruto',
     'other': 'Other',
 }
 
