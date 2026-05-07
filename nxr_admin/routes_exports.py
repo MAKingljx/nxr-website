@@ -6,6 +6,7 @@ SCORE_EXPORT_COLUMNS = (
     'corners',
     'surface',
     'final_grade',
+    'final_grade_text',
     'ai_grade',
     'ai_centering',
     'ai_edges',
@@ -23,7 +24,7 @@ def normalize_score_columns_for_export(df, pd_module):
     return df
 
 
-def apply_score_number_format(worksheet):
+def apply_score_number_format(worksheet, column_names=SCORE_EXPORT_COLUMNS):
     from openpyxl.utils import get_column_letter
 
     header_map = {
@@ -31,7 +32,7 @@ def apply_score_number_format(worksheet):
         for cell in worksheet[1]
         if cell.value
     }
-    for column_name in SCORE_EXPORT_COLUMNS:
+    for column_name in column_names:
         column_index = header_map.get(column_name)
         if not column_index:
             continue
@@ -164,6 +165,7 @@ def generate_excel():
                 grade_stats.columns = ['评分等级', '数量']
                 grade_stats['占比'] = (grade_stats['数量'] / len(df) * 100).round(1).astype(str) + '%'
                 grade_stats.to_excel(writer, sheet_name='评分统计', index=False)
+                apply_score_number_format(writer.sheets['评分统计'], column_names=('评分等级',))
 
         # 记录导出历史
         export_history_path = exports_dir / "export_history.json"

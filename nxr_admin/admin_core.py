@@ -45,6 +45,7 @@ BRAND_OPTIONS = [
     "Disney",
     "Demon Slayer",
     "Naruto",
+    "Jujutsu Kaisen",
     "Other"
 ]
 
@@ -73,6 +74,11 @@ BRAND_ALIASES = {
     '鬼滅之刃': 'Demon Slayer',
     'naruto': 'Naruto',
     '火影忍者': 'Naruto',
+    'jujutsu kaisen': 'Jujutsu Kaisen',
+    'jjk': 'Jujutsu Kaisen',
+    '咒术回战': 'Jujutsu Kaisen',
+    '咒術迴戰': 'Jujutsu Kaisen',
+    '呪術廻戦': 'Jujutsu Kaisen',
     'other': 'Other',
 }
 
@@ -1297,4 +1303,3 @@ def superadmin_required(f):
             return redirect(url_for('dashboard'))
         return f(*args, **kwargs)
     return decorated_function
-
