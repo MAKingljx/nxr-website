@@ -156,6 +156,8 @@ IMAGE_MAX_DIMENSION = 2200
 STANDARD_GRADE_OPTIONS = ['8', '8.5', '9', '9.5', '10', 'Pristine 10']
 APPROVAL_SEQUENCE_FALLBACK = 9223372036854775807
 CLIENT_PUSHED_UPLOAD_STATUS = 'client_pushed'
+READY_UPLOAD_STATUSES = {'not_started', 'failed'}
+BLOCKED_UPLOAD_STATUSES = {'uploading', CLIENT_PUSHED_UPLOAD_STATUS}
 
 
 def load_admin_accounts():
@@ -1165,6 +1167,7 @@ def get_entry_image_flags(entry):
     back_name = (entry['back_image'] or '').strip()
     published_front = (entry['published_front_image'] or '').strip()
     published_back = (entry['published_back_image'] or '').strip()
+    upload_status = ((entry['upload_status'] or 'not_started').strip().lower())
     front_path = resolve_uploaded_file_path(front_name) if front_name else None
     back_path = resolve_uploaded_file_path(back_name) if back_name else None
     published_front_path = resolve_public_image_path(published_front) if published_front else None
@@ -1174,11 +1177,14 @@ def get_entry_image_flags(entry):
     has_back = bool(back_path and back_path.is_file())
     has_published_front = bool(published_front_path and published_front_path.is_file())
     has_published_back = bool(published_back_path and published_back_path.is_file())
+    has_queue_images = has_front and has_back
 
     return {
         'has_front_image_file': has_front,
         'has_back_image_file': has_back,
-        'ready_for_upload': has_front and has_back,
+        'has_queue_images': has_queue_images,
+        'ready_for_upload': has_queue_images and upload_status in READY_UPLOAD_STATUSES,
+        'can_upload': has_queue_images and upload_status not in BLOCKED_UPLOAD_STATUSES,
         'has_published_front_image': has_published_front,
         'has_published_back_image': has_published_back,
         'published_complete': has_published_front and has_published_back,

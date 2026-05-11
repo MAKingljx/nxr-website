@@ -233,6 +233,9 @@
                     <a href="{{ url_for('upload_manager') }}" class="{% if request.endpoint == 'upload_manager' %}active{% endif %}">
                         <i class="fas fa-cloud-upload-alt me-2"></i>Upload to Server
                     </a>
+                    <a href="{{ url_for('waitlist_submitters') }}" class="{% if request.endpoint == 'waitlist_submitters' %}active{% endif %}">
+                        <i class="fas fa-envelope me-2"></i>Submitters
+                    </a>
 
                     {% if is_superadmin %}
                     <h6 class="px-3 text-uppercase text-muted mt-4 mb-3">Administration</h6>

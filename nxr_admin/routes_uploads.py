@@ -412,22 +412,11 @@ def api_upload_stats():
 def api_upload_entry(entry_id):
     """API: 上传单条数据到主数据库并同步图片到主站静态目录"""
     conn_temp = get_temp_db_connection()
-    conn_main = get_main_db_connection()
+    conn_main = None
     started_at = datetime.now().isoformat()
+    upload_started_in_db = False
 
     try:
-        conn_temp.execute(
-            '''
-                UPDATE temp_cards
-                SET upload_status = 'uploading',
-                    upload_started = ?,
-                    upload_error = NULL
-                WHERE id = ?
-            ''',
-            (started_at, entry_id),
-        )
-        conn_temp.commit()
-
         entry = conn_temp.execute(
             '''
                 SELECT *
@@ -439,8 +428,44 @@ def api_upload_entry(entry_id):
         ).fetchone()
 
         if not entry:
-            raise ValueError('Approved entry not found')
+            return jsonify({'success': False, 'error': 'Approved entry not found', 'entry_id': entry_id}), 404
 
+        flags = get_entry_image_flags(entry)
+        current_upload_status = ((entry['upload_status'] or 'not_started').strip().lower())
+        if not flags['can_upload']:
+            if current_upload_status == 'uploading':
+                error_message = 'Entry is already uploading'
+            elif current_upload_status == CLIENT_PUSHED_UPLOAD_STATUS:
+                error_message = 'Client pushed entries cannot be uploaded again'
+            elif not flags['has_queue_images']:
+                error_message = 'Both front and back queue images are required before upload'
+            else:
+                error_message = 'Entry is not uploadable in its current state'
+            return jsonify({'success': False, 'error': error_message, 'entry_id': entry_id}), 400
+
+        update_cursor = conn_temp.execute(
+            '''
+                UPDATE temp_cards
+                SET upload_status = 'uploading',
+                    upload_started = ?,
+                    upload_error = NULL
+                WHERE id = ?
+                  AND status = 'approved'
+                  AND COALESCE(upload_status, 'not_started') NOT IN (?, ?)
+            ''',
+            (started_at, entry_id, 'uploading', CLIENT_PUSHED_UPLOAD_STATUS),
+        )
+        if update_cursor.rowcount == 0:
+            conn_temp.rollback()
+            return jsonify({
+                'success': False,
+                'error': 'Entry upload state changed before upload could start',
+                'entry_id': entry_id,
+            }), 409
+        conn_temp.commit()
+        upload_started_in_db = True
+
+        conn_main = get_main_db_connection()
         export_result = upsert_main_card(entry, conn_main, require_complete=True)
         conn_main.commit()
 
@@ -494,26 +519,29 @@ def api_upload_entry(entry_id):
         })
 
     except Exception as exc:
-        conn_main.rollback()
+        if conn_main is not None:
+            conn_main.rollback()
         completed_at = datetime.now().isoformat()
         error_message = str(exc)
-        conn_temp.execute(
-            '''
-                UPDATE temp_cards
-                SET upload_status = 'failed',
-                    upload_started = COALESCE(upload_started, ?),
-                    upload_completed = ?,
-                    upload_error = ?
-                WHERE id = ?
-            ''',
-            (started_at, completed_at, error_message, entry_id),
-        )
-        conn_temp.commit()
+        if upload_started_in_db:
+            conn_temp.execute(
+                '''
+                    UPDATE temp_cards
+                    SET upload_status = 'failed',
+                        upload_started = COALESCE(upload_started, ?),
+                        upload_completed = ?,
+                        upload_error = ?
+                    WHERE id = ?
+                ''',
+                (started_at, completed_at, error_message, entry_id),
+            )
+            conn_temp.commit()
         return jsonify({'success': False, 'error': error_message, 'entry_id': entry_id}), 400
 
     finally:
         conn_temp.close()
-        conn_main.close()
+        if conn_main is not None:
+            conn_main.close()
 
 
 @app.route('/admin/api/upload/<int:entry_id>/client-pushed', methods=['POST'])
@@ -565,7 +593,7 @@ def api_mark_client_pushed(entry_id):
 @login_required
 def api_batch_upload():
     """API: 批量上传数据"""
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
     entry_ids = data.get('entry_ids', [])
 
     if not entry_ids:
@@ -576,7 +604,11 @@ def api_batch_upload():
     for entry_id in entry_ids:
         # 调用单条上传API
         result = api_upload_entry(entry_id)
-        results.append(result.get_json())
+        response = result[0] if isinstance(result, tuple) else result
+        payload = response.get_json(silent=True) if hasattr(response, 'get_json') else None
+        if not payload:
+            payload = {'success': False, 'error': 'Unexpected upload response', 'entry_id': entry_id}
+        results.append(payload)
 
     # 统计结果
     success_count = sum(1 for r in results if r.get('success'))

@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+
+{% block title %}Submitters - NXR Card Grading{% endblock %}
+
+{% block page_title %}
+    <i class="fas fa-envelope me-2"></i>Submitters
+{% endblock %}
+
+{% block page_actions %}
+    <a href="{{ url_for('waitlist_submitters') }}" class="btn btn-outline-secondary">
+        <i class="fas fa-sync-alt me-1"></i>Refresh
+    </a>
+{% endblock %}
+
+{% block content %}
+    <div class="row mb-4">
+        <div class="col-md-4">
+            <div class="card stat-card">
+                <div class="card-body">
+                    <h6 class="text-muted mb-1">Total Submitters</h6>
+                    <h3 class="mb-0">{{ total_submitters }}</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card stat-card approved">
+                <div class="card-body">
+                    <h6 class="text-muted mb-1">Today's Submitters</h6>
+                    <h3 class="mb-0">{{ today_submitters }}</h3>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-4">
+            <div class="card stat-card pending">
+                <div class="card-body">
+                    <h6 class="text-muted mb-1">Matching Current Filter</h6>
+                    <h3 class="mb-0">{{ total_matching }}</h3>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mb-4">
+        <div class="card-header">
+            <h6 class="mb-0"><i class="fas fa-filter me-2"></i>Filter Submitters</h6>
+        </div>
+        <div class="card-body">
+            <form method="get" action="{{ url_for('waitlist_submitters') }}" class="row g-3 align-items-end">
+                <input type="hidden" name="page_size" value="{{ page_size }}">
+                <div class="col-md-6">
+                    <label class="form-label">Email</label>
+                    <input type="search" class="form-control" name="email" value="{{ email_filter }}" placeholder="Search email...">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Order</label>
+                    <select class="form-select" name="sort_order">
+                        <option value="desc" {% if sort_order == 'desc' %}selected{% endif %}>Newest First</option>
+                        <option value="asc" {% if sort_order == 'asc' %}selected{% endif %}>Oldest First</option>
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-search me-1"></i>Apply
+                        </button>
+                        <a href="{{ url_for('waitlist_submitters', page_size=page_size) }}" class="btn btn-outline-secondary">
+                            <i class="fas fa-times me-1"></i>Clear
+                        </a>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h6 class="mb-0"><i class="fas fa-table me-2"></i>Waitlist Submitters</h6>
+            <span class="badge bg-secondary">{{ total_matching }}</span>
+        </div>
+        <div class="card-body p-0">
+            {% if submitters %}
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 align-middle">
+                        <thead>
+                            <tr>
+                                <th width="90">ID</th>
+                                <th>Email</th>
+                                <th width="240">Submitted At</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for submitter in submitters %}
+                            <tr>
+                                <td class="text-muted">#{{ submitter.id }}</td>
+                                <td>
+                                    <a href="mailto:{{ submitter.email }}" class="fw-semibold text-decoration-none">
+                                        {{ submitter.email }}
+                                    </a>
+                                </td>
+                                <td>{{ submitter.created_at or '-' }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="text-center py-5">
+                    <i class="fas fa-envelope fa-3x text-muted mb-3"></i>
+                    <h5 class="text-muted">No submitters found</h5>
+                    <p class="text-muted mb-0">Emails submitted from the public Submit page will appear here.</p>
+                </div>
+            {% endif %}
+
+            <div class="border-top px-3 py-3">
+                <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3">
+                    <div class="text-muted small">
+                        Showing {{ page_start }}-{{ page_end }} of {{ total_matching }}
+                    </div>
+                    <div class="d-flex align-items-center gap-3">
+                        <form method="get" action="{{ url_for('waitlist_submitters') }}" class="d-flex align-items-center gap-2 mb-0">
+                            <input type="hidden" name="email" value="{{ email_filter }}">
+                            <input type="hidden" name="sort_order" value="{{ sort_order }}">
+                            <input type="hidden" name="page" value="1">
+                            <label for="submitters-page-size" class="form-label mb-0 small text-muted">Per page</label>
+                            <select id="submitters-page-size" class="form-select form-select-sm" name="page_size" onchange="this.form.submit()">
+                                {% for option in page_size_options %}
+                                <option value="{{ option }}" {% if option == page_size %}selected{% endif %}>{{ option }}</option>
+                                {% endfor %}
+                            </select>
+                        </form>
+                        {% if pagination.total_pages > 1 %}
+                        <nav aria-label="Submitters pagination">
+                            <ul class="pagination pagination-sm justify-content-center mb-0">
+                                <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+                                    <a class="page-link" href="{{ pagination.prev_url or '#' }}">Previous</a>
+                                </li>
+                                {% for page_item in pagination.pages %}
+                                <li class="page-item {% if page_item.current %}active{% endif %}">
+                                    <a class="page-link" href="{{ page_item.url }}">{{ page_item.number }}</a>
+                                </li>
+                                {% endfor %}
+                                <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+                                    <a class="page-link" href="{{ pagination.next_url or '#' }}">Next</a>
+                                </li>
+                            </ul>
+                        </nav>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endblock %}
