@@ -376,7 +376,6 @@
         document.getElementById('total_approved').textContent = stats.image_stats.total_approved;
         document.getElementById('ready_for_upload').textContent = stats.image_stats.ready_for_upload;
         document.getElementById('uploaded_count').textContent = stats.uploaded || 0;
-        document.getElementById('failed_count').textContent = stats.image_stats.client_pushed || 0;
     }
     
     // Select or deselect all visible entries
@@ -709,7 +708,7 @@
 {% block content %}
     <!-- Stats cards -->
     <div class="row mb-4">
-        <div class="col-md-3">
+        <div class="col-md-4">
             <a class="stats-card-link" href="{{ url_for('upload_manager', show_client_pushed=1, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, language=language_filter, final_grade=final_grade_filter, page_size=page_size) }}">
                 <div class="stats-card is-clickable">
                     <div class="stats-number" id="total_approved">{{ stats.image_stats.total_approved }}</div>
@@ -717,7 +716,7 @@
                 </div>
             </a>
         </div>
-        <div class="col-md-3">
+        <div class="col-md-4">
             <a class="stats-card-link" href="{{ url_for('upload_manager', show_client_pushed=show_client_pushed|int, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, language=language_filter, final_grade=final_grade_filter, image_status='ready', page_size=page_size) }}">
                 <div class="stats-card is-clickable" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
                     <div class="stats-number" id="ready_for_upload">{{ stats.image_stats.ready_for_upload }}</div>
@@ -725,19 +724,11 @@
                 </div>
             </a>
         </div>
-        <div class="col-md-3">
+        <div class="col-md-4">
             <a class="stats-card-link" href="{{ url_for('upload_manager', show_client_pushed=show_client_pushed|int, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, language=language_filter, final_grade=final_grade_filter, upload_status='uploaded', page_size=page_size) }}">
                 <div class="stats-card is-clickable" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
                     <div class="stats-number" id="uploaded_count">{{ stats.uploaded|default(0) }}</div>
                     <div class="stats-label">Uploaded to Server</div>
-                </div>
-            </a>
-        </div>
-        <div class="col-md-3">
-            <a class="stats-card-link" href="{{ url_for('upload_manager', show_client_pushed=1, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, language=language_filter, final_grade=final_grade_filter, upload_status='client_pushed', page_size=page_size) }}">
-                <div class="stats-card is-clickable" style="background: linear-gradient(135deg, #f6d365 0%, #fda085 100%);">
-                    <div class="stats-number" id="failed_count">{{ stats.image_stats.client_pushed|default(0) }}</div>
-                    <div class="stats-label">Client Pushed</div>
                 </div>
             </a>
         </div>
