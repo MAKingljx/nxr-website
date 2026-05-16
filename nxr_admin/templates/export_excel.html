@@ -201,12 +201,40 @@
         });
     }
     
-    // 显示预览数据
+    let exportPreviewState = { canExport: false };
+    let previewRequestTimer = null;
+
+    function escapeHtml(value) {
+        return String(value ?? '')
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#039;');
+    }
+
+    function setExportButtonEnabled(enabled) {
+        const form = document.getElementById('exportForm');
+        const submitBtn = form ? form.querySelector('button[type="submit"]') : null;
+        if (submitBtn) {
+            submitBtn.disabled = !enabled;
+        }
+    }
+
+    function schedulePreview() {
+        window.clearTimeout(previewRequestTimer);
+        previewRequestTimer = window.setTimeout(showPreview, 350);
+    }
+
+    // 显示真实预览数据
     function showPreview() {
         const gradeFilter = document.getElementById('gradeFilter').value;
+        const certIds = document.getElementById('certIds').value;
         const previewContainer = document.getElementById('previewContainer');
         
         if (!gradeFilter) {
+            exportPreviewState = { canExport: false };
+            setExportButtonEnabled(false);
             previewContainer.innerHTML = `
                 <div class="alert alert-info">
                     <i class="fas fa-info-circle me-2"></i>Select a grade filter to see preview
@@ -224,30 +252,72 @@
                 <p class="mt-2">Loading preview...</p>
             </div>
         `;
-        
-        // 模拟预览数据
-        setTimeout(() => {
-            const sampleData = [
-                {
-                    cert_id: '1234567890',
-                    card_name: 'Charizard Holo',
-                    brand: 'Pokemon',
-                    final_grade_text: gradeFilter === 'all' ? '9.5' : gradeFilter,
-                    entry_date: '2026-04-01T12:00:00',
-                    landing_page_url: 'nxrgrading.com/card/1234567890'
-                },
-                {
-                    cert_id: '0987654321',
-                    card_name: 'Pikachu Yellow',
-                    brand: 'Pokemon',
-                    final_grade_text: gradeFilter === 'all' ? '10' : gradeFilter,
-                    entry_date: '2026-04-01T11:30:00',
-                    landing_page_url: 'nxrgrading.com/card/0987654321'
-                }
-            ];
-            
+
+        const formData = new FormData();
+        formData.append('grade_filter', gradeFilter);
+        formData.append('cert_ids', certIds);
+
+        fetch('/admin/export/preview', {
+            method: 'POST',
+            body: formData,
+        })
+        .then(response => response.json())
+        .then(data => {
+            exportPreviewState = { canExport: Boolean(data.can_export) };
+            setExportButtonEnabled(data.can_export);
+
+            const invalidIds = data.invalid_cert_ids || [];
+            const missingIds = data.missing_cert_ids || [];
+            const rows = data.rows || [];
+            const hasSpecificIds = (data.cert_ids || []).length > 0;
+
             let html = `
-                <h6 class="mb-3"><i class="fas fa-eye me-2"></i>Preview (Sample Data)</h6>
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h6 class="mb-0"><i class="fas fa-eye me-2"></i>Preview</h6>
+                    <span class="badge ${data.can_export ? 'bg-success' : 'bg-warning'}">
+                        ${data.total_count || 0} matching records
+                    </span>
+                </div>
+            `;
+
+            if (invalidIds.length > 0) {
+                html += `
+                    <div class="alert alert-danger">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        Invalid Cert ID format: <strong>${invalidIds.map(escapeHtml).join(', ')}</strong>.
+                        Use 10-digit Cert IDs separated by comma, space, or newline.
+                    </div>
+                `;
+            }
+
+            if (missingIds.length > 0) {
+                html += `
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle me-2"></i>
+                        These Cert IDs were not found under the current approved-data filters:
+                        <strong>${missingIds.map(escapeHtml).join(', ')}</strong>
+                    </div>
+                `;
+            }
+
+            if (data.can_export) {
+                html += `
+                    <div class="alert alert-success">
+                        <i class="fas fa-check-circle me-2"></i>
+                        Data matched successfully. You can click <strong>Generate Excel File</strong> to export.
+                    </div>
+                `;
+            } else if (!invalidIds.length && !missingIds.length) {
+                html += `
+                    <div class="alert alert-warning">
+                        <i class="fas fa-info-circle me-2"></i>
+                        No approved data matched the current filters.
+                    </div>
+                `;
+            }
+
+            if (rows.length > 0) {
+                html += `
                 <div class="table-responsive">
                     <table class="table table-sm preview-table">
                         <thead>
@@ -260,33 +330,53 @@
                             </tr>
                         </thead>
                         <tbody>
-            `;
-            
-            sampleData.forEach(row => {
-                html += `
-                    <tr>
-                        <td><code>${row.cert_id}</code></td>
-                        <td>${row.card_name}</td>
-                        <td>${row.brand}</td>
-                        <td><span class="badge bg-primary">${row.final_grade_text}</span></td>
-                        <td><small><a href="https://${row.landing_page_url}" target="_blank">${row.landing_page_url}</a></small></td>
-                    </tr>
                 `;
-            });
-            
-            html += `
+
+                rows.forEach(row => {
+                    html += `
+                    <tr>
+                        <td><code>${escapeHtml(row.cert_id)}</code></td>
+                        <td>${escapeHtml(row.card_name)}</td>
+                        <td>${escapeHtml(row.brand)}</td>
+                        <td><span class="badge bg-primary">${escapeHtml(row.final_grade_text)}</span></td>
+                        <td><small><a href="https://${escapeHtml(row.landing_page_url)}" target="_blank">${escapeHtml(row.landing_page_url)}</a></small></td>
+                    </tr>
+                    `;
+                });
+
+                html += `
                         </tbody>
                     </table>
                 </div>
                 <div class="alert alert-info mt-3">
                     <i class="fas fa-info-circle me-2"></i>
-                    <strong>Note:</strong> Actual export will include all fields from the database. 
-                    The last column will always be <code>landing_page_url</code> with format: <code>nxrgrading.com/card/{cert_id}</code>
+                    Showing up to ${data.preview_limit || 20} rows. Actual export will include all matched fields from the database.
+                    The last column will always be <code>landing_page_url</code>.
+                </div>
+                `;
+            }
+
+            if (hasSpecificIds && rows.length > 0) {
+                html += `
+                    <div class="small text-muted mt-2">
+                        Specific Cert ID mode is active for ${(data.cert_ids || []).length} ID(s).
+                    </div>
+                `;
+            }
+
+            previewContainer.innerHTML = html;
+        })
+        .catch(error => {
+            console.error('Error loading preview:', error);
+            exportPreviewState = { canExport: false };
+            setExportButtonEnabled(false);
+            previewContainer.innerHTML = `
+                <div class="alert alert-danger">
+                    <i class="fas fa-exclamation-triangle me-2"></i>
+                    Error loading preview. Please try again.
                 </div>
             `;
-            
-            previewContainer.innerHTML = html;
-        }, 500);
+        });
     }
     
     // 表单提交验证
@@ -299,6 +389,7 @@
         
         // 监听筛选条件变化
         document.getElementById('gradeFilter').addEventListener('change', showPreview);
+        document.getElementById('certIds').addEventListener('input', schedulePreview);
         
         // 表单提交
         const form = document.getElementById('exportForm');
@@ -308,6 +399,13 @@
             if (!gradeFilter) {
                 e.preventDefault();
                 showToast('Please select a grade filter', 'warning');
+                return;
+            }
+
+            if (!exportPreviewState.canExport) {
+                e.preventDefault();
+                showToast('Please fix the export filters before generating Excel', 'warning');
+                showPreview();
                 return;
             }
             
@@ -433,6 +531,25 @@
                                 </div>
                             {% endif %}
                         </div>
+
+                        <div class="mb-4">
+                            <label class="form-label fw-bold" for="certIds">
+                                <i class="fas fa-barcode me-2"></i>Filter by Cert ID
+                            </label>
+                            <p class="text-muted small mb-3">
+                                Optional. Enter one or more 10-digit Cert IDs. Separate multiple IDs with comma, space, or newline.
+                            </p>
+                            <textarea
+                                class="form-control"
+                                id="certIds"
+                                name="cert_ids"
+                                rows="4"
+                                placeholder="1000000001&#10;1000000002&#10;1000000003"
+                            ></textarea>
+                            <div class="form-text">
+                                The preview will automatically check whether every Cert ID matches approved data before export.
+                            </div>
+                        </div>
                         
                         <!-- 输出选项 -->
                         <div class="mb-4">
@@ -465,10 +582,10 @@
                                 <i class="fas fa-file-signature me-2"></i>File Naming
                             </label>
                             <p class="text-muted small mb-2">
-                                Files are automatically named with timestamp and grade filter:
+                                Files are automatically named with timestamp, grade filter, and Cert ID filter:
                             </p>
                             <div class="alert alert-light">
-                                <code>approved_cards_[grade]_YYYYMMDD_HHMMSS.xlsx</code>
+                                <code>approved_cards_[grade][_ids_count]_YYYYMMDD_HHMMSS.xlsx</code>
                             </div>
                         </div>
                         
@@ -521,7 +638,8 @@
                     <h6><i class="fas fa-step-forward me-2"></i>Step-by-Step Guide</h6>
                     <ol class="small">
                         <li class="mb-2">Select a grade filter from the dropdown</li>
-                        <li class="mb-2">Click "Preview" to see sample data</li>
+                        <li class="mb-2">Optionally enter one or more Cert IDs</li>
+                        <li class="mb-2">Use Preview to confirm all requested IDs match approved data</li>
                         <li class="mb-2">Click "Generate Excel File" to create export</li>
                         <li class="mb-2">Download the file from Export History</li>
                     </ol>

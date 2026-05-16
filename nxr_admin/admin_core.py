@@ -1223,6 +1223,12 @@ def get_upload_stats(conn):
         if flags['ready_for_upload']:
             image_stats['ready_for_upload'] += 1
 
+    uploaded_to_server_count = stats.get('uploaded', 0) + stats.get(CLIENT_PUSHED_UPLOAD_STATUS, 0)
+    image_stats['uploaded_to_server'] = uploaded_to_server_count
+    image_stats['remaining_upload_count'] = max(
+        image_stats['total_approved'] - uploaded_to_server_count,
+        0,
+    )
     stats['image_stats'] = image_stats
     return stats
 

@@ -191,6 +191,7 @@ def upload_manager():
     image_status_filter = (request.args.get('image_status', '') or '').strip().lower()
 
     upload_status_options = (
+        ('remaining_uploads', 'Remaining Uploads'),
         ('not_started', 'Not Started'),
         ('uploading', 'Uploading'),
         ('uploaded', 'Uploaded'),
@@ -202,7 +203,6 @@ def upload_manager():
         upload_status_filter = ''
 
     image_status_options = (
-        ('ready', 'Ready for Upload'),
         ('published', 'Published Complete'),
         ('missing_any', 'Missing Any Image'),
         ('missing_front', 'Missing Front Image'),
@@ -251,7 +251,10 @@ def upload_manager():
         query += f" AND {build_grade_filter_sql(final_grade_filter)}"
         params.append(final_grade_filter)
 
-    if upload_status_filter:
+    if upload_status_filter == 'remaining_uploads':
+        query += " AND COALESCE(upload_status, 'not_started') NOT IN (?, ?)"
+        params.extend(['uploaded', CLIENT_PUSHED_UPLOAD_STATUS])
+    elif upload_status_filter:
         query += " AND COALESCE(upload_status, 'not_started') = ?"
         params.append(upload_status_filter)
 

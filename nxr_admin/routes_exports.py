@@ -1,3 +1,5 @@
+import re
+
 from nxr_admin.admin_core import *
 
 SCORE_EXPORT_COLUMNS = (
@@ -40,6 +42,63 @@ def apply_score_number_format(worksheet, column_names=SCORE_EXPORT_COLUMNS):
         for cell in worksheet[column_letter][1:]:
             if isinstance(cell.value, (int, float)):
                 cell.number_format = '0.0'
+
+
+def parse_cert_id_filter(raw_value):
+    tokens = [
+        token.strip()
+        for token in re.split(r'[\s,，;；]+', raw_value or '')
+        if token.strip()
+    ]
+    cert_ids = []
+    invalid_tokens = []
+    seen = set()
+
+    for token in tokens:
+        if token.isdigit() and len(token) == 10:
+            if token not in seen:
+                cert_ids.append(token)
+                seen.add(token)
+        else:
+            invalid_tokens.append(token)
+
+    return cert_ids, invalid_tokens
+
+
+def build_export_filter_sql(grade_filter=None, cert_ids=None):
+    query = "SELECT * FROM temp_cards WHERE status = 'approved'"
+    params = []
+
+    if grade_filter:
+        query += f" AND {build_grade_filter_sql(grade_filter)}"
+        params.append(grade_filter)
+
+    if cert_ids:
+        placeholders = ', '.join(['?' for _ in cert_ids])
+        query += f" AND cert_id IN ({placeholders})"
+        params.extend(cert_ids)
+
+    return query, params
+
+
+def get_matching_export_cert_ids(conn, grade_filter=None, cert_ids=None):
+    if not cert_ids:
+        return set()
+
+    query, params = build_export_filter_sql(grade_filter=grade_filter, cert_ids=cert_ids)
+    rows = conn.execute(
+        f"SELECT cert_id FROM ({query})",
+        params,
+    ).fetchall()
+    return {row['cert_id'] for row in rows}
+
+
+def format_export_filter_label(grade_filter=None, cert_ids=None):
+    filters = []
+    filters.append(f"final_grade_text = {grade_filter}" if grade_filter else "全部等级")
+    if cert_ids:
+        filters.append(f"Cert IDs = {', '.join(cert_ids)}")
+    return '; '.join(filters)
 
 
 def get_grade_options_from_db():
@@ -89,6 +148,62 @@ def export_excel_page():
                          brand_options=BRAND_OPTIONS,
                          language_options=LANGUAGE_OPTIONS)
 
+
+@app.route('/admin/export/preview', methods=['POST'])
+@login_required
+def preview_excel_export():
+    grade_filter = normalize_final_grade_text(request.form.get('grade_filter', '').strip())
+    if request.form.get('grade_filter', '').strip() == 'all':
+        grade_filter = None
+
+    cert_ids, invalid_cert_ids = parse_cert_id_filter(request.form.get('cert_ids', ''))
+
+    conn = get_temp_db_connection()
+    try:
+        matching_cert_ids = get_matching_export_cert_ids(
+            conn,
+            grade_filter=grade_filter,
+            cert_ids=cert_ids,
+        )
+        missing_cert_ids = [cert_id for cert_id in cert_ids if cert_id not in matching_cert_ids]
+
+        query, params = build_export_filter_sql(
+            grade_filter=grade_filter,
+            cert_ids=cert_ids,
+        )
+        total_count = conn.execute(f"SELECT COUNT(*) FROM ({query})", params).fetchone()[0]
+        rows = conn.execute(
+            f'''
+                SELECT cert_id, card_name, brand, final_grade_text, entry_date
+                FROM ({query})
+                ORDER BY {build_approved_order_clause()}
+                LIMIT 20
+            ''',
+            params,
+        ).fetchall()
+    finally:
+        conn.close()
+
+    can_export = bool(total_count) and not invalid_cert_ids and not missing_cert_ids
+    return jsonify({
+        'success': True,
+        'can_export': can_export,
+        'total_count': total_count,
+        'preview_limit': 20,
+        'grade_filter': grade_filter or 'all',
+        'cert_ids': cert_ids,
+        'invalid_cert_ids': invalid_cert_ids,
+        'missing_cert_ids': missing_cert_ids,
+        'rows': [
+            {
+                **dict(row),
+                'landing_page_url': f"nxrgrading.com/card/{row['cert_id']}",
+            }
+            for row in rows
+        ],
+    })
+
+
 # ========== Generate Excel File ==========
 @app.route('/admin/export/generate-excel', methods=['POST'])
 @login_required
@@ -101,18 +216,29 @@ def generate_excel():
         if request.form.get('grade_filter', '').strip() == 'all':
             grade_filter = None
 
-        # 构建查询
-        query = "SELECT * FROM temp_cards WHERE status = 'approved'"
-        params = []
+        cert_ids, invalid_cert_ids = parse_cert_id_filter(request.form.get('cert_ids', ''))
+        if invalid_cert_ids:
+            flash(f"Cert ID格式不正确: {', '.join(invalid_cert_ids)}", 'error')
+            return redirect(url_for('export_excel_page'))
 
-        if grade_filter:
-            query += f" AND {build_grade_filter_sql(grade_filter)}"
-            params.append(grade_filter)
+        # 构建查询
+        query, params = build_export_filter_sql(grade_filter=grade_filter, cert_ids=cert_ids)
 
         query += f" ORDER BY {build_approved_order_clause()}"
 
         # 执行查询
         conn = get_temp_db_connection()
+        matching_cert_ids = get_matching_export_cert_ids(
+            conn,
+            grade_filter=grade_filter,
+            cert_ids=cert_ids,
+        )
+        missing_cert_ids = [cert_id for cert_id in cert_ids if cert_id not in matching_cert_ids]
+        if missing_cert_ids:
+            conn.close()
+            flash(f"以下Cert ID没有匹配到已批准数据: {', '.join(missing_cert_ids)}", 'warning')
+            return redirect(url_for('export_excel_page'))
+
         df = pd.read_sql_query(query, conn, params=params)
         conn.close()
 
@@ -134,10 +260,11 @@ def generate_excel():
         # 生成输出文件名
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         grade_suffix = f"_{grade_filter}" if grade_filter else "_all"
+        id_suffix = f"_ids_{len(cert_ids)}" if cert_ids else ""
         exports_dir = ADMIN_DIR / "exports"
         exports_dir.mkdir(exist_ok=True)
 
-        output_filename = f"approved_cards{grade_suffix}_{timestamp}.xlsx"
+        output_filename = f"approved_cards{grade_suffix}{id_suffix}_{timestamp}.xlsx"
         output_path = exports_dir / output_filename
 
         # 导出到Excel
@@ -150,7 +277,7 @@ def generate_excel():
             summary_data = {
                 '导出时间': [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
                 '总记录数': [len(df)],
-                '筛选条件': [f"final_grade_text = {grade_filter}" if grade_filter else "全部"],
+                '筛选条件': [format_export_filter_label(grade_filter=grade_filter, cert_ids=cert_ids)],
                 '数据范围': [format_export_date_range(df)],
                 '包含字段数': [len(df.columns)],
                 '文件名称': [output_filename]
@@ -174,6 +301,7 @@ def generate_excel():
         history.append({
             'filename': output_filename,
             'grade_filter': grade_filter,
+            'cert_ids': cert_ids,
             'record_count': len(df),
             'export_time': datetime.now().isoformat(),
             'file_size': os.path.getsize(output_path)
