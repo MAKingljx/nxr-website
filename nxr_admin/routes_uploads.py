@@ -193,7 +193,7 @@ def upload_manager():
     upload_status_options = (
         ('remaining_uploads', 'Remaining Uploads'),
         ('not_started', 'Not Started'),
-        ('uploading', 'Uploading'),
+        ('uploading', 'Waiting for Upload'),
         ('uploaded', 'Uploaded'),
         ('failed', 'Failed'),
         (CLIENT_PUSHED_UPLOAD_STATUS, 'Client Pushed'),

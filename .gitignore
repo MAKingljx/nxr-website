@@ -51,3 +51,8 @@ testpis/
 local_backups/
 recovery/
 processed_12.zip
+nxr_platform/
+nxr_platform/**/node_modules/
+nxr_platform/**/dist/
+nxr_platform/**/target/
+nxr_platform/**/.local-data/

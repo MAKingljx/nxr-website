@@ -726,7 +726,7 @@
             <a class="stats-card-link" href="{{ url_for('upload_manager', show_client_pushed=show_client_pushed|int, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, language=language_filter, final_grade=final_grade_filter, upload_status='remaining_uploads', page_size=page_size) }}">
                 <div class="stats-card is-clickable" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);">
                     <div class="stats-number" id="uploading_count">{{ stats.image_stats.remaining_upload_count }}</div>
-                    <div class="stats-label">Uploading</div>
+                    <div class="stats-label">Waiting for Upload</div>
                 </div>
             </a>
         </div>
@@ -1027,7 +1027,7 @@
                                             </button>
                                         {% elif entry.upload_status == 'uploading' %}
                                             <span class="text-primary">
-                                                <i class="fas fa-spinner me-1"></i>Uploading
+                                                <i class="fas fa-spinner me-1"></i>Waiting for Upload
                                             </span>
                                         {% elif entry.published_complete and entry.upload_status == 'uploaded' %}
                                             <div class="d-flex gap-2">

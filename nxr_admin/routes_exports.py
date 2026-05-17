@@ -101,6 +101,13 @@ def format_export_filter_label(grade_filter=None, cert_ids=None):
     return '; '.join(filters)
 
 
+def format_export_grade_suffix(grade_filter=None):
+    if not grade_filter:
+        return "_all"
+    safe_grade = secure_filename(str(grade_filter))
+    return f"_{safe_grade or 'grade'}"
+
+
 def get_grade_options_from_db():
     """从数据库获取所有可用的final grade选项"""
     conn = get_temp_db_connection()
@@ -259,7 +266,7 @@ def generate_excel():
 
         # 生成输出文件名
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        grade_suffix = f"_{grade_filter}" if grade_filter else "_all"
+        grade_suffix = format_export_grade_suffix(grade_filter)
         id_suffix = f"_ids_{len(cert_ids)}" if cert_ids else ""
         exports_dir = ADMIN_DIR / "exports"
         exports_dir.mkdir(exist_ok=True)

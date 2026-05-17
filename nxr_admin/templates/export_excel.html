@@ -180,7 +180,7 @@
             return;
         }
         
-        fetch(`/admin/export/delete/${filename}`, {
+        fetch(`/admin/export/delete/${encodeURIComponent(filename)}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

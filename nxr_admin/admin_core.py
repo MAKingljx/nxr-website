@@ -1015,10 +1015,19 @@ def get_page_size_arg(name='page_size', default=TEMP_LIST_DEFAULT_PAGE_SIZE):
 
 
 def resolve_export_file_path(filename):
-    safe_name = secure_filename(filename or '')
-    if not safe_name or safe_name != Path(filename).name or not safe_name.lower().endswith('.xlsx'):
+    raw_name = (filename or '').strip()
+    if not raw_name or '\x00' in raw_name or '/' in raw_name or '\\' in raw_name:
         return None
-    return ADMIN_DIR / "exports" / safe_name
+    if Path(raw_name).name != raw_name or not raw_name.lower().endswith('.xlsx'):
+        return None
+
+    exports_dir = (ADMIN_DIR / "exports").resolve()
+    candidate = (exports_dir / raw_name).resolve()
+    try:
+        candidate.relative_to(exports_dir)
+    except ValueError:
+        return None
+    return candidate
 
 
 def initialize_databases():
