@@ -203,6 +203,8 @@ def upload_manager():
         upload_status_filter = ''
 
     image_status_options = (
+        ('ready', 'Ready for Upload'),
+        ('waiting', 'Waiting for Upload'),
         ('published', 'Published Complete'),
         ('missing_any', 'Missing Any Image'),
         ('missing_front', 'Missing Front Image'),
@@ -274,6 +276,8 @@ def upload_manager():
         has_any_front = entry_dict['has_front_image_file'] or entry_dict['has_published_front_image']
         has_any_back = entry_dict['has_back_image_file'] or entry_dict['has_published_back_image']
         if image_status_filter == 'ready' and not entry_dict['ready_for_upload']:
+            continue
+        if image_status_filter == 'waiting' and not entry_dict['waiting_for_upload']:
             continue
         if image_status_filter == 'published' and not entry_dict['published_complete']:
             continue

@@ -1187,12 +1187,14 @@ def get_entry_image_flags(entry):
     has_published_front = bool(published_front_path and published_front_path.is_file())
     has_published_back = bool(published_back_path and published_back_path.is_file())
     has_queue_images = has_front and has_back
+    uploaded_to_server = upload_status in {'uploaded', CLIENT_PUSHED_UPLOAD_STATUS}
 
     return {
         'has_front_image_file': has_front,
         'has_back_image_file': has_back,
         'has_queue_images': has_queue_images,
-        'ready_for_upload': has_queue_images and upload_status in READY_UPLOAD_STATUSES,
+        'ready_for_upload': not uploaded_to_server and not has_queue_images,
+        'waiting_for_upload': not uploaded_to_server and has_queue_images,
         'can_upload': has_queue_images and upload_status not in BLOCKED_UPLOAD_STATUSES,
         'has_published_front_image': has_published_front,
         'has_published_back_image': has_published_back,
@@ -1216,6 +1218,7 @@ def get_upload_stats(conn):
         'has_front_image': 0,
         'has_back_image': 0,
         'ready_for_upload': 0,
+        'waiting_for_upload': 0,
     }
 
     for entry in approved_entries:
@@ -1231,6 +1234,8 @@ def get_upload_stats(conn):
             image_stats['has_back_image'] += 1
         if flags['ready_for_upload']:
             image_stats['ready_for_upload'] += 1
+        if flags['waiting_for_upload']:
+            image_stats['waiting_for_upload'] += 1
 
     uploaded_to_server_count = stats.get('uploaded', 0) + stats.get(CLIENT_PUSHED_UPLOAD_STATUS, 0)
     image_stats['uploaded_to_server'] = uploaded_to_server_count
