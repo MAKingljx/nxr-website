@@ -29,6 +29,7 @@ AI_LANGUAGE_NAMES = {
     "de": "Deutsch",
     "nl": "Nederlands",
     "id": "Bahasa Indonesia",
+    "th": "ไทย",
     "ja": "日本語",
     "ko": "한국어",
 }
