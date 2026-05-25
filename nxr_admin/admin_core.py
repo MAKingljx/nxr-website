@@ -62,6 +62,7 @@ BRAND_OPTIONS = [
     "Demon Slayer",
     "Naruto",
     "Jujutsu Kaisen",
+    "Wind Breaker",
     "Other"
 ]
 
@@ -121,6 +122,7 @@ BRAND_ALIASES = {
     '咒术回战': 'Jujutsu Kaisen',
     '咒術迴戰': 'Jujutsu Kaisen',
     '呪術廻戦': 'Jujutsu Kaisen',
+    'wind breaker': 'Wind Breaker',
     'other': 'Other',
 }
 
