@@ -127,7 +127,7 @@ def new_entry():
                          action=url_for('new_entry'),
                          card=None,
                          auto_cert_id=auto_cert_id,
-                         brand_options=BRAND_OPTIONS,
+                         brand_options=get_brand_options(),
                          language_options=LANGUAGE_OPTIONS)
 
 # ========== Entry List ==========
@@ -269,7 +269,7 @@ def entry_list():
                          entries=[serialize_temp_entry(entry) for entry in entries],
                          status_filter=status_filter,
                          status_counts=status_counts,
-                         brand_options=BRAND_OPTIONS,
+                         brand_options=get_brand_options(),
                          language_options=LANGUAGE_OPTIONS,
                          # Filter values
                          cert_id_filter=cert_id_filter,
@@ -282,7 +282,7 @@ def entry_list():
                          # Filter options
                          grade_options=grade_options,
                          set_options=set_options,
-                         brand_options_for_filter=BRAND_OPTIONS,
+                         brand_options_for_filter=get_brand_options(include_inactive=True),
                          entered_by_options=entered_by_options,
                          # Sort values
                          sort_by=sort_by,
@@ -313,7 +313,7 @@ def entry_detail(entry_id):
 
     return render_template('entry_detail.html',
                          entry=entry,
-                         brand_options=BRAND_OPTIONS,
+                         brand_options=get_brand_options_with_current(entry.get('brand')),
                          language_options=LANGUAGE_OPTIONS)
 
 # ========== Edit Entry ==========
@@ -472,7 +472,7 @@ def edit_entry(entry_id):
                          title="Edit Card Entry",
                          action=url_for('edit_entry', entry_id=entry_id),
                          card=entry,
-                         brand_options=BRAND_OPTIONS,
+                         brand_options=get_brand_options_with_current(entry.get('brand')),
                          language_options=LANGUAGE_OPTIONS)
 
 # ========== Approve Entry ==========

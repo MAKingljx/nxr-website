@@ -339,7 +339,7 @@ def upload_manager():
                          grade_options=grade_options,
                          upload_status_options=upload_status_options,
                          image_status_options=image_status_options,
-                         brand_options=BRAND_OPTIONS,
+                         brand_options=get_brand_options(include_inactive=True),
                          language_options=LANGUAGE_OPTIONS)
 
 

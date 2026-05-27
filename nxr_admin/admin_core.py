@@ -31,8 +31,15 @@ SITE_STATIC_DIR.mkdir(exist_ok=True)
 UPLOAD_FOLDER = ADMIN_DIR / "uploads"
 UPLOAD_FOLDER.mkdir(exist_ok=True)
 
-# Brand options (English)
-BRAND_OPTIONS = [
+# Brand seed data
+# -----------------------------------------------------------------------------
+# DEFAULT_BRAND_OPTIONS and BRAND_ALIASES are ONLY consumed by
+# initialize_brand_settings() the very first time the database is created.
+# After the brand_settings table has been seeded, the database is the single
+# source of truth and runtime code (get_brand_options / get_brand_alias_map /
+# normalize_brand) must read exclusively from it. Editing these constants will
+# NOT affect an existing deployment.
+DEFAULT_BRAND_OPTIONS = [
     "Pokemon",
     "One Piece",
     "Monkey",
@@ -340,6 +347,188 @@ def initialize_admin_users(conn):
             )
 
 
+def normalize_brand_name(value):
+    return ' '.join((value or '').strip().split())
+
+
+def parse_brand_aliases(value):
+    aliases = []
+    for chunk in (value or '').replace(',', '\n').splitlines():
+        alias = normalize_brand_name(chunk)
+        if alias:
+            aliases.append(alias)
+    return list(dict.fromkeys(aliases))
+
+
+def default_aliases_for_brand(brand_name):
+    return '\n'.join([
+        alias
+        for alias, target in BRAND_ALIASES.items()
+        if target == brand_name and alias.lower() != brand_name.lower()
+    ])
+
+
+def ensure_brand_settings_table(conn):
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS brand_settings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            aliases TEXT NOT NULL DEFAULT '',
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.execute('''
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_brand_settings_name
+        ON brand_settings (name COLLATE NOCASE)
+    ''')
+
+
+def initialize_brand_settings(conn):
+    ensure_brand_settings_table(conn)
+    existing_count = conn.execute('SELECT COUNT(*) FROM brand_settings').fetchone()[0]
+    if existing_count:
+        return
+
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    for sort_order, brand_name in enumerate(DEFAULT_BRAND_OPTIONS, start=1):
+        conn.execute(
+            '''
+            INSERT INTO brand_settings (name, aliases, sort_order, is_active, created_at, updated_at)
+            VALUES (?, ?, ?, 1, ?, ?)
+            ''',
+            (brand_name, default_aliases_for_brand(brand_name), sort_order, now, now),
+        )
+
+
+def list_brand_settings(include_inactive=True):
+    with get_main_db_connection() as conn:
+        initialize_brand_settings(conn)
+        query = '''
+            SELECT id, name, aliases, sort_order, is_active, created_at, updated_at
+            FROM brand_settings
+        '''
+        params = []
+        if not include_inactive:
+            query += ' WHERE is_active = 1'
+        query += ' ORDER BY sort_order ASC, name COLLATE NOCASE ASC'
+        rows = conn.execute(query, tuple(params)).fetchall()
+        conn.commit()
+
+    brands = []
+    for row in rows:
+        brand = dict(row)
+        brand['is_active'] = bool(brand.get('is_active'))
+        brand['alias_list'] = parse_brand_aliases(brand.get('aliases'))
+        brands.append(brand)
+    return brands
+
+
+def get_brand_options(include_inactive=False):
+    try:
+        brands = list_brand_settings(include_inactive=include_inactive)
+    except sqlite3.Error:
+        app.logger.exception('Failed to load brand options from database')
+        return ['Other']
+    options = [brand['name'] for brand in brands if brand.get('name')]
+    return options or ['Other']
+
+
+def get_brand_options_with_current(current_brand=''):
+    options = get_brand_options()
+    current = normalize_brand_name(current_brand)
+    if current and not any(current.lower() == option.lower() for option in options):
+        options.append(current)
+    return options
+
+
+def get_brand_alias_map(include_inactive=True):
+    alias_map = {}
+    try:
+        brands = list_brand_settings(include_inactive=include_inactive)
+    except sqlite3.Error:
+        app.logger.exception('Failed to load brand alias map from database')
+        return alias_map
+
+    for brand in brands:
+        brand_name = brand.get('name')
+        if not brand_name:
+            continue
+        alias_map[brand_name.lower()] = brand_name
+        for alias in parse_brand_aliases(brand.get('aliases')):
+            alias_map[alias.lower()] = brand_name
+    return alias_map
+
+
+def get_brand_setting_by_id(brand_id):
+    with get_main_db_connection() as conn:
+        initialize_brand_settings(conn)
+        row = conn.execute(
+            '''
+            SELECT id, name, aliases, sort_order, is_active, created_at, updated_at
+            FROM brand_settings
+            WHERE id = ?
+            LIMIT 1
+            ''',
+            (brand_id,),
+        ).fetchone()
+        conn.commit()
+
+    if not row:
+        return None
+    brand = dict(row)
+    brand['is_active'] = bool(brand.get('is_active'))
+    brand['alias_list'] = parse_brand_aliases(brand.get('aliases'))
+    return brand
+
+
+def brand_setting_name_exists(conn, name, exclude_brand_id=None):
+    query = 'SELECT 1 FROM brand_settings WHERE name = ? COLLATE NOCASE'
+    params = [name]
+    if exclude_brand_id is not None:
+        query += ' AND id != ?'
+        params.append(exclude_brand_id)
+    query += ' LIMIT 1'
+    return bool(conn.execute(query, tuple(params)).fetchone())
+
+
+def create_brand_setting(conn, name, aliases='', sort_order=0, is_active=1):
+    brand_name = normalize_brand_name(name)
+    alias_text = '\n'.join(parse_brand_aliases(aliases))
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    conn.execute(
+        '''
+        INSERT INTO brand_settings (name, aliases, sort_order, is_active, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ''',
+        (brand_name, alias_text, int(sort_order or 0), int(bool(is_active)), now, now),
+    )
+
+
+def update_brand_setting(conn, brand_id, name, aliases='', sort_order=0, is_active=1):
+    brand_name = normalize_brand_name(name)
+    alias_text = '\n'.join(parse_brand_aliases(aliases))
+    active_value = 1 if brand_name.lower() == 'other' else int(bool(is_active))
+    conn.execute(
+        '''
+        UPDATE brand_settings
+        SET name = ?, aliases = ?, sort_order = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        ''',
+        (brand_name, alias_text, int(sort_order or 0), active_value, brand_id),
+    )
+
+
+def delete_brand_setting(conn, brand_id):
+    row = conn.execute('SELECT name FROM brand_settings WHERE id = ?', (brand_id,)).fetchone()
+    if row and row['name'].lower() == 'other':
+        return False
+    conn.execute('DELETE FROM brand_settings WHERE id = ?', (brand_id,))
+    return True
+
+
 def get_admin_account(username):
     with get_main_db_connection() as conn:
         row = conn.execute('''
@@ -505,11 +694,11 @@ def normalize_brand(value):
     if not raw_value:
         return ''
 
-    alias = BRAND_ALIASES.get(raw_value.lower())
+    alias = get_brand_alias_map().get(raw_value.lower())
     if alias:
         return alias
 
-    for option in BRAND_OPTIONS:
+    for option in get_brand_options(include_inactive=True):
         if raw_value.lower() == option.lower():
             return option
 
@@ -842,6 +1031,7 @@ def initialize_main_database():
     cursor = conn.cursor()
 
     initialize_admin_users(conn)
+    initialize_brand_settings(conn)
 
     has_cards_table = cursor.execute("""
         SELECT 1 FROM sqlite_master

@@ -66,7 +66,7 @@ def dashboard():
                          ],
                          username=session.get('username', 'Operator'),
                          role=session.get('role', 'reviewer'),
-                         brand_options=BRAND_OPTIONS,
+                         brand_options=get_brand_options(),
                          language_options=LANGUAGE_OPTIONS)
 
 

@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+
+{% block title %}Brand Settings - NXR Card Grading{% endblock %}
+{% block page_title %}<i class="fas fa-tags me-2"></i>Brand Settings{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('system_settings') }}" class="btn btn-outline-secondary btn-sm">
+    <i class="fas fa-arrow-left me-1"></i>Back to System Settings
+</a>
+{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb small mb-0">
+        <li class="breadcrumb-item"><a href="{{ url_for('system_settings') }}">System Settings</a></li>
+        <li class="breadcrumb-item active" aria-current="page">Brand Settings</li>
+    </ol>
+</nav>
+
+<div class="row g-4">
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header">
+                <i class="fas fa-cogs me-2"></i>Add Brand
+            </div>
+            <div class="card-body">
+                <form method="post" action="{{ url_for('brand_settings') }}">
+                    <div class="mb-3">
+                        <label for="name" class="form-label">Brand Name</label>
+                        <input type="text" class="form-control" id="name" name="name" maxlength="120" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="aliases" class="form-label">Aliases</label>
+                        <textarea class="form-control" id="aliases" name="aliases" rows="4" placeholder="One alias per line"></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label for="sort_order" class="form-label">Sort Order</label>
+                        <input type="number" class="form-control" id="sort_order" name="sort_order" value="0">
+                    </div>
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" role="switch" id="is_active" name="is_active" value="1" checked>
+                        <label class="form-check-label" for="is_active">Active</label>
+                    </div>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-save me-1"></i>Add Brand
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="fas fa-list me-2"></i>Configured Brands</span>
+                <div class="d-flex gap-2">
+                    <span class="badge bg-success">Active {{ active_brand_count }}</span>
+                    <span class="badge bg-secondary">Total {{ total_brand_count }}</span>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th style="width: 28%;">Brand</th>
+                                <th>Aliases</th>
+                                <th style="width: 90px;">Order</th>
+                                <th style="width: 110px;">Status</th>
+                                <th class="text-end" style="width: 170px;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for brand in brands %}
+                            <tr>
+                                <td colspan="5" class="p-0">
+                                    <form method="post" action="{{ url_for('update_brand_setting_route', brand_id=brand.id) }}" class="row g-0 align-items-stretch">
+                                        <div class="col-lg-3 p-2">
+                                            <input type="text" class="form-control form-control-sm" name="name" value="{{ brand.name }}" maxlength="120" required>
+                                        </div>
+                                        <div class="col-lg-4 p-2">
+                                            <textarea class="form-control form-control-sm" name="aliases" rows="2">{{ brand.aliases }}</textarea>
+                                        </div>
+                                        <div class="col-lg-1 p-2">
+                                            <input type="number" class="form-control form-control-sm" name="sort_order" value="{{ brand.sort_order }}">
+                                        </div>
+                                        <div class="col-lg-2 p-2">
+                                            <div class="form-check form-switch mt-1">
+                                                <input class="form-check-input" type="checkbox" role="switch" name="is_active" value="1" {% if brand.is_active %}checked{% endif %} {% if brand.name|lower == 'other' %}disabled{% endif %}>
+                                                <label class="form-check-label small">
+                                                    {{ 'Active' if brand.is_active else 'Inactive' }}
+                                                </label>
+                                            </div>
+                                            {% if brand.name|lower == 'other' %}
+                                            <input type="hidden" name="is_active" value="1">
+                                            {% endif %}
+                                        </div>
+                                        <div class="col-lg-2 p-2 text-end">
+                                            <button type="submit" class="btn btn-sm btn-outline-primary">
+                                                <i class="fas fa-save me-1"></i>Save
+                                            </button>
+                                            {% if brand.name|lower != 'other' %}
+                                            <button type="submit" form="delete-brand-{{ brand.id }}" class="btn btn-sm btn-outline-danger" onclick="return confirm('Delete this brand?');">
+                                                <i class="fas fa-trash me-1"></i>Delete
+                                            </button>
+                                            {% endif %}
+                                        </div>
+                                    </form>
+                                    {% if brand.name|lower != 'other' %}
+                                    <form id="delete-brand-{{ brand.id }}" method="post" action="{{ url_for('delete_brand_setting_route', brand_id=brand.id) }}"></form>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                            {% if not brands %}
+                            <tr>
+                                <td colspan="5" class="text-center text-muted py-4">No brands configured.</td>
+                            </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

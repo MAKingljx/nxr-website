@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+
+{% block title %}System Settings - NXR Card Grading{% endblock %}
+{% block page_title %}<i class="fas fa-cogs me-2"></i>System Settings{% endblock %}
+
+{% block content %}
+<div class="row g-4">
+    {% for module in modules %}
+    <div class="col-md-6 col-lg-4">
+        <a href="{{ module.url }}" class="text-decoration-none text-reset">
+            <div class="card h-100 settings-module-card">
+                <div class="card-body">
+                    <div class="d-flex align-items-center mb-3">
+                        <div class="settings-module-icon bg-primary text-white me-3">
+                            <i class="{{ module.icon }}"></i>
+                        </div>
+                        <h5 class="mb-0">{{ module.title }}</h5>
+                    </div>
+                    {% if module.description %}
+                    <p class="text-muted small mb-3">{{ module.description }}</p>
+                    {% endif %}
+                    {% if module.badge %}
+                    <span class="badge bg-light text-dark border">{{ module.badge }}</span>
+                    {% endif %}
+                </div>
+                <div class="card-footer bg-white border-top-0 pt-0">
+                    <span class="small text-primary">
+                        Open <i class="fas fa-arrow-right ms-1"></i>
+                    </span>
+                </div>
+            </div>
+        </a>
+    </div>
+    {% endfor %}
+    {% if not modules %}
+    <div class="col-12">
+        <div class="alert alert-info mb-0">No settings modules available.</div>
+    </div>
+    {% endif %}
+</div>
+
+<style>
+    .settings-module-card {
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+        cursor: pointer;
+    }
+    .settings-module-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.1);
+    }
+    .settings-module-icon {
+        width: 44px;
+        height: 44px;
+        border-radius: 10px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.1rem;
+    }
+</style>
+{% endblock %}

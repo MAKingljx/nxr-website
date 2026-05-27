@@ -242,6 +242,9 @@
                     <a href="{{ url_for('admin_users') }}" class="{% if request.endpoint == 'admin_users' %}active{% endif %}">
                         <i class="fas fa-user-shield me-2"></i>Admin Users
                     </a>
+                    <a href="{{ url_for('system_settings') }}" class="{% if request.endpoint in ['system_settings', 'brand_settings', 'update_brand_setting_route', 'delete_brand_setting_route'] %}active{% endif %}">
+                        <i class="fas fa-cogs me-2"></i>System Settings
+                    </a>
                     {% endif %}
                 </div>
             </div>

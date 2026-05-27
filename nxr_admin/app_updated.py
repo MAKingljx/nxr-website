@@ -20,6 +20,7 @@ from nxr_admin import routes_auth  # noqa: F401
 from nxr_admin import routes_entries  # noqa: F401
 from nxr_admin import routes_exports  # noqa: F401
 from nxr_admin import routes_misc  # noqa: F401
+from nxr_admin import routes_settings
 from nxr_admin import routes_uploads  # noqa: F401
 
 

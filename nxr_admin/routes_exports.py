@@ -152,7 +152,7 @@ def export_excel_page():
                          grade_stats=grade_stats,
                          export_history_default_page_size=EXPORT_HISTORY_DEFAULT_PAGE_SIZE,
                          page_size_options=PAGE_SIZE_OPTIONS,
-                         brand_options=BRAND_OPTIONS,
+                         brand_options=get_brand_options(include_inactive=True),
                          language_options=LANGUAGE_OPTIONS)
 
 
