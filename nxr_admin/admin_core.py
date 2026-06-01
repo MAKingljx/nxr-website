@@ -145,6 +145,102 @@ LANGUAGE_OPTIONS = [
     "Other"
 ]
 
+DEFAULT_CARD_CATEGORY = 'trading_card'
+CARD_CATEGORY_OPTIONS = [
+    {'value': 'trading_card', 'label': 'Trading Card'},
+    {'value': 'movie_film', 'label': 'Movie Film'},
+    {'value': 'sports_card', 'label': 'Sports Card'},
+    {'value': 'celebrity_card', 'label': 'Celebrity Card'},
+]
+CARD_CATEGORY_LABELS = {
+    option['value']: option['label']
+    for option in CARD_CATEGORY_OPTIONS
+}
+CARD_CATEGORY_ALIASES = {
+    '': DEFAULT_CARD_CATEGORY,
+    'trading_card': 'trading_card',
+    'trading card': 'trading_card',
+    'card': 'trading_card',
+    'movie_film': 'movie_film',
+    'movie film': 'movie_film',
+    'film': 'movie_film',
+    'sports_card': 'sports_card',
+    'sports card': 'sports_card',
+    'sports': 'sports_card',
+    'celebrity_card': 'celebrity_card',
+    'celebrity card': 'celebrity_card',
+    'celebrity': 'celebrity_card',
+    'star card': 'celebrity_card',
+}
+CARD_CATEGORY_COLUMNS = (
+    ('card_category', "TEXT NOT NULL DEFAULT 'trading_card'"),
+    ('movie_name', "TEXT DEFAULT ''"),
+    ('release_year', "TEXT DEFAULT ''"),
+    ('production_company', "TEXT DEFAULT ''"),
+    ('film_type', "TEXT DEFAULT ''"),
+    ('sports_type', "TEXT DEFAULT ''"),
+    ('group_name', "TEXT DEFAULT ''"),
+)
+MAIN_CARD_COLUMNS = (
+    ('card_name', 'TEXT'),
+    *CARD_CATEGORY_COLUMNS,
+    ('grade', 'TEXT'),
+    ('year', 'TEXT'),
+    ('brand', 'TEXT'),
+    ('player', 'TEXT'),
+    ('variety', 'TEXT'),
+    ('image', 'TEXT'),
+    ('pop', 'TEXT'),
+    ('back_image', 'TEXT'),
+    ('front_image', 'TEXT'),
+    ('qr_url', 'TEXT'),
+    ('centering', 'REAL DEFAULT 0'),
+    ('edges', 'REAL DEFAULT 0'),
+    ('corners', 'REAL DEFAULT 0'),
+    ('surface', 'REAL DEFAULT 0'),
+    ('language', "TEXT DEFAULT 'EN'"),
+    ('set_name', "TEXT DEFAULT ''"),
+    ('card_number', "TEXT DEFAULT ''"),
+    ('grading_phase', "TEXT DEFAULT 'human_only'"),
+    ('data_version', 'INTEGER DEFAULT 1'),
+    ('created_at', 'TEXT'),
+    ('updated_at', 'TEXT'),
+    ('ai_model_version', "TEXT DEFAULT ''"),
+    ('ai_confidence', 'REAL DEFAULT 0'),
+    ('ai_grade', 'REAL'),
+    ('ai_centering', 'REAL'),
+    ('ai_edges', 'REAL'),
+    ('ai_corners', 'REAL'),
+    ('ai_surface', 'REAL'),
+    ('final_grade', 'REAL'),
+    ('decision_method', "TEXT DEFAULT 'human_only'"),
+    ('decision_notes', "TEXT DEFAULT ''"),
+    ('ai_front_analysis', "TEXT DEFAULT ''"),
+    ('ai_back_analysis', "TEXT DEFAULT ''"),
+    ('has_ai_analysis', 'INTEGER DEFAULT 0'),
+    ('final_grade_text', "TEXT DEFAULT ''"),
+)
+ENTRY_FIELD_LABELS = {
+    'cert_id': 'Certificate ID',
+    'card_name': 'Card Name',
+    'brand': 'Brand',
+    'language': 'Language',
+    'set_name': 'Set Name',
+    'card_number': 'Card Number',
+    'movie_name': 'Movie Name',
+    'release_year': 'Release Year',
+    'production_company': 'Production Company',
+    'film_type': 'Film Type',
+    'sports_type': 'Sports Type',
+    'group_name': 'Group Name',
+}
+CATEGORY_REQUIRED_FIELDS = {
+    'trading_card': ('card_name', 'brand', 'language', 'set_name', 'card_number'),
+    'movie_film': ('movie_name', 'release_year', 'production_company', 'film_type'),
+    'sports_card': ('card_name', 'brand', 'language', 'set_name', 'card_number', 'sports_type'),
+    'celebrity_card': ('card_name', 'brand', 'language', 'set_name', 'card_number', 'group_name'),
+}
+
 app = Flask(__name__,
             template_folder=str(ADMIN_DIR / 'templates'),
             static_folder=str(ADMIN_DIR / 'static'),
@@ -689,6 +785,36 @@ def normalize_language(value):
     return raw_value
 
 
+def normalize_card_category(value):
+    raw_value = (value or '').strip().lower().replace('-', ' ')
+    return CARD_CATEGORY_ALIASES.get(raw_value, DEFAULT_CARD_CATEGORY)
+
+
+def normalize_card_category_filter(value):
+    raw_value = (value or '').strip()
+    if not raw_value:
+        return ''
+    return normalize_card_category(raw_value)
+
+
+def get_card_category_label(value):
+    return CARD_CATEGORY_LABELS.get(normalize_card_category(value), CARD_CATEGORY_LABELS[DEFAULT_CARD_CATEGORY])
+
+
+def get_category_required_fields(category, include_cert_id=False):
+    fields = list(CATEGORY_REQUIRED_FIELDS.get(normalize_card_category(category), CATEGORY_REQUIRED_FIELDS[DEFAULT_CARD_CATEGORY]))
+    if include_cert_id:
+        fields.insert(0, 'cert_id')
+    return fields
+
+
+def validate_category_required_fields(entry_data, include_cert_id=False):
+    for field in get_category_required_fields(entry_data.get('card_category'), include_cert_id=include_cert_id):
+        if not str(entry_data.get(field) or '').strip():
+            return False, ENTRY_FIELD_LABELS.get(field, field.replace('_', ' ').title())
+    return True, ''
+
+
 def normalize_brand(value):
     raw_value = (value or '').strip()
     if not raw_value:
@@ -865,6 +991,8 @@ def get_entry_display_timestamp(entry):
 
 def serialize_temp_entry(entry):
     entry_dict = dict(entry)
+    entry_dict['card_category'] = normalize_card_category(entry_dict.get('card_category'))
+    entry_dict['card_category_label'] = get_card_category_label(entry_dict.get('card_category'))
     entry_dict['language'] = normalize_language(entry_dict.get('language'))
     entry_dict['display_date'] = format_display_datetime(get_entry_display_timestamp(entry_dict))
     entry_dict['approved_at_display'] = format_display_datetime(entry_dict.get('approved_at') or '')
@@ -1026,6 +1154,41 @@ def normalize_language_values(conn, table_name):
         )
 
 
+def ensure_columns(conn, table_name, columns):
+    existing_columns = {
+        row[1]
+        for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    }
+    for column_name, column_type in columns:
+        if column_name not in existing_columns:
+            print(f"Adding {column_name} column to {table_name} table...")
+            conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+
+
+def normalize_card_category_values(conn, table_name):
+    conn.execute(
+        f'''
+            UPDATE {table_name}
+            SET card_category = ?
+            WHERE card_category IS NULL OR trim(card_category) = ''
+        ''',
+        (DEFAULT_CARD_CATEGORY,),
+    )
+
+
+def row_value(row, key, default=''):
+    if row is None:
+        return default
+    if isinstance(row, dict):
+        return row.get(key, default)
+    if hasattr(row, 'keys') and key not in row.keys():
+        return default
+    try:
+        return row[key]
+    except (KeyError, IndexError, TypeError):
+        return default
+
+
 def initialize_main_database():
     conn = get_main_db_connection()
     cursor = conn.cursor()
@@ -1033,18 +1196,25 @@ def initialize_main_database():
     initialize_admin_users(conn)
     initialize_brand_settings(conn)
 
-    has_cards_table = cursor.execute("""
-        SELECT 1 FROM sqlite_master
-        WHERE type = 'table' AND name = 'cards'
-    """).fetchone()
-    if not has_cards_table:
-        conn.commit()
-        conn.close()
-        return
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS cards (
+            cert_id TEXT PRIMARY KEY
+        )
+    ''')
+    ensure_columns(conn, 'cards', MAIN_CARD_COLUMNS)
+    normalize_card_category_values(conn, 'cards')
 
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_cards_identity_grade
         ON cards (card_name, set_name, card_number, language, final_grade_text)
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_cards_category_grade
+        ON cards (card_category, final_grade_text)
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_cards_movie_identity_grade
+        ON cards (card_category, movie_name, release_year, production_company, film_type, final_grade_text)
     ''')
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_cards_updated_at
@@ -1060,20 +1230,149 @@ def initialize_main_database():
     conn.close()
 
 
-def calculate_population(card_name, set_name, card_number, language, final_grade_text, exclude_entry_id=None):
+def _build_population_filter(
+    card_category,
+    card_name,
+    set_name,
+    card_number,
+    language,
+    final_grade_text,
+    movie_name='',
+    release_year='',
+    production_company='',
+    film_type='',
+    sports_type='',
+    group_name='',
+):
+    category = normalize_card_category(card_category)
     normalized_language = normalize_language(language)
-    language_variants = get_language_variants(normalized_language)
+    grade_text = (final_grade_text or '').strip()
+    if not grade_text:
+        return category, normalized_language, None, []
 
-    if not all([card_name, set_name, card_number, normalized_language, final_grade_text]):
+    category_sql = "COALESCE(NULLIF(card_category, ''), 'trading_card') = ?"
+    if category == 'movie_film':
+        identity = [
+            (movie_name or card_name or '').strip(),
+            (release_year or '').strip(),
+            (production_company or '').strip(),
+            (film_type or '').strip(),
+        ]
+        if not all(identity):
+            return category, normalized_language, None, []
+        return (
+            category,
+            normalized_language,
+            f'''
+                {category_sql}
+                AND movie_name = ? COLLATE NOCASE
+                AND release_year = ? COLLATE NOCASE
+                AND production_company = ? COLLATE NOCASE
+                AND film_type = ? COLLATE NOCASE
+                AND final_grade_text = ?
+            ''',
+            [category, *identity, grade_text],
+        )
+
+    language_variants = get_language_variants(normalized_language)
+    if not language_variants:
+        return category, normalized_language, None, []
+    language_placeholders = ', '.join(['?' for _ in language_variants])
+    identity = [(card_name or '').strip(), (set_name or '').strip(), (card_number or '').strip()]
+
+    if category == 'sports_card':
+        extra_value = (sports_type or '').strip()
+        if not all([*identity, extra_value]):
+            return category, normalized_language, None, []
+        return (
+            category,
+            normalized_language,
+            f'''
+                {category_sql}
+                AND card_name = ? COLLATE NOCASE
+                AND set_name = ? COLLATE NOCASE
+                AND card_number = ? COLLATE NOCASE
+                AND sports_type = ? COLLATE NOCASE
+                AND language IN ({language_placeholders})
+                AND final_grade_text = ?
+            ''',
+            [category, *identity, extra_value, *language_variants, grade_text],
+        )
+
+    if category == 'celebrity_card':
+        extra_value = (group_name or '').strip()
+        if not all([*identity, extra_value]):
+            return category, normalized_language, None, []
+        return (
+            category,
+            normalized_language,
+            f'''
+                {category_sql}
+                AND card_name = ? COLLATE NOCASE
+                AND set_name = ? COLLATE NOCASE
+                AND card_number = ? COLLATE NOCASE
+                AND group_name = ? COLLATE NOCASE
+                AND language IN ({language_placeholders})
+                AND final_grade_text = ?
+            ''',
+            [category, *identity, extra_value, *language_variants, grade_text],
+        )
+
+    if not all(identity):
+        return category, normalized_language, None, []
+    return (
+        category,
+        normalized_language,
+        f'''
+            {category_sql}
+            AND card_name = ? COLLATE NOCASE
+            AND set_name = ? COLLATE NOCASE
+            AND card_number = ? COLLATE NOCASE
+            AND language IN ({language_placeholders})
+            AND final_grade_text = ?
+        ''',
+        [category, *identity, *language_variants, grade_text],
+    )
+
+
+def calculate_population(
+    card_name,
+    set_name,
+    card_number,
+    language,
+    final_grade_text,
+    exclude_entry_id=None,
+    card_category=DEFAULT_CARD_CATEGORY,
+    movie_name='',
+    release_year='',
+    production_company='',
+    film_type='',
+    sports_type='',
+    group_name='',
+):
+    category, normalized_language, where_sql, params = _build_population_filter(
+        card_category=card_category,
+        card_name=card_name,
+        set_name=set_name,
+        card_number=card_number,
+        language=language,
+        final_grade_text=final_grade_text,
+        movie_name=movie_name,
+        release_year=release_year,
+        production_company=production_company,
+        film_type=film_type,
+        sports_type=sports_type,
+        group_name=group_name,
+    )
+
+    if not where_sql:
         return 1, normalized_language, 0, 0
 
-    placeholders = ', '.join(['?' for _ in language_variants])
     temp_query = f'''
         SELECT COUNT(*) FROM temp_cards
-        WHERE card_name = ? AND set_name = ? AND card_number = ?
-        AND language IN ({placeholders}) AND final_grade_text = ?
+        WHERE {where_sql}
     '''
-    temp_params = [card_name, set_name, card_number, *language_variants, final_grade_text]
+    temp_params = list(params)
     if exclude_entry_id is not None:
         temp_query += ' AND id != ?'
         temp_params.append(exclude_entry_id)
@@ -1085,9 +1384,8 @@ def calculate_population(card_name, set_name, card_number, language, final_grade
     conn_main = get_main_db_connection()
     main_count = conn_main.execute(f'''
         SELECT COUNT(*) FROM cards
-        WHERE card_name = ? AND set_name = ? AND card_number = ?
-        AND language IN ({placeholders}) AND final_grade_text = ?
-    ''', [card_name, set_name, card_number, *language_variants, final_grade_text]).fetchone()[0]
+        WHERE {where_sql}
+    ''', params).fetchone()[0]
     conn_main.close()
 
     return temp_count + main_count + 1, normalized_language, temp_count, main_count
@@ -1129,6 +1427,13 @@ def build_main_card_payload(entry, front_image='', back_image=''):
     return {
         'cert_id': cert_id,
         'card_name': entry['card_name'] or '',
+        'card_category': normalize_card_category(row_value(entry, 'card_category')),
+        'movie_name': row_value(entry, 'movie_name') or '',
+        'release_year': row_value(entry, 'release_year') or '',
+        'production_company': row_value(entry, 'production_company') or '',
+        'film_type': row_value(entry, 'film_type') or '',
+        'sports_type': row_value(entry, 'sports_type') or '',
+        'group_name': row_value(entry, 'group_name') or '',
         'grade': entry['final_grade_text'] or '',
         'year': entry['year'] or '',
         'brand': entry['brand'] or '',
@@ -1279,6 +1584,13 @@ def init_temp_database():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         cert_id TEXT UNIQUE,
         card_name TEXT,
+        card_category TEXT NOT NULL DEFAULT 'trading_card',
+        movie_name TEXT DEFAULT '',
+        release_year TEXT DEFAULT '',
+        production_company TEXT DEFAULT '',
+        film_type TEXT DEFAULT '',
+        sports_type TEXT DEFAULT '',
+        group_name TEXT DEFAULT '',
         year TEXT,
         brand TEXT,
         variety TEXT,
@@ -1312,16 +1624,9 @@ def init_temp_database():
     )
     ''')
 
-    # Check if updated_at column exists, add if not
-    try:
-        cursor.execute("SELECT updated_at FROM temp_cards LIMIT 1")
-    except sqlite3.OperationalError:
-        # Column doesn't exist, add it
-        print("Adding updated_at column to temp_cards table...")
-        cursor.execute("ALTER TABLE temp_cards ADD COLUMN updated_at TEXT")
-
-    # Check and add upload-related columns
-    upload_columns = [
+    ensure_columns(conn, 'temp_cards', [
+        ('updated_at', 'TEXT'),
+        *CARD_CATEGORY_COLUMNS,
         ('approved_at', 'TEXT'),
         ('approval_sequence', 'INTEGER'),
         ('upload_status', 'TEXT DEFAULT "not_started"'),
@@ -1331,14 +1636,8 @@ def init_temp_database():
         ('server_response', 'TEXT'),
         ('published_front_image', "TEXT DEFAULT ''"),
         ('published_back_image', "TEXT DEFAULT ''"),
-    ]
-
-    for column_name, column_type in upload_columns:
-        try:
-            cursor.execute(f"SELECT {column_name} FROM temp_cards LIMIT 1")
-        except sqlite3.OperationalError:
-            print(f"Adding {column_name} column to temp_cards table...")
-            cursor.execute(f"ALTER TABLE temp_cards ADD COLUMN {column_name} {column_type}")
+    ])
+    normalize_card_category_values(conn, 'temp_cards')
 
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_temp_cards_status_entry_date
@@ -1355,6 +1654,14 @@ def init_temp_database():
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_temp_cards_identity_grade
         ON temp_cards (card_name, set_name, card_number, language, final_grade_text)
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_temp_cards_category_grade
+        ON temp_cards (card_category, final_grade_text)
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_temp_cards_movie_identity_grade
+        ON temp_cards (card_category, movie_name, release_year, production_company, film_type, final_grade_text)
     ''')
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_temp_cards_card_name

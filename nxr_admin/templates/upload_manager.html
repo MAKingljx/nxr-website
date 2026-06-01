@@ -8,7 +8,7 @@
 
 {% block page_actions %}
     <div class="btn-group">
-        <a href="{{ url_for('upload_manager', show_client_pushed=0 if show_client_pushed else 1, page_size=page_size, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, language=language_filter, final_grade=final_grade_filter, upload_status=upload_status_filter, image_status=image_status_filter) }}" class="btn btn-outline-info">
+        <a href="{{ url_for('upload_manager', show_client_pushed=0 if show_client_pushed else 1, page_size=page_size, cert_id=cert_id_filter, card_name=card_name_filter, card_category=card_category_filter, brand=brand_filter, language=language_filter, final_grade=final_grade_filter, upload_status=upload_status_filter, image_status=image_status_filter) }}" class="btn btn-outline-info">
             <i class="fas fa-eye me-1"></i>{% if show_client_pushed %}Hide Client Pushed{% else %}Show Client Pushed{% endif %}
         </a>
         <button type="button" class="btn btn-outline-primary" onclick="refreshStats()">
@@ -716,7 +716,7 @@
     <!-- Stats cards -->
     <div class="row mb-4">
         <div class="col-md-3">
-            <a class="stats-card-link" href="{{ url_for('upload_manager', show_client_pushed=1, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, language=language_filter, final_grade=final_grade_filter, page_size=page_size) }}">
+            <a class="stats-card-link" href="{{ url_for('upload_manager', show_client_pushed=1, cert_id=cert_id_filter, card_name=card_name_filter, card_category=card_category_filter, brand=brand_filter, language=language_filter, final_grade=final_grade_filter, page_size=page_size) }}">
                 <div class="stats-card is-clickable">
                     <div class="stats-number" id="total_approved">{{ stats.image_stats.total_approved }}</div>
                     <div class="stats-label">Total Approved</div>
@@ -724,7 +724,7 @@
             </a>
         </div>
         <div class="col-md-3">
-            <a class="stats-card-link" href="{{ url_for('upload_manager', show_client_pushed=show_client_pushed|int, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, language=language_filter, final_grade=final_grade_filter, image_status='ready', page_size=page_size) }}">
+            <a class="stats-card-link" href="{{ url_for('upload_manager', show_client_pushed=show_client_pushed|int, cert_id=cert_id_filter, card_name=card_name_filter, card_category=card_category_filter, brand=brand_filter, language=language_filter, final_grade=final_grade_filter, image_status='ready', page_size=page_size) }}">
                 <div class="stats-card is-clickable" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
                     <div class="stats-number" id="ready_for_upload">{{ stats.image_stats.ready_for_upload }}</div>
                     <div class="stats-label">Ready for Upload</div>
@@ -732,7 +732,7 @@
             </a>
         </div>
         <div class="col-md-3">
-            <a class="stats-card-link" href="{{ url_for('upload_manager', show_client_pushed=show_client_pushed|int, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, language=language_filter, final_grade=final_grade_filter, image_status='waiting', page_size=page_size) }}">
+            <a class="stats-card-link" href="{{ url_for('upload_manager', show_client_pushed=show_client_pushed|int, cert_id=cert_id_filter, card_name=card_name_filter, card_category=card_category_filter, brand=brand_filter, language=language_filter, final_grade=final_grade_filter, image_status='waiting', page_size=page_size) }}">
                 <div class="stats-card is-clickable" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);">
                     <div class="stats-number" id="uploading_count">{{ stats.image_stats.waiting_for_upload }}</div>
                     <div class="stats-label">Waiting for Upload</div>
@@ -740,7 +740,7 @@
             </a>
         </div>
         <div class="col-md-3">
-            <a class="stats-card-link" href="{{ url_for('upload_manager', show_client_pushed=show_client_pushed|int, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, language=language_filter, final_grade=final_grade_filter, upload_status='uploaded', page_size=page_size) }}">
+            <a class="stats-card-link" href="{{ url_for('upload_manager', show_client_pushed=show_client_pushed|int, cert_id=cert_id_filter, card_name=card_name_filter, card_category=card_category_filter, brand=brand_filter, language=language_filter, final_grade=final_grade_filter, upload_status='uploaded', page_size=page_size) }}">
                 <div class="stats-card is-clickable" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
                     <div class="stats-number" id="uploaded_count">{{ stats.image_stats.uploaded_to_server }}</div>
                     <div class="stats-label">Uploaded to Server</div>
@@ -856,6 +856,16 @@
                 </div>
 
                 <div class="col-md-2">
+                    <label class="form-label">Category</label>
+                    <select class="form-select" name="card_category">
+                        <option value="">All Categories</option>
+                        {% for option in card_category_options %}
+                        <option value="{{ option.value }}" {% if card_category_filter == option.value %}selected{% endif %}>{{ option.label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-md-2">
                     <label class="form-label">Brand</label>
                     <select class="form-select" name="brand">
                         <option value="">All Brands</option>
@@ -945,6 +955,7 @@
                                 </th>
                                 <th>Cert ID</th>
                                 <th>Card Name</th>
+                                <th>Category</th>
                                 <th>Brand</th>
                                 <th>Grade</th>
                                 <th>Images</th>
@@ -965,6 +976,7 @@
                                     </td>
                                     <td><strong>{{ entry.cert_id }}</strong></td>
                                     <td>{{ entry.card_name }}</td>
+                                    <td>{{ entry.card_category_label }}</td>
                                     <td>{{ entry.brand }}</td>
                                     <td>
                                         <strong>{{ entry.final_grade_text }}</strong>
@@ -1069,6 +1081,7 @@
                         <input type="hidden" name="show_client_pushed" value="{{ 1 if show_client_pushed else 0 }}">
                         <input type="hidden" name="cert_id" value="{{ cert_id_filter }}">
                         <input type="hidden" name="card_name" value="{{ card_name_filter }}">
+                        <input type="hidden" name="card_category" value="{{ card_category_filter }}">
                         <input type="hidden" name="brand" value="{{ brand_filter }}">
                         <input type="hidden" name="language" value="{{ language_filter }}">
                         <input type="hidden" name="final_grade" value="{{ final_grade_filter }}">

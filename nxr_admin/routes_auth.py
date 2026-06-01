@@ -50,7 +50,7 @@ def dashboard():
     }
 
     recent_entries = conn.execute('''
-        SELECT id, cert_id, card_name, brand, set_name, language, final_grade_text, status, entry_date
+        SELECT id, cert_id, card_name, card_category, brand, set_name, language, final_grade_text, status, entry_date
         FROM temp_cards
         ORDER BY entry_date DESC
         LIMIT 5
@@ -61,12 +61,16 @@ def dashboard():
     return render_template('dashboard.html',
                          stats=stats,
                          recent_entries=[
-                             {**dict(entry), 'language': normalize_language(entry['language'])}
+                             {
+                                 **dict(entry),
+                                 'card_category': normalize_card_category(entry['card_category']),
+                                 'card_category_label': get_card_category_label(entry['card_category']),
+                                 'language': normalize_language(entry['language']),
+                             }
                              for entry in recent_entries
                          ],
                          username=session.get('username', 'Operator'),
                          role=session.get('role', 'reviewer'),
                          brand_options=get_brand_options(),
                          language_options=LANGUAGE_OPTIONS)
-
 

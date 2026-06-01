@@ -155,8 +155,12 @@
       <div class="ai-character-section">
         <button class="ai-character-btn" id="aiCharacterBtn">
           <span class="ai-icon">🤖</span>
-          <span class="ai-text">AI Character Info</span>
-          <span class="ai-subtext">Learn about this character</span>
+          <span class="ai-text">
+            {% if card.card_category == 'movie_film' %}AI Film Info{% elif card.card_category == 'sports_card' %}AI Player Info{% elif card.card_category == 'celebrity_card' %}AI Celebrity Info{% else %}AI Character Info{% endif %}
+          </span>
+          <span class="ai-subtext">
+            {% if card.card_category == 'movie_film' %}Learn about this film{% elif card.card_category == 'sports_card' %}Learn about this player{% elif card.card_category == 'celebrity_card' %}Learn about this celebrity{% else %}Learn about this character{% endif %}
+          </span>
         </button>
         <p class="ai-note">Powered by DeepSeek AI • Available in 9 languages</p>
         {% if card.youtube_url %}
@@ -183,8 +187,15 @@
       <div class="grade-badge">Final Grade: {{ card.grade }}</div>
 
       <div class="detail-grid">
-        {% if card.year %}<div class="detail-row"><span class="detail-key">Year</span><span class="detail-val">{{ card.year }}</span></div>{% endif %}
+        {% if card.card_category_label %}<div class="detail-row"><span class="detail-key">Category</span><span class="detail-val">{{ card.card_category_label }}</span></div>{% endif %}
+        {% if card.card_category == 'movie_film' and card.movie_name %}<div class="detail-row"><span class="detail-key">Movie name</span><span class="detail-val">{{ card.movie_name }}</span></div>{% endif %}
+        {% if card.card_category == 'movie_film' and card.release_year %}<div class="detail-row"><span class="detail-key">Release year</span><span class="detail-val">{{ card.release_year }}</span></div>{% endif %}
+        {% if card.card_category == 'movie_film' and card.production_company %}<div class="detail-row"><span class="detail-key">Production company</span><span class="detail-val">{{ card.production_company }}</span></div>{% endif %}
+        {% if card.card_category == 'movie_film' and card.film_type %}<div class="detail-row"><span class="detail-key">Film type</span><span class="detail-val">{{ card.film_type }}</span></div>{% endif %}
+        {% if card.year and card.card_category != 'movie_film' %}<div class="detail-row"><span class="detail-key">Year</span><span class="detail-val">{{ card.year }}</span></div>{% endif %}
         {% if card.brand %}<div class="detail-row"><span class="detail-key">Brand</span><span class="detail-val">{{ card.brand }}</span></div>{% endif %}
+        {% if card.card_category == 'sports_card' and card.sports_type %}<div class="detail-row"><span class="detail-key">Sports type</span><span class="detail-val">{{ card.sports_type }}</span></div>{% endif %}
+        {% if card.card_category == 'celebrity_card' and card.group_name %}<div class="detail-row"><span class="detail-key">Group name</span><span class="detail-val">{{ card.group_name }}</span></div>{% endif %}
         {% if card.set_name %}<div class="detail-row"><span class="detail-key">Set</span><span class="detail-val">{{ card.set_name }}</span></div>{% endif %}
         {% if card.card_number %}<div class="detail-row"><span class="detail-key">Card number</span><span class="detail-val">{{ card.card_number }}</span></div>{% endif %}
         {% if card.language_label %}<div class="detail-row"><span class="detail-key">Language</span><span class="detail-val">{{ card.language_label }}</span></div>{% endif %}
@@ -255,7 +266,7 @@
       <div class="ai-modal-header">
         <div class="ai-modal-title">
           <span class="icon">🤖</span>
-          <span>AI Character Information</span>
+          <span>{% if card.card_category == 'movie_film' %}AI Film Information{% elif card.card_category == 'sports_card' %}AI Player Information{% elif card.card_category == 'celebrity_card' %}AI Celebrity Information{% else %}AI Character Information{% endif %}</span>
         </div>
         <button class="ai-modal-close" id="aiModalClose">&times;</button>
       </div>
@@ -263,7 +274,7 @@
       <div class="ai-modal-body">
         <div class="ai-loading" id="aiLoading">
           <div class="ai-loading-spinner"></div>
-          <div class="ai-loading-text">AI is analyzing the character...</div>
+          <div class="ai-loading-text">AI is analyzing this item...</div>
         </div>
 
         <div class="ai-content" id="aiContent">

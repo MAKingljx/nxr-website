@@ -184,6 +184,7 @@ def upload_manager():
     page_size = get_page_size_arg(default=UPLOAD_LIST_DEFAULT_PAGE_SIZE)
     cert_id_filter = request.args.get('cert_id', '').strip()
     card_name_filter = request.args.get('card_name', '').strip()
+    card_category_filter = normalize_card_category_filter(request.args.get('card_category', '').strip())
     brand_filter = normalize_brand(request.args.get('brand', '').strip())
     language_filter = normalize_language(request.args.get('language', '').strip())
     final_grade_filter = normalize_final_grade_text(request.args.get('final_grade', '').strip())
@@ -238,6 +239,10 @@ def upload_manager():
     if card_name_filter:
         query += " AND card_name LIKE ?"
         params.append(f"%{card_name_filter}%")
+
+    if card_category_filter:
+        query += " AND COALESCE(NULLIF(card_category, ''), 'trading_card') = ?"
+        params.append(card_category_filter)
 
     if brand_filter:
         query += " AND brand = ?"
@@ -303,6 +308,7 @@ def upload_manager():
         'show_client_pushed': 1 if show_client_pushed else 0,
         'cert_id': cert_id_filter,
         'card_name': card_name_filter,
+        'card_category': card_category_filter,
         'brand': brand_filter,
         'language': language_filter,
         'final_grade': final_grade_filter,
@@ -331,6 +337,7 @@ def upload_manager():
                          stats=stats,
                          cert_id_filter=cert_id_filter,
                          card_name_filter=card_name_filter,
+                         card_category_filter=card_category_filter,
                          brand_filter=brand_filter,
                          language_filter=language_filter,
                          final_grade_filter=final_grade_filter,
@@ -339,6 +346,7 @@ def upload_manager():
                          grade_options=grade_options,
                          upload_status_options=upload_status_options,
                          image_status_options=image_status_options,
+                         card_category_options=CARD_CATEGORY_OPTIONS,
                          brand_options=get_brand_options(include_inactive=True),
                          language_options=LANGUAGE_OPTIONS)
 

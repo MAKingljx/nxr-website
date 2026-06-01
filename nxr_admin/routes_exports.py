@@ -181,7 +181,7 @@ def preview_excel_export():
         total_count = conn.execute(f"SELECT COUNT(*) FROM ({query})", params).fetchone()[0]
         rows = conn.execute(
             f'''
-                SELECT cert_id, card_name, brand, final_grade_text, entry_date
+                SELECT cert_id, card_name, card_category, brand, final_grade_text, entry_date
                 FROM ({query})
                 ORDER BY {build_approved_order_clause()}
                 LIMIT 20
@@ -204,6 +204,7 @@ def preview_excel_export():
         'rows': [
             {
                 **dict(row),
+                'card_category_label': get_card_category_label(row['card_category']),
                 'landing_page_url': f"nxrgrading.com/card/{row['cert_id']}",
             }
             for row in rows

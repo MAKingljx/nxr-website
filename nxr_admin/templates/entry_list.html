@@ -71,6 +71,18 @@
                         </div>
 
                         <div class="col-md-2">
+                            <label class="form-label">Category</label>
+                            <select class="form-select" name="card_category">
+                                <option value="">All Categories</option>
+                                {% for option in card_category_options %}
+                                    <option value="{{ option.value }}" {% if card_category_filter == option.value %}selected{% endif %}>
+                                        {{ option.label }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+
+                        <div class="col-md-2">
                             <label class="form-label">Brand</label>
                             <select class="form-select" name="brand">
                                 <option value="">All Brands</option>
@@ -216,7 +228,7 @@
                                         {% endif %}
                                         <th>ID</th>
                                         <th>
-                                            <a href="{{ url_for('entry_list', status=status_filter, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, final_grade=final_grade_filter, set_name=set_name_filter, language=language_filter, entered_by=entered_by_filter, sort_by='cert_id', sort_order='asc' if sort_by == 'cert_id' and sort_order == 'desc' else 'desc', page_size=page_size) }}"
+                                            <a href="{{ url_for('entry_list', status=status_filter, cert_id=cert_id_filter, card_name=card_name_filter, card_category=card_category_filter, brand=brand_filter, final_grade=final_grade_filter, set_name=set_name_filter, language=language_filter, entered_by=entered_by_filter, sort_by='cert_id', sort_order='asc' if sort_by == 'cert_id' and sort_order == 'desc' else 'desc', page_size=page_size) }}"
                                                class="text-decoration-none text-dark">
                                                 Cert ID
                                                 {% if sort_by == 'cert_id' %}
@@ -225,7 +237,7 @@
                                             </a>
                                         </th>
                                         <th>
-                                            <a href="{{ url_for('entry_list', status=status_filter, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, final_grade=final_grade_filter, set_name=set_name_filter, language=language_filter, entered_by=entered_by_filter, sort_by='card_name', sort_order='asc' if sort_by == 'card_name' and sort_order == 'desc' else 'desc', page_size=page_size) }}"
+                                            <a href="{{ url_for('entry_list', status=status_filter, cert_id=cert_id_filter, card_name=card_name_filter, card_category=card_category_filter, brand=brand_filter, final_grade=final_grade_filter, set_name=set_name_filter, language=language_filter, entered_by=entered_by_filter, sort_by='card_name', sort_order='asc' if sort_by == 'card_name' and sort_order == 'desc' else 'desc', page_size=page_size) }}"
                                                class="text-decoration-none text-dark">
                                                 Card Name
                                                 {% if sort_by == 'card_name' %}
@@ -234,7 +246,16 @@
                                             </a>
                                         </th>
                                         <th>
-                                            <a href="{{ url_for('entry_list', status=status_filter, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, final_grade=final_grade_filter, set_name=set_name_filter, language=language_filter, entered_by=entered_by_filter, sort_by='brand', sort_order='asc' if sort_by == 'brand' and sort_order == 'desc' else 'desc', page_size=page_size) }}"
+                                            <a href="{{ url_for('entry_list', status=status_filter, cert_id=cert_id_filter, card_name=card_name_filter, card_category=card_category_filter, brand=brand_filter, final_grade=final_grade_filter, set_name=set_name_filter, language=language_filter, entered_by=entered_by_filter, sort_by='card_category', sort_order='asc' if sort_by == 'card_category' and sort_order == 'desc' else 'desc', page_size=page_size) }}"
+                                               class="text-decoration-none text-dark">
+                                                Category
+                                                {% if sort_by == 'card_category' %}
+                                                    <i class="fas fa-sort-{{ 'up' if sort_order == 'asc' else 'down' }} ms-1"></i>
+                                                {% endif %}
+                                            </a>
+                                        </th>
+                                        <th>
+                                            <a href="{{ url_for('entry_list', status=status_filter, cert_id=cert_id_filter, card_name=card_name_filter, card_category=card_category_filter, brand=brand_filter, final_grade=final_grade_filter, set_name=set_name_filter, language=language_filter, entered_by=entered_by_filter, sort_by='brand', sort_order='asc' if sort_by == 'brand' and sort_order == 'desc' else 'desc', page_size=page_size) }}"
                                                class="text-decoration-none text-dark">
                                                 Brand
                                                 {% if sort_by == 'brand' %}
@@ -243,7 +264,7 @@
                                             </a>
                                         </th>
                                         <th>
-                                            <a href="{{ url_for('entry_list', status=status_filter, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, final_grade=final_grade_filter, set_name=set_name_filter, language=language_filter, entered_by=entered_by_filter, sort_by='final_grade', sort_order='asc' if sort_by == 'final_grade' and sort_order == 'desc' else 'desc', page_size=page_size) }}"
+                                            <a href="{{ url_for('entry_list', status=status_filter, cert_id=cert_id_filter, card_name=card_name_filter, card_category=card_category_filter, brand=brand_filter, final_grade=final_grade_filter, set_name=set_name_filter, language=language_filter, entered_by=entered_by_filter, sort_by='final_grade', sort_order='asc' if sort_by == 'final_grade' and sort_order == 'desc' else 'desc', page_size=page_size) }}"
                                                class="text-decoration-none text-dark">
                                                 Final Grade
                                                 {% if sort_by == 'final_grade' %}
@@ -253,7 +274,7 @@
                                         </th>
                                         <th>Status</th>
                                         <th>
-                                            <a href="{{ url_for('entry_list', status=status_filter, cert_id=cert_id_filter, card_name=card_name_filter, brand=brand_filter, final_grade=final_grade_filter, set_name=set_name_filter, language=language_filter, entered_by=entered_by_filter, sort_by='entry_date', sort_order='asc' if sort_by == 'entry_date' and sort_order == 'desc' else 'desc', page_size=page_size) }}"
+                                            <a href="{{ url_for('entry_list', status=status_filter, cert_id=cert_id_filter, card_name=card_name_filter, card_category=card_category_filter, brand=brand_filter, final_grade=final_grade_filter, set_name=set_name_filter, language=language_filter, entered_by=entered_by_filter, sort_by='entry_date', sort_order='asc' if sort_by == 'entry_date' and sort_order == 'desc' else 'desc', page_size=page_size) }}"
                                                class="text-decoration-none text-dark">
                                                 {% if status_filter == 'approved' %}Approval Date{% else %}Entry Date{% endif %}
                                                 {% if sort_by == 'entry_date' %}
@@ -276,6 +297,7 @@
                                             <td>{{ entry.id }}</td>
                                             <td><strong>{{ entry.cert_id }}</strong></td>
                                             <td>{{ entry.card_name }}</td>
+                                            <td>{{ entry.card_category_label }}</td>
                                             <td>{{ entry.brand }}</td>
                                             <td>
                                                 <strong>{{ entry.final_grade_text }}</strong>
@@ -321,6 +343,7 @@
                                 <input type="hidden" name="status" value="{{ status_filter }}">
                                 <input type="hidden" name="cert_id" value="{{ cert_id_filter }}">
                                 <input type="hidden" name="card_name" value="{{ card_name_filter }}">
+                                <input type="hidden" name="card_category" value="{{ card_category_filter }}">
                                 <input type="hidden" name="brand" value="{{ brand_filter }}">
                                 <input type="hidden" name="final_grade" value="{{ final_grade_filter }}">
                                 <input type="hidden" name="set_name" value="{{ set_name_filter }}">

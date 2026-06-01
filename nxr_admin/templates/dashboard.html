@@ -131,6 +131,7 @@
                                     <tr>
                                         <th>Cert ID</th>
                                         <th>Card Name</th>
+                                        <th>Category</th>
                                         <th>Brand</th>
                                         <th>Set</th>
                                         <th>Language</th>
@@ -145,6 +146,7 @@
                                         <tr>
                                             <td><strong>{{ entry.cert_id }}</strong></td>
                                             <td>{{ entry.card_name }}</td>
+                                            <td>{{ entry.card_category_label }}</td>
                                             <td>{{ entry.brand }}</td>
                                             <td>{{ entry.set_name or '-' }}</td>
                                             <td>{{ entry.language or '-' }}</td>

@@ -324,6 +324,7 @@
                             <tr>
                                 <th>Cert ID</th>
                                 <th>Card Name</th>
+                                <th>Category</th>
                                 <th>Brand</th>
                                 <th>Grade</th>
                                 <th>Landing Page URL</th>
@@ -337,6 +338,7 @@
                     <tr>
                         <td><code>${escapeHtml(row.cert_id)}</code></td>
                         <td>${escapeHtml(row.card_name)}</td>
+                        <td>${escapeHtml(row.card_category_label || row.card_category || '')}</td>
                         <td>${escapeHtml(row.brand)}</td>
                         <td><span class="badge bg-primary">${escapeHtml(row.final_grade_text)}</span></td>
                         <td><small><a href="https://${escapeHtml(row.landing_page_url)}" target="_blank">${escapeHtml(row.landing_page_url)}</a></small></td>

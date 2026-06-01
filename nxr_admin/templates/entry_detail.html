@@ -41,6 +41,24 @@
                                     <td>{{ entry.card_name }}</td>
                                 </tr>
                                 <tr>
+                                    <th>Category:</th>
+                                    <td>{{ entry.card_category_label }}</td>
+                                </tr>
+                                {% if entry.card_category == 'movie_film' %}
+                                <tr>
+                                    <th>Movie Name:</th>
+                                    <td>{{ entry.movie_name }}</td>
+                                </tr>
+                                <tr>
+                                    <th>Release Year:</th>
+                                    <td>{{ entry.release_year }}</td>
+                                </tr>
+                                <tr>
+                                    <th>Production Company:</th>
+                                    <td>{{ entry.production_company }}</td>
+                                </tr>
+                                {% endif %}
+                                <tr>
                                     <th>Brand:</th>
                                     <td>{{ entry.brand }}</td>
                                 </tr>
@@ -60,6 +78,22 @@
                                     <th width="40%">Variety/Type:</th>
                                     <td>{{ entry.variety }}</td>
                                 </tr>
+                                {% if entry.card_category == 'movie_film' %}
+                                <tr>
+                                    <th>Film Type:</th>
+                                    <td>{{ entry.film_type }}</td>
+                                </tr>
+                                {% elif entry.card_category == 'sports_card' %}
+                                <tr>
+                                    <th>Sports Type:</th>
+                                    <td>{{ entry.sports_type }}</td>
+                                </tr>
+                                {% elif entry.card_category == 'celebrity_card' %}
+                                <tr>
+                                    <th>Group Name:</th>
+                                    <td>{{ entry.group_name }}</td>
+                                </tr>
+                                {% endif %}
                                 <tr>
                                     <th>Population:</th>
                                     <td>{{ entry['pop'] }}</td>

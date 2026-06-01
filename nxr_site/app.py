@@ -63,6 +63,13 @@ CARD_LANGUAGE_NAMES = {
     "SPANISH": "Spanish",
     "OTHER": "Other",
 }
+DEFAULT_CARD_CATEGORY = "trading_card"
+CARD_CATEGORY_LABELS = {
+    "trading_card": "Trading Card",
+    "movie_film": "Movie Film",
+    "sports_card": "Sports Card",
+    "celebrity_card": "Celebrity Card",
+}
 AI_CHARACTER_PROMPT_VERSION = "v3"
 AI_ANIME_CONTEXT_HINTS = {
     "pokemon": {
@@ -266,6 +273,25 @@ def get_card_language_label(language_value):
     return CARD_LANGUAGE_NAMES.get(raw_value.upper(), raw_value)
 
 
+def normalize_card_category(value):
+    raw_value = (value or "").strip().lower().replace("-", " ")
+    aliases = {
+        "": DEFAULT_CARD_CATEGORY,
+        "trading card": "trading_card",
+        "trading_card": "trading_card",
+        "movie film": "movie_film",
+        "movie_film": "movie_film",
+        "film": "movie_film",
+        "sports card": "sports_card",
+        "sports_card": "sports_card",
+        "sports": "sports_card",
+        "celebrity card": "celebrity_card",
+        "celebrity_card": "celebrity_card",
+        "celebrity": "celebrity_card",
+    }
+    return aliases.get(raw_value, DEFAULT_CARD_CATEGORY)
+
+
 def normalize_video_brand_key(raw_brand):
     brand = (raw_brand or "").lower().strip()
     if brand in ("pokemon", "poke", "pokemon jpn", "宝可梦"):
@@ -302,8 +328,9 @@ def clean_video_subject(raw_value):
 
 
 def build_card_video_search_url(card):
+    category = normalize_card_category(card.get("card_category"))
     brand_key = normalize_video_brand_key(card.get("brand"))
-    raw_name = (card.get("card_name") or "").strip()
+    raw_name = (card.get("movie_name") or card.get("card_name") or "").strip()
     raw_player = (card.get("player") or "").strip()
 
     if not raw_name:
@@ -320,7 +347,18 @@ def build_card_video_search_url(card):
     if not subject:
         return "", "", ""
 
-    if brand_key == "pokemon":
+    if category == "movie_film":
+        release_year = str(card.get("release_year") or card.get("year") or "").strip()
+        film_type = (card.get("film_type") or card.get("variety") or "").strip()
+        query = " ".join(part for part in [subject, release_year, film_type, "movie film"] if part)
+        label = "Search Film"
+        subtext = "Open a YouTube search for related film videos"
+    elif category == "celebrity_card":
+        group_name = (card.get("group_name") or "").strip()
+        query = " ".join(part for part in [subject, group_name, "celebrity card"] if part)
+        label = "Search Videos"
+        subtext = "Open a YouTube search for related celebrity videos"
+    elif brand_key == "pokemon":
         query = f"Pokemon {subject} anime"
         label = "Watch Anime"
         subtext = "Open a YouTube search for related anime clips"
@@ -359,6 +397,13 @@ def get_card(cert_id):
         ).fetchone()
         if row:
             card = dict(row)
+            category = normalize_card_category(card.get("card_category"))
+            card["card_category"] = category
+            card["card_category_label"] = CARD_CATEGORY_LABELS.get(category, CARD_CATEGORY_LABELS[DEFAULT_CARD_CATEGORY])
+            if category == "movie_film":
+                card["card_name"] = card.get("card_name") or card.get("movie_name") or ""
+                card["year"] = card.get("year") or card.get("release_year") or ""
+                card["variety"] = card.get("variety") or card.get("film_type") or ""
             # Normalize image fields for both old and new templates.
             front_image = normalize_asset_path(card.get("front_image") or card.get("image"))
             back_image = normalize_asset_path(card.get("back_image"), fallback=front_image)
@@ -382,6 +427,13 @@ def build_ai_card_context(card, fallback_brand="", fallback_character=""):
     return {
         "cert_id": (card or {}).get("cert_id", ""),
         "card_name": (card or {}).get("card_name", fallback_character).strip(),
+        "card_category": normalize_card_category((card or {}).get("card_category", "")),
+        "movie_name": ((card or {}).get("movie_name", "") or "").strip(),
+        "release_year": str((card or {}).get("release_year", "") or "").strip(),
+        "production_company": ((card or {}).get("production_company", "") or "").strip(),
+        "film_type": ((card or {}).get("film_type", "") or "").strip(),
+        "sports_type": ((card or {}).get("sports_type", "") or "").strip(),
+        "group_name": ((card or {}).get("group_name", "") or "").strip(),
         "brand": (card or {}).get("brand", fallback_brand).strip(),
         "year": str((card or {}).get("year", "") or "").strip(),
         "set_name": ((card or {}).get("set_name", "") or "").strip(),

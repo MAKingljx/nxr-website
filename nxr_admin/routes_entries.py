@@ -1,5 +1,93 @@
 from nxr_admin.admin_core import *
 
+
+def collect_category_form_data():
+    category = normalize_card_category(request.form.get('card_category', DEFAULT_CARD_CATEGORY))
+    movie_name = request.form.get('movie_name', '').strip()
+    release_year = request.form.get('release_year', '').strip()
+    production_company = request.form.get('production_company', '').strip()
+    film_type = request.form.get('film_type', '').strip()
+    sports_type = request.form.get('sports_type', '').strip()
+    group_name = request.form.get('group_name', '').strip()
+
+    if category == 'movie_film':
+        card_name = movie_name
+        year = release_year
+        variety = film_type
+        sports_type = ''
+        group_name = ''
+        brand = ''
+        language = ''
+        set_name = ''
+        card_number = ''
+    else:
+        card_name = request.form.get('card_name', '').strip()
+        year = request.form.get('year', '').strip()
+        variety = request.form.get('variety', '').strip()
+        brand = request.form.get('brand', '').strip()
+        language = request.form.get('language', '').strip()
+        set_name = request.form.get('set_name', '').strip()
+        card_number = request.form.get('card_number', '').strip()
+        movie_name = ''
+        release_year = ''
+        production_company = ''
+        film_type = ''
+        if category != 'sports_card':
+            sports_type = ''
+        if category != 'celebrity_card':
+            group_name = ''
+
+    return {
+        'card_category': category,
+        'card_name': card_name,
+        'movie_name': movie_name,
+        'release_year': release_year,
+        'production_company': production_company,
+        'film_type': film_type,
+        'sports_type': sports_type,
+        'group_name': group_name,
+        'year': year,
+        'brand': brand,
+        'variety': variety,
+        'language': language,
+        'set_name': set_name,
+        'card_number': card_number,
+    }
+
+
+def is_pop_request_complete(card_data, final_grade_text):
+    category = normalize_card_category(card_data.get('card_category'))
+    required = ['final_grade_text']
+    if category == 'movie_film':
+        required.extend(['movie_name', 'release_year', 'production_company', 'film_type'])
+    else:
+        required.extend(['card_name', 'set_name', 'card_number', 'language'])
+        if category == 'sports_card':
+            required.append('sports_type')
+        elif category == 'celebrity_card':
+            required.append('group_name')
+
+    values = {**card_data, 'final_grade_text': final_grade_text}
+    return all(str(values.get(field) or '').strip() for field in required)
+
+
+def calculate_population_for_card_data(card_data, final_grade_text, exclude_entry_id=None):
+    return calculate_population(
+        card_data.get('card_name', ''),
+        card_data.get('set_name', ''),
+        card_data.get('card_number', ''),
+        card_data.get('language', ''),
+        final_grade_text,
+        exclude_entry_id=exclude_entry_id,
+        card_category=card_data.get('card_category', DEFAULT_CARD_CATEGORY),
+        movie_name=card_data.get('movie_name', ''),
+        release_year=card_data.get('release_year', ''),
+        production_company=card_data.get('production_company', ''),
+        film_type=card_data.get('film_type', ''),
+        sports_type=card_data.get('sports_type', ''),
+        group_name=card_data.get('group_name', ''),
+    )
+
 # ========== New Entry ==========
 @app.route('/admin/entry/new', methods=['GET', 'POST'])
 @login_required
@@ -27,12 +115,10 @@ def new_entry():
             centering_float, edges_float, corners_float, surface_float
         )
 
-        # Get card identity for POP calculation
-        card_name = request.form.get('card_name', '').strip()
-        set_name = request.form.get('set_name', '').strip()
-        card_number = request.form.get('card_number', '').strip()
-        total_pop, language, _, _ = calculate_population(
-            card_name, set_name, card_number, request.form.get('language', ''), final_grade_text
+        card_data = collect_category_form_data()
+        total_pop, language, _, _ = calculate_population_for_card_data(
+            card_data,
+            final_grade_text,
         )
 
         # Handle file uploads
@@ -50,14 +136,9 @@ def new_entry():
         # Prepare entry data
         entry_data = {
             'cert_id': request.form.get('cert_id', '').strip(),
-            'card_name': card_name,
-            'year': request.form.get('year', '').strip(),
-            'brand': request.form.get('brand', '').strip(),
-            'variety': request.form.get('variety', '').strip(),
+            **card_data,
             'pop': str(total_pop),  # Auto-calculated POP
             'language': language,
-            'set_name': set_name,
-            'card_number': card_number,
             'centering': centering_float,
             'edges': edges_float,
             'corners': corners_float,
@@ -77,13 +158,12 @@ def new_entry():
         }
 
         # Validate required fields
-        required_fields = ['cert_id', 'card_name', 'brand', 'language', 'set_name', 'card_number']
-        for field in required_fields:
-            if not entry_data[field]:
-                delete_uploaded_file(front_image_filename)
-                delete_uploaded_file(back_image_filename)
-                flash(f'{field.replace("_", " ").title()} is required', 'error')
-                return redirect(url_for('new_entry'))
+        is_valid_entry, missing_label = validate_category_required_fields(entry_data, include_cert_id=True)
+        if not is_valid_entry:
+            delete_uploaded_file(front_image_filename)
+            delete_uploaded_file(back_image_filename)
+            flash(f'{missing_label} is required', 'error')
+            return redirect(url_for('new_entry'))
 
         # Save to temporary database
         conn = get_temp_db_connection()
@@ -127,6 +207,7 @@ def new_entry():
                          action=url_for('new_entry'),
                          card=None,
                          auto_cert_id=auto_cert_id,
+                         card_category_options=CARD_CATEGORY_OPTIONS,
                          brand_options=get_brand_options(),
                          language_options=LANGUAGE_OPTIONS)
 
@@ -138,6 +219,7 @@ def entry_list():
     status_filter = request.args.get('status', 'all')
     cert_id_filter = request.args.get('cert_id', '').strip()
     card_name_filter = request.args.get('card_name', '').strip()
+    card_category_filter = normalize_card_category_filter(request.args.get('card_category', '').strip())
     final_grade_filter = request.args.get('final_grade', '').strip()
     set_name_filter = request.args.get('set_name', '').strip()
     brand_filter = request.args.get('brand', '').strip()
@@ -149,7 +231,7 @@ def entry_list():
     page_size = get_page_size_arg(default=TEMP_LIST_DEFAULT_PAGE_SIZE)
     
     # Validate sort parameters
-    valid_sort_columns = ['entry_date', 'card_name', 'final_grade', 'set_name', 'language', 'cert_id', 'brand']
+    valid_sort_columns = ['entry_date', 'card_name', 'card_category', 'final_grade', 'set_name', 'language', 'cert_id', 'brand']
     if sort_by not in valid_sort_columns:
         sort_by = 'entry_date'
     
@@ -178,6 +260,10 @@ def entry_list():
     if card_name_filter:
         conditions.append("card_name LIKE ?")
         params.append(f"%{card_name_filter}%")
+
+    if card_category_filter:
+        conditions.append("COALESCE(NULLIF(card_category, ''), 'trading_card') = ?")
+        params.append(card_category_filter)
     
     if final_grade_filter:
         conditions.append("final_grade_text = ?")
@@ -252,6 +338,7 @@ def entry_list():
         'status': status_filter,
         'cert_id': cert_id_filter,
         'card_name': card_name_filter,
+        'card_category': card_category_filter,
         'final_grade': final_grade_filter,
         'set_name': set_name_filter,
         'brand': brand_filter,
@@ -274,6 +361,7 @@ def entry_list():
                          # Filter values
                          cert_id_filter=cert_id_filter,
                          card_name_filter=card_name_filter,
+                         card_category_filter=card_category_filter,
                          final_grade_filter=final_grade_filter,
                          set_name_filter=set_name_filter,
                          brand_filter=brand_filter,
@@ -281,6 +369,7 @@ def entry_list():
                          entered_by_filter=entered_by_filter,
                          # Filter options
                          grade_options=grade_options,
+                         card_category_options=CARD_CATEGORY_OPTIONS,
                          set_options=set_options,
                          brand_options_for_filter=get_brand_options(include_inactive=True),
                          entered_by_options=entered_by_options,
@@ -351,15 +440,9 @@ def edit_entry(entry_id):
             centering_float, edges_float, corners_float, surface_float
         )
 
-        # Get card identity for POP calculation
-        card_name = request.form.get('card_name', '').strip()
-        set_name = request.form.get('set_name', '').strip()
-        card_number = request.form.get('card_number', '').strip()
-        total_pop, language, _, _ = calculate_population(
-            card_name,
-            set_name,
-            card_number,
-            request.form.get('language', ''),
+        card_data = collect_category_form_data()
+        total_pop, language, _, _ = calculate_population_for_card_data(
+            card_data,
             final_grade_text,
             exclude_entry_id=entry_id,
         )
@@ -385,14 +468,9 @@ def edit_entry(entry_id):
 
         # Update entry
         update_data = {
-            'card_name': card_name,
-            'year': request.form.get('year', '').strip(),
-            'brand': request.form.get('brand', '').strip(),
-            'variety': request.form.get('variety', '').strip(),
+            **card_data,
             'pop': str(total_pop),  # Auto-calculated POP
             'language': language,
-            'set_name': set_name,
-            'card_number': card_number,
             'centering': centering_float,
             'edges': edges_float,
             'corners': corners_float,
@@ -429,14 +507,13 @@ def edit_entry(entry_id):
                 published_images_to_delete.append(existing_entry['published_back_image'])
 
         # Validate required fields
-        required_fields = ['card_name', 'brand', 'language', 'set_name', 'card_number']
-        for field in required_fields:
-            if not update_data[field]:
-                delete_uploaded_file(front_image_filename)
-                delete_uploaded_file(back_image_filename)
-                flash(f'{field.replace("_", " ").title()} is required', 'error')
-                conn.close()
-                return redirect(url_for('edit_entry', entry_id=entry_id))
+        is_valid_entry, missing_label = validate_category_required_fields(update_data)
+        if not is_valid_entry:
+            delete_uploaded_file(front_image_filename)
+            delete_uploaded_file(back_image_filename)
+            flash(f'{missing_label} is required', 'error')
+            conn.close()
+            return redirect(url_for('edit_entry', entry_id=entry_id))
 
         try:
             # Build update query
@@ -466,12 +543,13 @@ def edit_entry(entry_id):
 
     # GET request - show edit form
     conn.close()
-    entry = {**dict(existing_entry), 'language': normalize_language(existing_entry['language'])}
+    entry = serialize_temp_entry(existing_entry)
 
     return render_template('entry_form_updated.html',
                          title="Edit Card Entry",
                          action=url_for('edit_entry', entry_id=entry_id),
                          card=entry,
+                         card_category_options=CARD_CATEGORY_OPTIONS,
                          brand_options=get_brand_options_with_current(entry.get('brand')),
                          language_options=LANGUAGE_OPTIONS)
 
@@ -615,33 +693,60 @@ def api_calculate_grade():
 def api_calculate_pop():
     """API endpoint to calculate POP (Population)"""
     try:
-        data = request.get_json()
-        card_name = data.get('card_name', '').strip()
-        set_name = data.get('set_name', '').strip()
-        card_number = data.get('card_number', '').strip()
-        language = data.get('language', '').strip()
+        data = request.get_json() or {}
+        card_data = {
+            'card_category': normalize_card_category(data.get('card_category', DEFAULT_CARD_CATEGORY)),
+            'card_name': data.get('card_name', '').strip(),
+            'set_name': data.get('set_name', '').strip(),
+            'card_number': data.get('card_number', '').strip(),
+            'language': data.get('language', '').strip(),
+            'movie_name': data.get('movie_name', '').strip(),
+            'release_year': data.get('release_year', '').strip(),
+            'production_company': data.get('production_company', '').strip(),
+            'film_type': data.get('film_type', '').strip(),
+            'sports_type': data.get('sports_type', '').strip(),
+            'group_name': data.get('group_name', '').strip(),
+        }
         final_grade_text = data.get('final_grade_text', '').strip()
         current_entry_id = data.get('current_entry_id')
 
         # Validate required fields
-        if not all([card_name, set_name, card_number, language, final_grade_text]):
+        if not is_pop_request_complete(card_data, final_grade_text):
             return jsonify({'pop': '1', 'message': 'Incomplete data for POP calculation'})
 
         exclude_entry_id = int(current_entry_id) if current_entry_id not in (None, '', 'null') else None
-        total_pop, normalized_language, temp_count, main_count = calculate_population(
-            card_name,
-            set_name,
-            card_number,
-            language,
+        total_pop, normalized_language, temp_count, main_count = calculate_population_for_card_data(
+            card_data,
             final_grade_text,
             exclude_entry_id=exclude_entry_id,
         )
+        category = normalize_card_category(card_data.get('card_category'))
+        if category == 'movie_film':
+            identity = ' / '.join([
+                card_data.get('movie_name', ''),
+                card_data.get('release_year', ''),
+                card_data.get('production_company', ''),
+                card_data.get('film_type', ''),
+            ])
+        else:
+            identity_parts = [
+                card_data.get('card_name', ''),
+                card_data.get('set_name', ''),
+                card_data.get('card_number', ''),
+                normalized_language,
+            ]
+            if category == 'sports_card':
+                identity_parts.append(card_data.get('sports_type', ''))
+            elif category == 'celebrity_card':
+                identity_parts.append(card_data.get('group_name', ''))
+            identity = ' / '.join(identity_parts)
 
         return jsonify({
             'pop': str(total_pop),
             'calculation': f'Temporary DB: {temp_count} + Main DB: {main_count} + 1 = {total_pop}',
             'details': {
-                'card_identity': f'{card_name} / {set_name} / {card_number} / {normalized_language}',
+                'card_category': category,
+                'card_identity': identity,
                 'grade': final_grade_text,
                 'temp_count': temp_count,
                 'main_count': main_count
@@ -659,16 +764,21 @@ def api_match_card():
     """Auto-fill card metadata from existing temp or main records."""
     try:
         data = request.get_json() or {}
+        card_category = normalize_card_category(data.get('card_category', DEFAULT_CARD_CATEGORY))
         set_name = data.get('set_name', '').strip()
         card_number = data.get('card_number', '').strip()
+
+        if card_category == 'movie_film':
+            return jsonify({'found': False, 'message': 'Movie Film entries are matched by movie details, not set number.'})
 
         if not set_name or not card_number:
             return jsonify({'error': 'Set name and card number are required'}), 400
 
         lookup_sql = '''
-            SELECT card_name, brand, year, variety, language
+            SELECT card_name, brand, year, variety, language, sports_type, group_name
             FROM {table_name}
-            WHERE set_name = ? COLLATE NOCASE
+            WHERE COALESCE(NULLIF(card_category, ''), 'trading_card') = ?
+              AND set_name = ? COLLATE NOCASE
               AND card_number = ? COLLATE NOCASE
             {order_clause}
             LIMIT 1
@@ -702,7 +812,7 @@ def api_match_card():
             with connection_factory() as conn:
                 row = conn.execute(
                     lookup_sql.format(table_name=table_name, order_clause=order_clause),
-                    (set_name, card_number),
+                    (card_category, set_name, card_number),
                 ).fetchone()
             if not row:
                 continue
@@ -714,6 +824,8 @@ def api_match_card():
                 'year': row['year'] or '',
                 'variety': row['variety'] or '',
                 'language': normalize_language(row['language']),
+                'sports_type': row['sports_type'] or '',
+                'group_name': row['group_name'] or '',
                 'source': source,
             })
 
@@ -722,4 +834,3 @@ def api_match_card():
     except Exception as exc:
         app.logger.error('Card matching error: %s', exc)
         return jsonify({'error': f'Database error: {exc}'}), 500
-
