@@ -16,6 +16,12 @@ from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash, generate_password_hash
 from functools import wraps
 from PIL import Image
+from nxr_admin.image_storage import (
+    R2_STORAGE_DRIVER,
+    get_public_image_storage_driver,
+    is_remote_image_url,
+    upload_public_image_to_r2,
+)
 
 # Configuration
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -1079,6 +1085,8 @@ def resolve_public_image_path(image_url):
     raw_value = (image_url or '').strip()
     if not raw_value:
         return None
+    if is_remote_image_url(raw_value):
+        return None
     if raw_value.startswith('/static/'):
         safe_name = Path(raw_value).name
         return SITE_STATIC_DIR / safe_name
@@ -1104,6 +1112,8 @@ def cleanup_public_image_variants(cert_id, side, keep_name=None):
 
 
 def delete_public_image(image_url):
+    if is_remote_image_url(image_url):
+        return
     public_path = resolve_public_image_path(image_url)
     if public_path is None:
         return
@@ -1121,6 +1131,9 @@ def sync_uploaded_image_to_site(cert_id, side, filename):
     if not source_path.is_file():
         raise FileNotFoundError(f'{side.title()} image file not found: {source_path.name}')
 
+    if get_public_image_storage_driver() == R2_STORAGE_DRIVER:
+        return upload_public_image_to_r2(source_path, cert_id, side)
+
     public_name = build_public_image_name(cert_id, side, source_path)
     destination_path = SITE_STATIC_DIR / public_name
 
@@ -1128,6 +1141,16 @@ def sync_uploaded_image_to_site(cert_id, side, filename):
     shutil.copy2(source_path, destination_path)
 
     return f'/static/{public_name}'
+
+
+def public_image_reference_exists(image_url):
+    raw_value = (image_url or '').strip()
+    if not raw_value:
+        return False
+    if is_remote_image_url(raw_value):
+        return True
+    public_path = resolve_public_image_path(raw_value)
+    return bool(public_path and public_path.is_file())
 
 
 def _resize_for_storage(image):
@@ -1720,13 +1743,11 @@ def get_entry_image_flags(entry):
     upload_status = ((entry['upload_status'] or 'not_started').strip().lower())
     front_path = resolve_uploaded_file_path(front_name) if front_name else None
     back_path = resolve_uploaded_file_path(back_name) if back_name else None
-    published_front_path = resolve_public_image_path(published_front) if published_front else None
-    published_back_path = resolve_public_image_path(published_back) if published_back else None
 
     has_front = bool(front_path and front_path.is_file())
     has_back = bool(back_path and back_path.is_file())
-    has_published_front = bool(published_front_path and published_front_path.is_file())
-    has_published_back = bool(published_back_path and published_back_path.is_file())
+    has_published_front = public_image_reference_exists(published_front)
+    has_published_back = public_image_reference_exists(published_back)
     has_queue_images = has_front and has_back
     uploaded_to_server = upload_status in {'uploaded', CLIENT_PUSHED_UPLOAD_STATUS}
 
