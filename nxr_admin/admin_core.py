@@ -39,12 +39,9 @@ UPLOAD_FOLDER.mkdir(exist_ok=True)
 
 # Brand seed data
 # -----------------------------------------------------------------------------
-# DEFAULT_BRAND_OPTIONS and BRAND_ALIASES are ONLY consumed by
-# initialize_brand_settings() the very first time the database is created.
-# After the brand_settings table has been seeded, the database is the single
-# source of truth and runtime code (get_brand_options / get_brand_alias_map /
-# normalize_brand) must read exclusively from it. Editing these constants will
-# NOT affect an existing deployment.
+# DEFAULT_BRAND_OPTIONS and BRAND_ALIASES are seed/migration defaults only.
+# Runtime option reads go through the unified dictionary tables, where `brand`
+# and `sports_type` are managed side by side from System Settings.
 DEFAULT_BRAND_OPTIONS = [
     "Pokemon",
     "One Piece",
@@ -152,6 +149,45 @@ LANGUAGE_OPTIONS = [
 ]
 
 DEFAULT_CARD_CATEGORY = 'trading_card'
+BRAND_DICTIONARY_CODE = 'brand'
+SPORTS_TYPE_DICTIONARY_CODE = 'sports_type'
+PROTECTED_DICTIONARY_CODES = {BRAND_DICTIONARY_CODE, SPORTS_TYPE_DICTIONARY_CODE}
+DEFAULT_DICTIONARIES = {
+    SPORTS_TYPE_DICTIONARY_CODE: {
+        'name': 'Sports Type',
+        'description': 'Sports card sport type options',
+        'sort_order': 10,
+        'items': (
+            'Basketball',
+            'Soccer',
+            'Baseball',
+            'Hockey',
+            'Football',
+            'Tennis',
+        ),
+    },
+}
+SPORTS_TYPE_ALIASES = {
+    'basketball': 'Basketball',
+    '篮球': 'Basketball',
+    '籃球': 'Basketball',
+    'soccer': 'Soccer',
+    'football soccer': 'Soccer',
+    'association football': 'Soccer',
+    '足球': 'Soccer',
+    'baseball': 'Baseball',
+    '棒球': 'Baseball',
+    'hockey': 'Hockey',
+    'ice hockey': 'Hockey',
+    '冰球': 'Hockey',
+    'football': 'Football',
+    'american football': 'Football',
+    '橄榄球': 'Football',
+    '橄欖球': 'Football',
+    'tennis': 'Tennis',
+    '网球': 'Tennis',
+    '網球': 'Tennis',
+}
 CARD_CATEGORY_OPTIONS = [
     {'value': 'trading_card', 'label': 'Trading Card'},
     {'value': 'movie_film', 'label': 'Movie Film'},
@@ -453,6 +489,18 @@ def normalize_brand_name(value):
     return ' '.join((value or '').strip().split())
 
 
+def normalize_dictionary_code(value):
+    code = (value or '').strip().lower().replace('-', '_')
+    code = ''.join(ch if ch.isalnum() or ch == '_' else '_' for ch in code)
+    while '__' in code:
+        code = code.replace('__', '_')
+    return code.strip('_')
+
+
+def normalize_dictionary_value(value):
+    return ' '.join((value or '').strip().split())
+
+
 def parse_brand_aliases(value):
     aliases = []
     for chunk in (value or '').replace(',', '\n').splitlines():
@@ -506,24 +554,18 @@ def initialize_brand_settings(conn):
 
 
 def list_brand_settings(include_inactive=True):
-    with get_main_db_connection() as conn:
-        initialize_brand_settings(conn)
-        query = '''
-            SELECT id, name, aliases, sort_order, is_active, created_at, updated_at
-            FROM brand_settings
-        '''
-        params = []
-        if not include_inactive:
-            query += ' WHERE is_active = 1'
-        query += ' ORDER BY sort_order ASC, name COLLATE NOCASE ASC'
-        rows = conn.execute(query, tuple(params)).fetchall()
-        conn.commit()
-
     brands = []
-    for row in rows:
-        brand = dict(row)
-        brand['is_active'] = bool(brand.get('is_active'))
-        brand['alias_list'] = parse_brand_aliases(brand.get('aliases'))
+    for item in list_dictionary_items(group_code=BRAND_DICTIONARY_CODE, include_inactive=include_inactive):
+        brand = {
+            'id': item['id'],
+            'name': item['value'],
+            'aliases': item.get('aliases') or '',
+            'sort_order': item['sort_order'],
+            'is_active': bool(item.get('is_active')),
+            'created_at': item.get('created_at'),
+            'updated_at': item.get('updated_at'),
+            'alias_list': parse_brand_aliases(item.get('aliases')),
+        }
         brands.append(brand)
     return brands
 
@@ -565,70 +607,513 @@ def get_brand_alias_map(include_inactive=True):
 
 
 def get_brand_setting_by_id(brand_id):
-    with get_main_db_connection() as conn:
-        initialize_brand_settings(conn)
-        row = conn.execute(
-            '''
-            SELECT id, name, aliases, sort_order, is_active, created_at, updated_at
-            FROM brand_settings
-            WHERE id = ?
-            LIMIT 1
-            ''',
-            (brand_id,),
-        ).fetchone()
-        conn.commit()
-
-    if not row:
+    item = get_dictionary_item_by_id(brand_id)
+    if not item or normalize_dictionary_code(item.get('group_code')) != BRAND_DICTIONARY_CODE:
         return None
-    brand = dict(row)
-    brand['is_active'] = bool(brand.get('is_active'))
-    brand['alias_list'] = parse_brand_aliases(brand.get('aliases'))
-    return brand
+    return {
+        'id': item['id'],
+        'name': item['value'],
+        'aliases': item.get('aliases') or '',
+        'sort_order': item['sort_order'],
+        'is_active': bool(item.get('is_active')),
+        'created_at': item.get('created_at'),
+        'updated_at': item.get('updated_at'),
+        'alias_list': parse_brand_aliases(item.get('aliases')),
+    }
 
 
 def brand_setting_name_exists(conn, name, exclude_brand_id=None):
-    query = 'SELECT 1 FROM brand_settings WHERE name = ? COLLATE NOCASE'
-    params = [name]
-    if exclude_brand_id is not None:
-        query += ' AND id != ?'
-        params.append(exclude_brand_id)
-    query += ' LIMIT 1'
-    return bool(conn.execute(query, tuple(params)).fetchone())
+    group_id = ensure_dictionary_group(
+        conn,
+        BRAND_DICTIONARY_CODE,
+        'Brand',
+        description='Card brand options',
+        sort_order=1,
+        is_active=1,
+    )
+    return dictionary_item_value_exists(
+        conn,
+        group_id,
+        normalize_brand_name(name),
+        exclude_item_id=exclude_brand_id,
+    )
 
 
 def create_brand_setting(conn, name, aliases='', sort_order=0, is_active=1):
     brand_name = normalize_brand_name(name)
     alias_text = '\n'.join(parse_brand_aliases(aliases))
-    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    conn.execute(
-        '''
-        INSERT INTO brand_settings (name, aliases, sort_order, is_active, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ''',
-        (brand_name, alias_text, int(sort_order or 0), int(bool(is_active)), now, now),
+    group_id = ensure_dictionary_group(
+        conn,
+        BRAND_DICTIONARY_CODE,
+        'Brand',
+        description='Card brand options',
+        sort_order=1,
+        is_active=1,
     )
+    create_dictionary_item(conn, group_id, brand_name, aliases=alias_text, sort_order=sort_order, is_active=is_active)
 
 
 def update_brand_setting(conn, brand_id, name, aliases='', sort_order=0, is_active=1):
     brand_name = normalize_brand_name(name)
     alias_text = '\n'.join(parse_brand_aliases(aliases))
     active_value = 1 if brand_name.lower() == 'other' else int(bool(is_active))
-    conn.execute(
-        '''
-        UPDATE brand_settings
-        SET name = ?, aliases = ?, sort_order = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-        ''',
-        (brand_name, alias_text, int(sort_order or 0), active_value, brand_id),
-    )
+    update_dictionary_item(conn, brand_id, brand_name, aliases=alias_text, sort_order=sort_order, is_active=active_value)
 
 
 def delete_brand_setting(conn, brand_id):
-    row = conn.execute('SELECT name FROM brand_settings WHERE id = ?', (brand_id,)).fetchone()
-    if row and row['name'].lower() == 'other':
+    item = get_dictionary_item_by_id(brand_id)
+    if item and (item['value'] or '').lower() == 'other':
         return False
-    conn.execute('DELETE FROM brand_settings WHERE id = ?', (brand_id,))
+    conn.execute('DELETE FROM dictionary_items WHERE id = ?', (brand_id,))
     return True
+
+
+def ensure_dictionary_tables(conn):
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS dictionary_groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL,
+            name TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.execute('''
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_dictionary_groups_code
+        ON dictionary_groups (code COLLATE NOCASE)
+    ''')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS dictionary_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            group_id INTEGER NOT NULL,
+            value TEXT NOT NULL,
+            aliases TEXT NOT NULL DEFAULT '',
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (group_id) REFERENCES dictionary_groups(id) ON DELETE CASCADE
+        )
+    ''')
+    conn.execute('''
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_dictionary_items_group_value
+        ON dictionary_items (group_id, value COLLATE NOCASE)
+    ''')
+    ensure_columns(conn, 'dictionary_items', [
+        ('aliases', "TEXT NOT NULL DEFAULT ''"),
+    ])
+
+
+def initialize_dictionary_tables(conn):
+    ensure_dictionary_tables(conn)
+    seed_brand_dictionary(conn)
+    seed_default_dictionaries(conn)
+
+
+def ensure_dictionary_group(conn, code, name, description='', sort_order=0, is_active=1):
+    normalized_code = normalize_dictionary_code(code)
+    group_name = normalize_dictionary_value(name)
+    row = conn.execute(
+        '''
+        SELECT id
+        FROM dictionary_groups
+        WHERE code = ? COLLATE NOCASE
+        LIMIT 1
+        ''',
+        (normalized_code,),
+    ).fetchone()
+    if row:
+        return row['id']
+
+    conn.execute(
+        '''
+        INSERT INTO dictionary_groups (
+            code, name, description, sort_order, is_active, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ''',
+        (
+            normalized_code,
+            group_name,
+            (description or '').strip(),
+            int(sort_order or 0),
+            int(bool(is_active)),
+        ),
+    )
+    return conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+
+
+def is_protected_dictionary_code(code):
+    return normalize_dictionary_code(code) in PROTECTED_DICTIONARY_CODES
+
+
+def seed_brand_dictionary(conn):
+    group_id = ensure_dictionary_group(
+        conn,
+        BRAND_DICTIONARY_CODE,
+        'Brand',
+        description='Card brand options used by entry forms and normalization',
+        sort_order=1,
+        is_active=1,
+    )
+    existing_count = conn.execute(
+        'SELECT COUNT(*) FROM dictionary_items WHERE group_id = ?',
+        (group_id,),
+    ).fetchone()[0]
+    if existing_count:
+        return
+
+    ensure_brand_settings_table(conn)
+    legacy_rows = conn.execute(
+        '''
+        SELECT name, aliases, sort_order, is_active
+        FROM brand_settings
+        ORDER BY sort_order ASC, name COLLATE NOCASE ASC
+        '''
+    ).fetchall()
+
+    if legacy_rows:
+        for row in legacy_rows:
+            brand_name = normalize_brand_name(row['name'])
+            if not brand_name:
+                continue
+            create_dictionary_item(
+                conn,
+                group_id,
+                brand_name,
+                aliases=row['aliases'] or '',
+                sort_order=row['sort_order'] or 0,
+                is_active=row['is_active'],
+            )
+        return
+
+    for sort_order, brand_name in enumerate(DEFAULT_BRAND_OPTIONS, start=1):
+        create_dictionary_item(
+            conn,
+            group_id,
+            brand_name,
+            aliases=default_aliases_for_brand(brand_name),
+            sort_order=sort_order,
+            is_active=1,
+        )
+
+
+def seed_default_dictionaries(conn):
+    for code, config in DEFAULT_DICTIONARIES.items():
+        normalized_code = normalize_dictionary_code(code)
+        group_name = normalize_dictionary_value(config.get('name'))
+        if not normalized_code or not group_name:
+            continue
+
+        group_id = ensure_dictionary_group(
+            conn,
+            normalized_code,
+            group_name,
+            description=(config.get('description') or '').strip(),
+            sort_order=int(config.get('sort_order') or 0),
+            is_active=1,
+        )
+        existing_count = conn.execute(
+            'SELECT COUNT(*) FROM dictionary_items WHERE group_id = ?',
+            (group_id,),
+        ).fetchone()[0]
+        if existing_count:
+            continue
+
+        for index, item_value in enumerate(config.get('items') or (), start=1):
+            normalized_value = normalize_dictionary_value(item_value)
+            if not normalized_value:
+                continue
+            if dictionary_item_value_exists(conn, group_id, normalized_value):
+                continue
+            conn.execute(
+                '''
+                INSERT INTO dictionary_items (
+                    group_id, value, aliases, sort_order, is_active, created_at, updated_at
+                )
+                VALUES (?, ?, '', ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ''',
+                (group_id, normalized_value, index * 10),
+            )
+
+
+def list_dictionary_groups(include_inactive=True):
+    with get_main_db_connection() as conn:
+        initialize_dictionary_tables(conn)
+        query = '''
+            SELECT
+                g.id,
+                g.code,
+                g.name,
+                g.description,
+                g.sort_order,
+                g.is_active,
+                g.created_at,
+                g.updated_at,
+                COUNT(i.id) AS item_count,
+                COALESCE(SUM(CASE WHEN i.is_active = 1 THEN 1 ELSE 0 END), 0) AS active_item_count
+            FROM dictionary_groups g
+            LEFT JOIN dictionary_items i ON i.group_id = g.id
+        '''
+        if not include_inactive:
+            query += ' WHERE g.is_active = 1'
+        query += '''
+            GROUP BY g.id
+            ORDER BY g.sort_order ASC, g.name COLLATE NOCASE ASC
+        '''
+        rows = conn.execute(query).fetchall()
+        conn.commit()
+    groups = []
+    for row in rows:
+        group = dict(row)
+        group['is_active'] = bool(group.get('is_active'))
+        groups.append(group)
+    return groups
+
+
+def get_dictionary_group_by_id(group_id):
+    with get_main_db_connection() as conn:
+        initialize_dictionary_tables(conn)
+        row = conn.execute(
+            '''
+            SELECT id, code, name, description, sort_order, is_active, created_at, updated_at
+            FROM dictionary_groups
+            WHERE id = ?
+            LIMIT 1
+            ''',
+            (group_id,),
+        ).fetchone()
+        conn.commit()
+    if not row:
+        return None
+    group = dict(row)
+    group['is_active'] = bool(group.get('is_active'))
+    return group
+
+
+def get_dictionary_group_by_code(code):
+    normalized_code = normalize_dictionary_code(code)
+    if not normalized_code:
+        return None
+    with get_main_db_connection() as conn:
+        initialize_dictionary_tables(conn)
+        row = conn.execute(
+            '''
+            SELECT id, code, name, description, sort_order, is_active, created_at, updated_at
+            FROM dictionary_groups
+            WHERE code = ? COLLATE NOCASE
+            LIMIT 1
+            ''',
+            (normalized_code,),
+        ).fetchone()
+        conn.commit()
+    if not row:
+        return None
+    group = dict(row)
+    group['is_active'] = bool(group.get('is_active'))
+    return group
+
+
+def dictionary_group_code_exists(conn, code, exclude_group_id=None):
+    normalized_code = normalize_dictionary_code(code)
+    if not normalized_code:
+        return False
+    query = 'SELECT 1 FROM dictionary_groups WHERE code = ? COLLATE NOCASE'
+    params = [normalized_code]
+    if exclude_group_id is not None:
+        query += ' AND id != ?'
+        params.append(exclude_group_id)
+    query += ' LIMIT 1'
+    return bool(conn.execute(query, tuple(params)).fetchone())
+
+
+def create_dictionary_group(conn, code, name, description='', sort_order=0, is_active=1):
+    normalized_code = normalize_dictionary_code(code)
+    group_name = normalize_dictionary_value(name)
+    if not normalized_code or not group_name:
+        raise ValueError('Dictionary code and name are required')
+    conn.execute(
+        '''
+        INSERT INTO dictionary_groups (code, name, description, sort_order, is_active, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ''',
+        (normalized_code, group_name, (description or '').strip(), int(sort_order or 0), int(bool(is_active))),
+    )
+
+
+def update_dictionary_group(conn, group_id, code, name, description='', sort_order=0, is_active=1):
+    normalized_code = normalize_dictionary_code(code)
+    group_name = normalize_dictionary_value(name)
+    if not normalized_code or not group_name:
+        raise ValueError('Dictionary code and name are required')
+    conn.execute(
+        '''
+        UPDATE dictionary_groups
+        SET code = ?, name = ?, description = ?, sort_order = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        ''',
+        (normalized_code, group_name, (description or '').strip(), int(sort_order or 0), int(bool(is_active)), group_id),
+    )
+
+
+def delete_dictionary_group(conn, group_id):
+    conn.execute('DELETE FROM dictionary_items WHERE group_id = ?', (group_id,))
+    conn.execute('DELETE FROM dictionary_groups WHERE id = ?', (group_id,))
+
+
+def list_dictionary_items(group_id=None, group_code=None, include_inactive=True):
+    with get_main_db_connection() as conn:
+        initialize_dictionary_tables(conn)
+        params = []
+        query = '''
+            SELECT
+                i.id,
+                i.group_id,
+                g.code AS group_code,
+                g.name AS group_name,
+                i.value,
+                i.aliases,
+                i.sort_order,
+                i.is_active,
+                i.created_at,
+                i.updated_at
+            FROM dictionary_items i
+            JOIN dictionary_groups g ON g.id = i.group_id
+            WHERE 1 = 1
+        '''
+        if group_id is not None:
+            query += ' AND i.group_id = ?'
+            params.append(group_id)
+        if group_code:
+            query += ' AND g.code = ? COLLATE NOCASE'
+            params.append(normalize_dictionary_code(group_code))
+        if not include_inactive:
+            query += ' AND i.is_active = 1 AND g.is_active = 1'
+        query += ' ORDER BY i.sort_order ASC, i.value COLLATE NOCASE ASC'
+        rows = conn.execute(query, tuple(params)).fetchall()
+        conn.commit()
+    items = []
+    for row in rows:
+        item = dict(row)
+        item['is_active'] = bool(item.get('is_active'))
+        items.append(item)
+    return items
+
+
+def get_dictionary_item_by_id(item_id):
+    with get_main_db_connection() as conn:
+        initialize_dictionary_tables(conn)
+        row = conn.execute(
+            '''
+            SELECT
+                i.id,
+                i.group_id,
+                g.code AS group_code,
+                g.name AS group_name,
+                i.value,
+                i.aliases,
+                i.sort_order,
+                i.is_active,
+                i.created_at,
+                i.updated_at
+            FROM dictionary_items i
+            JOIN dictionary_groups g ON g.id = i.group_id
+            WHERE i.id = ?
+            LIMIT 1
+            ''',
+            (item_id,),
+        ).fetchone()
+        conn.commit()
+    if not row:
+        return None
+    item = dict(row)
+    item['is_active'] = bool(item.get('is_active'))
+    return item
+
+
+def dictionary_item_value_exists(conn, group_id, value, exclude_item_id=None):
+    normalized_value = normalize_dictionary_value(value)
+    if not normalized_value:
+        return False
+    query = 'SELECT 1 FROM dictionary_items WHERE group_id = ? AND value = ? COLLATE NOCASE'
+    params = [group_id, normalized_value]
+    if exclude_item_id is not None:
+        query += ' AND id != ?'
+        params.append(exclude_item_id)
+    query += ' LIMIT 1'
+    return bool(conn.execute(query, tuple(params)).fetchone())
+
+
+def create_dictionary_item(conn, group_id, value, aliases='', sort_order=0, is_active=1):
+    item_value = normalize_dictionary_value(value)
+    if not item_value:
+        raise ValueError('Dictionary item value is required')
+    alias_text = '\n'.join(parse_brand_aliases(aliases))
+    conn.execute(
+        '''
+        INSERT INTO dictionary_items (group_id, value, aliases, sort_order, is_active, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ''',
+        (group_id, item_value, alias_text, int(sort_order or 0), int(bool(is_active))),
+    )
+
+
+def update_dictionary_item(conn, item_id, value, aliases='', sort_order=0, is_active=1):
+    item_value = normalize_dictionary_value(value)
+    if not item_value:
+        raise ValueError('Dictionary item value is required')
+    alias_text = '\n'.join(parse_brand_aliases(aliases))
+    conn.execute(
+        '''
+        UPDATE dictionary_items
+        SET value = ?, aliases = ?, sort_order = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+        ''',
+        (item_value, alias_text, int(sort_order or 0), int(bool(is_active)), item_id),
+    )
+
+
+def delete_dictionary_item(conn, item_id):
+    conn.execute('DELETE FROM dictionary_items WHERE id = ?', (item_id,))
+
+
+def get_dictionary_options(group_code, include_inactive=False):
+    return [
+        item['value']
+        for item in list_dictionary_items(group_code=group_code, include_inactive=include_inactive)
+        if item.get('value')
+    ]
+
+
+def get_dictionary_options_with_current(group_code, current_value=''):
+    options = get_dictionary_options(group_code)
+    current = normalize_dictionary_value(current_value)
+    if current and not any(current.lower() == option.lower() for option in options):
+        options.append(current)
+    return options
+
+
+def normalize_dictionary_value_for_group(group_code, value):
+    raw_value = normalize_dictionary_value(value)
+    if not raw_value:
+        return ''
+    for option in get_dictionary_options(group_code, include_inactive=True):
+        if option.lower() == raw_value.lower():
+            return option
+    return raw_value
+
+
+def get_sports_type_options(current_value=''):
+    return get_dictionary_options_with_current(SPORTS_TYPE_DICTIONARY_CODE, current_value=current_value)
+
+
+def normalize_sports_type(value):
+    raw_value = normalize_dictionary_value(value)
+    alias_value = SPORTS_TYPE_ALIASES.get(raw_value.lower(), raw_value)
+    return normalize_dictionary_value_for_group(SPORTS_TYPE_DICTIONARY_CODE, alias_value)
 
 
 def get_admin_account(username):
@@ -1217,7 +1702,7 @@ def initialize_main_database():
     cursor = conn.cursor()
 
     initialize_admin_users(conn)
-    initialize_brand_settings(conn)
+    initialize_dictionary_tables(conn)
 
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS cards (

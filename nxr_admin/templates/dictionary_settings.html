@@ -1,0 +1,239 @@
+{% extends "base.html" %}
+
+{% block title %}Dictionary Settings - NXR Card Grading{% endblock %}
+{% block page_title %}<i class="fas fa-list-ul me-2"></i>Dictionary Settings{% endblock %}
+
+{% block page_actions %}
+<a href="{{ url_for('system_settings') }}" class="btn btn-outline-secondary btn-sm">
+    <i class="fas fa-arrow-left me-1"></i>Back to System Settings
+</a>
+{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb" class="mb-3">
+    <ol class="breadcrumb small mb-0">
+        <li class="breadcrumb-item"><a href="{{ url_for('system_settings') }}">System Settings</a></li>
+        <li class="breadcrumb-item active" aria-current="page">Dictionary Settings</li>
+    </ol>
+</nav>
+
+<div class="row g-4">
+    <div class="col-lg-4">
+        <div class="card mb-4">
+            <div class="card-header">
+                <i class="fas fa-plus-circle me-2"></i>Add Dictionary
+            </div>
+            <div class="card-body">
+                <form method="post" action="{{ url_for('dictionary_settings') }}">
+                    <div class="mb-3">
+                        <label for="code" class="form-label">Code</label>
+                        <input type="text" class="form-control" id="code" name="code" maxlength="80" placeholder="sports_type" required>
+                        <div class="form-text">Use <code>brand</code> for card brands and <code>sports_type</code> for sports cards.</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="name" class="form-label">Name</label>
+                        <input type="text" class="form-control" id="name" name="name" maxlength="120" placeholder="Sports Type" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="description" class="form-label">Description</label>
+                        <textarea class="form-control" id="description" name="description" rows="3"></textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label for="sort_order" class="form-label">Sort Order</label>
+                        <input type="number" class="form-control" id="sort_order" name="sort_order" value="0">
+                    </div>
+                    <div class="form-check form-switch mb-3">
+                        <input class="form-check-input" type="checkbox" role="switch" id="is_active" name="is_active" value="1" checked>
+                        <label class="form-check-label" for="is_active">Active</label>
+                    </div>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="fas fa-save me-1"></i>Add Dictionary
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="fas fa-layer-group me-2"></i>Dictionaries</span>
+                <span class="badge bg-light text-dark border">{{ active_group_count }} active / {{ total_group_count }} total</span>
+            </div>
+            <div class="list-group list-group-flush">
+                {% for group in groups %}
+                <a href="{{ url_for('dictionary_settings', group_id=group.id) }}"
+                   class="list-group-item list-group-item-action {% if selected_group and selected_group.id == group.id %}active{% endif %}">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <div class="fw-semibold">{{ group.name }}</div>
+                            <div class="small {% if selected_group and selected_group.id == group.id %}text-white-50{% else %}text-muted{% endif %}">{{ group.code }}</div>
+                        </div>
+                        <span class="badge {% if selected_group and selected_group.id == group.id %}bg-light text-dark{% else %}bg-secondary{% endif %}">
+                            {{ group.active_item_count }}/{{ group.item_count }}
+                        </span>
+                    </div>
+                </a>
+                {% endfor %}
+                {% if not groups %}
+                <div class="list-group-item text-muted">No dictionaries configured.</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-8">
+        {% if selected_group %}
+        <div class="card mb-4">
+            <div class="card-header">
+                <i class="fas fa-edit me-2"></i>Edit Dictionary
+            </div>
+            <div class="card-body">
+                <form method="post" action="{{ url_for('update_dictionary_group_route', group_id=selected_group.id) }}">
+                    <div class="row g-3">
+                        <div class="col-md-4">
+                            <label class="form-label">Code</label>
+                            <input type="text" class="form-control" name="code" value="{{ selected_group.code }}" maxlength="80" required {% if selected_group.code in protected_dictionary_codes %}readonly{% endif %}>
+                            {% if selected_group.code in protected_dictionary_codes %}
+                            <div class="form-text">Workflow dictionary codes cannot be changed.</div>
+                            {% endif %}
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">Name</label>
+                            <input type="text" class="form-control" name="name" value="{{ selected_group.name }}" maxlength="120" required>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Order</label>
+                            <input type="number" class="form-control" name="sort_order" value="{{ selected_group.sort_order }}">
+                        </div>
+                        <div class="col-md-2 d-flex align-items-end">
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" role="switch" name="is_active" value="1" {% if selected_group.is_active %}checked{% endif %} {% if selected_group.code in protected_dictionary_codes %}disabled{% endif %}>
+                                <label class="form-check-label">Active</label>
+                                {% if selected_group.code in protected_dictionary_codes %}
+                                <input type="hidden" name="is_active" value="1">
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Description</label>
+                            <textarea class="form-control" name="description" rows="2">{{ selected_group.description }}</textarea>
+                        </div>
+                    </div>
+                    <div class="mt-3 d-flex justify-content-between">
+                        <button type="submit" class="btn btn-outline-primary">
+                            <i class="fas fa-save me-1"></i>Save Dictionary
+                        </button>
+                        <button type="submit" form="delete-dictionary-{{ selected_group.id }}" class="btn btn-outline-danger" onclick="return confirm('Delete this dictionary and all its items?');" {% if selected_group.code in protected_dictionary_codes %}disabled{% endif %}>
+                            <i class="fas fa-trash me-1"></i>Delete Dictionary
+                        </button>
+                    </div>
+                </form>
+                <form id="delete-dictionary-{{ selected_group.id }}" method="post" action="{{ url_for('delete_dictionary_group_route', group_id=selected_group.id) }}"></form>
+            </div>
+        </div>
+
+        <div class="card mb-4">
+            <div class="card-header">
+                <i class="fas fa-plus me-2"></i>Add Item to {{ selected_group.name }}
+            </div>
+            <div class="card-body">
+                <form method="post" action="{{ url_for('create_dictionary_item_route', group_id=selected_group.id) }}" class="row g-3 align-items-end">
+                    <div class="col-md-3">
+                        <label for="item_value" class="form-label">Value</label>
+                        <input type="text" class="form-control" id="item_value" name="value" maxlength="120" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="item_aliases" class="form-label">Aliases</label>
+                        <textarea class="form-control" id="item_aliases" name="aliases" rows="1" placeholder="One alias per line"></textarea>
+                    </div>
+                    <div class="col-md-2">
+                        <label for="item_sort_order" class="form-label">Order</label>
+                        <input type="number" class="form-control" id="item_sort_order" name="sort_order" value="0">
+                    </div>
+                    <div class="col-md-1">
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" role="switch" id="item_is_active" name="is_active" value="1" checked>
+                            <label class="form-check-label" for="item_is_active">Active</label>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <button type="submit" class="btn btn-primary w-100">
+                            <i class="fas fa-save me-1"></i>Add
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span><i class="fas fa-list me-2"></i>Items</span>
+                <div class="d-flex gap-2">
+                    <span class="badge bg-success">Active {{ active_item_count }}</span>
+                    <span class="badge bg-secondary">Total {{ total_item_count }}</span>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th>Value</th>
+                                <th>Aliases</th>
+                                <th style="width: 110px;">Order</th>
+                                <th style="width: 120px;">Status</th>
+                                <th class="text-end" style="width: 170px;">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in items %}
+                            <tr>
+                                <td colspan="5" class="p-0">
+                                    <form method="post" action="{{ url_for('update_dictionary_item_route', item_id=item.id) }}" class="row g-0 align-items-stretch">
+                                        <div class="col-lg-3 p-2">
+                                            <input type="text" class="form-control form-control-sm" name="value" value="{{ item.value }}" maxlength="120" required>
+                                        </div>
+                                        <div class="col-lg-3 p-2">
+                                            <textarea class="form-control form-control-sm" name="aliases" rows="2" placeholder="One alias per line">{{ item.aliases }}</textarea>
+                                        </div>
+                                        <div class="col-lg-2 p-2">
+                                            <input type="number" class="form-control form-control-sm" name="sort_order" value="{{ item.sort_order }}">
+                                        </div>
+                                        <div class="col-lg-2 p-2">
+                                            <div class="form-check form-switch mt-1">
+                                                {% set is_brand_other = item.group_code == brand_dictionary_code and item.value|lower == 'other' %}
+                                                <input class="form-check-input" type="checkbox" role="switch" name="is_active" value="1" {% if item.is_active %}checked{% endif %} {% if is_brand_other %}disabled{% endif %}>
+                                                <label class="form-check-label small">{{ 'Active' if item.is_active else 'Inactive' }}</label>
+                                                {% if is_brand_other %}
+                                                <input type="hidden" name="is_active" value="1">
+                                                {% endif %}
+                                            </div>
+                                        </div>
+                                        <div class="col-lg-2 p-2 text-end">
+                                            <button type="submit" class="btn btn-sm btn-outline-primary">
+                                                <i class="fas fa-save me-1"></i>Save
+                                            </button>
+                                            <button type="submit" form="delete-dictionary-item-{{ item.id }}" class="btn btn-sm btn-outline-danger" onclick="return confirm('Delete this dictionary item?');" {% if is_brand_other %}disabled{% endif %}>
+                                                <i class="fas fa-trash me-1"></i>Delete
+                                            </button>
+                                        </div>
+                                    </form>
+                                    <form id="delete-dictionary-item-{{ item.id }}" method="post" action="{{ url_for('delete_dictionary_item_route', item_id=item.id) }}"></form>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                            {% if not items %}
+                            <tr>
+                                <td colspan="5" class="text-center text-muted py-4">No items configured for this dictionary.</td>
+                            </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="alert alert-info">Create a dictionary to start adding reusable options.</div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

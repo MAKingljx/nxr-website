@@ -120,6 +120,18 @@
         element.dispatchEvent(new Event('change', {bubbles: true}));
     }
 
+    function setSelectValueWithFallback(fieldId, value) {
+        const field = document.getElementById(fieldId);
+        if (!field) {
+            return;
+        }
+        const nextValue = (value || '').trim();
+        if (nextValue && field.tagName === 'SELECT' && !Array.from(field.options).some(option => option.value === nextValue)) {
+            field.add(new Option(nextValue, nextValue));
+        }
+        field.value = nextValue;
+    }
+
     function getSelectedCategory() {
         const categoryField = document.getElementById('card_category');
         return categoryField ? categoryField.value : 'trading_card';
@@ -224,7 +236,7 @@
             }
             const sportsTypeField = document.getElementById('sports_type');
             if (sportsTypeField) {
-                sportsTypeField.value = data.sports_type || '';
+                setSelectValueWithFallback('sports_type', data.sports_type || '');
             }
             const groupNameField = document.getElementById('group_name');
             if (groupNameField) {
@@ -713,8 +725,15 @@
 
                                     <div id="sports-type-field" class="mb-3 d-none">
                                         <label for="sports_type" class="form-label">Sports Type *</label>
-                                        <input type="text" class="form-control" id="sports_type" name="sports_type"
-                                               value="{{ card.sports_type if card else '' }}" placeholder="Basketball, Football, Baseball...">
+                                        <select class="form-select" id="sports_type" name="sports_type">
+                                            <option value="">-- Select Sports Type --</option>
+                                            {% for sports_type in sports_type_options %}
+                                                <option value="{{ sports_type }}"
+                                                    {% if card and card.sports_type == sports_type %}selected{% endif %}>
+                                                    {{ sports_type }}
+                                                </option>
+                                            {% endfor %}
+                                        </select>
                                     </div>
 
                                     <div id="group-name-field" class="mb-3 d-none">

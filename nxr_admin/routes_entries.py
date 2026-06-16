@@ -7,7 +7,7 @@ def collect_category_form_data():
     release_year = request.form.get('release_year', '').strip()
     production_company = request.form.get('production_company', '').strip()
     film_type = request.form.get('film_type', '').strip()
-    sports_type = request.form.get('sports_type', '').strip()
+    sports_type = normalize_sports_type(request.form.get('sports_type', ''))
     group_name = request.form.get('group_name', '').strip()
 
     if category == 'movie_film':
@@ -208,6 +208,7 @@ def new_entry():
                          card=None,
                          auto_cert_id=auto_cert_id,
                          card_category_options=CARD_CATEGORY_OPTIONS,
+                         sports_type_options=get_sports_type_options(),
                          brand_options=get_brand_options(),
                          language_options=LANGUAGE_OPTIONS)
 
@@ -550,6 +551,7 @@ def edit_entry(entry_id):
                          action=url_for('edit_entry', entry_id=entry_id),
                          card=entry,
                          card_category_options=CARD_CATEGORY_OPTIONS,
+                         sports_type_options=get_sports_type_options(entry.get('sports_type')),
                          brand_options=get_brand_options_with_current(entry.get('brand')),
                          language_options=LANGUAGE_OPTIONS)
 
@@ -704,7 +706,7 @@ def api_calculate_pop():
             'release_year': data.get('release_year', '').strip(),
             'production_company': data.get('production_company', '').strip(),
             'film_type': data.get('film_type', '').strip(),
-            'sports_type': data.get('sports_type', '').strip(),
+            'sports_type': normalize_sports_type(data.get('sports_type', '')),
             'group_name': data.get('group_name', '').strip(),
         }
         final_grade_text = data.get('final_grade_text', '').strip()

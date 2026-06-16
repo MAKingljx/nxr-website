@@ -38,22 +38,24 @@ with tempfile.TemporaryDirectory() as tmp:
         sess['username'] = 'admin'
         sess['role'] = 'superadmin'
 
-    # System Settings hub should render and link to Brand Settings.
+    # System Settings hub should render and link to the unified dictionary settings.
     response = client.get('/admin/settings')
     assert response.status_code == 200, response.status_code
     assert b'System Settings' in response.data
-    assert b'Brand Settings' in response.data
-    assert b'/admin/settings/brands' in response.data
+    assert b'Dictionary Settings' in response.data
+    assert b'/admin/settings/dictionaries' in response.data
 
-    response = client.get('/admin/settings/brands')
+    brand_group = admin_core.get_dictionary_group_by_code(admin_core.BRAND_DICTIONARY_CODE)
+    response = client.get(f'/admin/settings/dictionaries?group_id={brand_group["id"]}')
     assert response.status_code == 200, response.status_code
-    assert b'Brand Settings' in response.data
+    assert b'Dictionary Settings' in response.data
+    assert b'brand' in response.data
     assert b'Back to System Settings' in response.data
 
     response = client.post(
-        '/admin/settings/brands',
+        f'/admin/settings/dictionaries/{brand_group["id"]}/items',
         data={
-            'name': 'Local Test Brand',
+            'value': 'Local Test Brand',
             'aliases': 'ltb\nlocal-test',
             'sort_order': '998',
             'is_active': '1',
@@ -71,9 +73,9 @@ with tempfile.TemporaryDirectory() as tmp:
 
     brand = next(item for item in admin_core.list_brand_settings() if item['name'] == 'Local Test Brand')
     response = client.post(
-        f'/admin/settings/brands/{brand["id"]}/edit',
+        f'/admin/settings/dictionaries/items/{brand["id"]}/edit',
         data={
-            'name': 'Local Test Brand Updated',
+            'value': 'Local Test Brand Updated',
             'aliases': 'ltbu',
             'sort_order': '997',
             'is_active': '1',
@@ -83,7 +85,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert response.status_code == 200, response.status_code
     assert admin_core.normalize_brand('ltbu') == 'Local Test Brand Updated'
 
-    response = client.post(f'/admin/settings/brands/{brand["id"]}/delete', follow_redirects=True)
+    response = client.post(f'/admin/settings/dictionaries/items/{brand["id"]}/delete', follow_redirects=True)
     assert response.status_code == 200, response.status_code
     assert 'Local Test Brand Updated' not in admin_core.get_brand_options(include_inactive=True)
 
@@ -91,8 +93,8 @@ with tempfile.TemporaryDirectory() as tmp:
     # alias mapping at runtime (no hard-coded fallback from BRAND_ALIASES).
     dc = next(item for item in admin_core.list_brand_settings() if item['name'] == 'DC')
     response = client.post(
-        f'/admin/settings/brands/{dc["id"]}/edit',
-        data={'name': 'DC', 'aliases': '', 'sort_order': dc['sort_order'], 'is_active': '1'},
+        f'/admin/settings/dictionaries/items/{dc["id"]}/edit',
+        data={'value': 'DC', 'aliases': '', 'sort_order': dc['sort_order'], 'is_active': '1'},
         follow_redirects=True,
     )
     assert response.status_code == 200, response.status_code
