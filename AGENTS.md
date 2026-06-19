@@ -37,11 +37,17 @@ Important override:
 - Keep the production directory tidy: only live app files should remain in `/root/nxr_website`.
 - Strong database rule: without explicit user authorization in the current session, do not sync, replace, restore, or overwrite any production database under `Data/`.
 - Do not reuse an earlier approval for later database actions. Every database write needs a fresh explicit user instruction.
+- Database backup memory:
+  - Pulling a production DB backup to local is allowed when explicitly requested in the current session because it is read-only on the server side.
+  - Preferred method: generate a remote SQLite `.backup` snapshot under `/tmp`, copy it to local, then delete the remote temporary snapshot.
+  - Do not overwrite local `Data/` when pulling a production backup. Store remote copies under `local_backups/remote_db_snapshots/`.
+  - Retention rule stays at 2 local backup directories unless the user explicitly changes it again.
 
 ## Deployment Notes
 
 - App root on server: `/root/nxr_website`
 - Local sync script: `/Users/phoenix/Documents/Phoenxi/nxr_website/scripts/sync_to_server.sh`
+- Local remote-DB backup script: `/Users/phoenix/Documents/Phoenxi/nxr_website/scripts/pull_remote_db_backup.sh`
 - Database directory: `/Users/phoenix/Documents/Phoenxi/nxr_website/Data/` -> `/root/nxr_website/Data/`
 - Local main site entrypoint: `/Users/phoenix/Documents/Phoenxi/nxr_website/nxr_site/app.py`
 - Local admin entrypoint: `/Users/phoenix/Documents/Phoenxi/nxr_website/nxr_admin/app_updated.py`

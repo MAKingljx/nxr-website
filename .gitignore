@@ -8,6 +8,22 @@ output.log
 .env.*
 .phoenix/
 
+# Local AI/editor tooling state
+.aider.conf.yml
+.claude/
+.codex/
+.idea/
+
+# Local drafts and generated review artifacts
+Create.md
+Readme.md
+output/
+outputs/
+
+# Local-only operational helpers
+scripts/pull_remote_db_backup.sh
+scripts/r2_published_static_migrate_runner.py
+
 venv/
 __pycache__/
 *.pyc

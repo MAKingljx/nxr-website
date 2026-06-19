@@ -1,6 +1,5 @@
 import os
 import re
-import sqlite3
 import smtplib
 import threading
 import hashlib
@@ -12,6 +11,7 @@ from urllib.parse import quote
 
 import requests
 from flask import Flask, Response, render_template, request, jsonify, redirect, send_from_directory, stream_with_context
+from nxr_common import db
 
 SITE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SITE_DIR.parent
@@ -89,9 +89,7 @@ app = Flask(
 
 
 def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return db.connect(DB_PATH)
 
 
 def load_env_file():
@@ -112,23 +110,23 @@ def load_env_file():
 def initialize_site_database():
     with get_db_connection() as conn:
         conn.execute(
-            """
+            f"""
             CREATE TABLE IF NOT EXISTS waitlist (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                email TEXT UNIQUE NOT NULL,
+                id {db.auto_increment_primary_key()},
+                {db.column_definition('email', 'TEXT UNIQUE NOT NULL')},
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
         conn.execute(
-            """
+            f"""
             CREATE TABLE IF NOT EXISTS ai_character_cache (
-                cert_id TEXT NOT NULL,
-                language TEXT NOT NULL,
-                prompt_hash TEXT NOT NULL,
-                content_json TEXT NOT NULL,
-                rendered_html TEXT NOT NULL,
-                model TEXT NOT NULL,
+                {db.column_definition('cert_id', 'TEXT NOT NULL')},
+                {db.column_definition('language', 'TEXT NOT NULL')},
+                {db.column_definition('prompt_hash', 'TEXT NOT NULL')},
+                {db.column_definition('content_json', 'TEXT NOT NULL')},
+                {db.column_definition('rendered_html', 'TEXT NOT NULL')},
+                {db.column_definition('model', 'TEXT NOT NULL')},
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (cert_id, language, prompt_hash)
             )
@@ -754,7 +752,7 @@ def join_waitlist():
         with get_db_connection() as conn:
             conn.execute("INSERT INTO waitlist (email) VALUES (?)", (email,))
             conn.commit()
-    except sqlite3.IntegrityError:
+    except db.IntegrityError:
         return jsonify(
             {
                 "status": "error",

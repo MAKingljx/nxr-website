@@ -4,7 +4,6 @@ NXR Card Grading - Manual Data Entry System (UPDATED)
 Updated with new grading logic and database structure
 """
 import os
-import sqlite3
 import random
 import string
 import json
@@ -16,6 +15,7 @@ from werkzeug.utils import secure_filename
 from werkzeug.security import check_password_hash, generate_password_hash
 from functools import wraps
 from PIL import Image
+from nxr_common import db
 from nxr_admin.image_storage import (
     R2_STORAGE_DRIVER,
     get_public_image_storage_driver,
@@ -406,14 +406,14 @@ def is_superadmin_role(role):
 
 
 def ensure_admin_users_table(conn):
-    conn.execute('''
+    conn.execute(f'''
         CREATE TABLE IF NOT EXISTS admin_users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT NOT NULL,
-            password_hash TEXT NOT NULL,
-            email TEXT,
-            role TEXT DEFAULT 'admin',
-            is_active INTEGER DEFAULT 1,
+            id {db.auto_increment_primary_key()},
+            {db.column_definition('username', 'TEXT NOT NULL')},
+            {db.column_definition('password_hash', 'TEXT NOT NULL')},
+            {db.column_definition('email', 'TEXT')},
+            {db.column_definition('role', "TEXT DEFAULT 'admin'")},
+            {db.column_definition('is_active', 'INTEGER DEFAULT 1')},
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             last_login DATETIME
         )
@@ -519,13 +519,13 @@ def default_aliases_for_brand(brand_name):
 
 
 def ensure_brand_settings_table(conn):
-    conn.execute('''
+    conn.execute(f'''
         CREATE TABLE IF NOT EXISTS brand_settings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            aliases TEXT NOT NULL DEFAULT '',
-            sort_order INTEGER NOT NULL DEFAULT 0,
-            is_active INTEGER NOT NULL DEFAULT 1,
+            id {db.auto_increment_primary_key()},
+            {db.column_definition('name', 'TEXT NOT NULL')},
+            {db.column_definition('aliases', "TEXT NOT NULL DEFAULT ''")},
+            {db.column_definition('sort_order', 'INTEGER NOT NULL DEFAULT 0')},
+            {db.column_definition('is_active', 'INTEGER NOT NULL DEFAULT 1')},
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
@@ -573,7 +573,7 @@ def list_brand_settings(include_inactive=True):
 def get_brand_options(include_inactive=False):
     try:
         brands = list_brand_settings(include_inactive=include_inactive)
-    except sqlite3.Error:
+    except db.DatabaseError:
         app.logger.exception('Failed to load brand options from database')
         return ['Other']
     options = [brand['name'] for brand in brands if brand.get('name')]
@@ -592,7 +592,7 @@ def get_brand_alias_map(include_inactive=True):
     alias_map = {}
     try:
         brands = list_brand_settings(include_inactive=include_inactive)
-    except sqlite3.Error:
+    except db.DatabaseError:
         app.logger.exception('Failed to load brand alias map from database')
         return alias_map
 
@@ -669,14 +669,14 @@ def delete_brand_setting(conn, brand_id):
 
 
 def ensure_dictionary_tables(conn):
-    conn.execute('''
+    conn.execute(f'''
         CREATE TABLE IF NOT EXISTS dictionary_groups (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            code TEXT NOT NULL,
-            name TEXT NOT NULL,
-            description TEXT NOT NULL DEFAULT '',
-            sort_order INTEGER NOT NULL DEFAULT 0,
-            is_active INTEGER NOT NULL DEFAULT 1,
+            id {db.auto_increment_primary_key()},
+            {db.column_definition('code', 'TEXT NOT NULL')},
+            {db.column_definition('name', 'TEXT NOT NULL')},
+            {db.column_definition('description', "TEXT NOT NULL DEFAULT ''")},
+            {db.column_definition('sort_order', 'INTEGER NOT NULL DEFAULT 0')},
+            {db.column_definition('is_active', 'INTEGER NOT NULL DEFAULT 1')},
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
@@ -685,14 +685,14 @@ def ensure_dictionary_tables(conn):
         CREATE UNIQUE INDEX IF NOT EXISTS idx_dictionary_groups_code
         ON dictionary_groups (code COLLATE NOCASE)
     ''')
-    conn.execute('''
+    conn.execute(f'''
         CREATE TABLE IF NOT EXISTS dictionary_items (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            group_id INTEGER NOT NULL,
-            value TEXT NOT NULL,
-            aliases TEXT NOT NULL DEFAULT '',
-            sort_order INTEGER NOT NULL DEFAULT 0,
-            is_active INTEGER NOT NULL DEFAULT 1,
+            id {db.auto_increment_primary_key()},
+            {db.column_definition('group_id', 'INTEGER NOT NULL')},
+            {db.column_definition('value', 'TEXT NOT NULL')},
+            {db.column_definition('aliases', "TEXT NOT NULL DEFAULT ''")},
+            {db.column_definition('sort_order', 'INTEGER NOT NULL DEFAULT 0')},
+            {db.column_definition('is_active', 'INTEGER NOT NULL DEFAULT 1')},
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (group_id) REFERENCES dictionary_groups(id) ON DELETE CASCADE
@@ -1663,14 +1663,11 @@ def normalize_language_values(conn, table_name):
 
 
 def ensure_columns(conn, table_name, columns):
-    existing_columns = {
-        row[1]
-        for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
-    }
+    existing_columns = db.table_columns(conn, table_name)
     for column_name, column_type in columns:
         if column_name not in existing_columns:
             print(f"Adding {column_name} column to {table_name} table...")
-            conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+            conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {db.column_definition(column_name, column_type)}")
 
 
 def normalize_card_category_values(conn, table_name):
@@ -1704,9 +1701,9 @@ def initialize_main_database():
     initialize_admin_users(conn)
     initialize_dictionary_tables(conn)
 
-    cursor.execute('''
+    cursor.execute(f'''
         CREATE TABLE IF NOT EXISTS cards (
-            cert_id TEXT PRIMARY KEY
+            {db.column_definition('cert_id', 'TEXT')} PRIMARY KEY
         )
     ''')
     ensure_columns(conn, 'cards', MAIN_CARD_COLUMNS)
@@ -1999,16 +1996,14 @@ def upsert_main_card(entry, conn_main, require_complete=False):
 
     columns = list(payload.keys())
     placeholders = ', '.join(['?' for _ in columns])
-    update_clause = ', '.join([
-        f"{column} = excluded.{column}" for column in columns if column != 'cert_id'
-    ])
+    upsert_clause = db.upsert_clause('cert_id', columns)
     values = [payload[column] for column in columns]
 
     conn_main.execute(
         f'''
             INSERT INTO cards ({', '.join(columns)})
             VALUES ({placeholders})
-            ON CONFLICT(cert_id) DO UPDATE SET {update_clause}
+            {upsert_clause}
         ''',
         values,
     )
@@ -2083,52 +2078,55 @@ def initialize_databases():
 
 # Initialize temporary database
 def init_temp_database():
-    conn = sqlite3.connect(TEMP_DB_PATH)
+    conn = get_temp_db_connection()
     cursor = conn.cursor()
 
     # Create temporary cards table with updated structure
-    cursor.execute('''
+    temp_card_columns = [
+        ('id', db.auto_increment_primary_key()),
+        ('cert_id', 'TEXT UNIQUE'),
+        ('card_name', 'TEXT'),
+        ('card_category', "TEXT NOT NULL DEFAULT 'trading_card'"),
+        ('movie_name', "TEXT DEFAULT ''"),
+        ('release_year', "TEXT DEFAULT ''"),
+        ('production_company', "TEXT DEFAULT ''"),
+        ('film_type', "TEXT DEFAULT ''"),
+        ('sports_type', "TEXT DEFAULT ''"),
+        ('group_name', "TEXT DEFAULT ''"),
+        ('year', 'TEXT'),
+        ('brand', 'TEXT'),
+        ('variety', 'TEXT'),
+        ('pop', 'TEXT'),
+        ('language', "TEXT NOT NULL DEFAULT 'EN'"),
+        ('set_name', "TEXT NOT NULL DEFAULT ''"),
+        ('card_number', "TEXT NOT NULL DEFAULT ''"),
+        ('centering', 'REAL NOT NULL DEFAULT 1 CHECK(centering >= 1 AND centering <= 10)'),
+        ('edges', 'REAL NOT NULL DEFAULT 1 CHECK(edges >= 1 AND edges <= 10)'),
+        ('corners', 'REAL NOT NULL DEFAULT 1 CHECK(corners >= 1 AND corners <= 10)'),
+        ('surface', 'REAL NOT NULL DEFAULT 1 CHECK(surface >= 1 AND surface <= 10)'),
+        ('final_grade', 'REAL NOT NULL DEFAULT 1'),
+        ('final_grade_text', "TEXT NOT NULL DEFAULT ''"),
+        ('front_image', "TEXT DEFAULT ''"),
+        ('back_image', "TEXT DEFAULT ''"),
+        ('published_front_image', "TEXT DEFAULT ''"),
+        ('published_back_image', "TEXT DEFAULT ''"),
+        ('entry_notes', "TEXT DEFAULT ''"),
+        ('entry_by', "TEXT DEFAULT ''"),
+        ('entry_date', 'TEXT'),
+        ('approved_at', 'TEXT'),
+        ('approval_sequence', 'INTEGER'),
+        ('status', "TEXT DEFAULT 'pending'"),
+        ('created_at', 'TEXT'),
+        ('updated_at', 'TEXT'),
+        ('upload_status', 'TEXT DEFAULT "not_started"'),
+        ('upload_started', 'TEXT'),
+        ('upload_completed', 'TEXT'),
+        ('upload_error', 'TEXT'),
+        ('server_response', 'TEXT'),
+    ]
+    cursor.execute(f'''
     CREATE TABLE IF NOT EXISTS temp_cards (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        cert_id TEXT UNIQUE,
-        card_name TEXT,
-        card_category TEXT NOT NULL DEFAULT 'trading_card',
-        movie_name TEXT DEFAULT '',
-        release_year TEXT DEFAULT '',
-        production_company TEXT DEFAULT '',
-        film_type TEXT DEFAULT '',
-        sports_type TEXT DEFAULT '',
-        group_name TEXT DEFAULT '',
-        year TEXT,
-        brand TEXT,
-        variety TEXT,
-        pop TEXT,
-        language TEXT NOT NULL DEFAULT 'EN',
-        set_name TEXT NOT NULL DEFAULT '',
-        card_number TEXT NOT NULL DEFAULT '',
-        centering REAL NOT NULL DEFAULT 1 CHECK(centering >= 1 AND centering <= 10),
-        edges REAL NOT NULL DEFAULT 1 CHECK(edges >= 1 AND edges <= 10),
-        corners REAL NOT NULL DEFAULT 1 CHECK(corners >= 1 AND corners <= 10),
-        surface REAL NOT NULL DEFAULT 1 CHECK(surface >= 1 AND surface <= 10),
-        final_grade REAL NOT NULL DEFAULT 1,
-        final_grade_text TEXT NOT NULL DEFAULT '',
-        front_image TEXT DEFAULT '',
-        back_image TEXT DEFAULT '',
-        published_front_image TEXT DEFAULT '',
-        published_back_image TEXT DEFAULT '',
-        entry_notes TEXT DEFAULT '',
-        entry_by TEXT DEFAULT '',
-        entry_date TEXT,
-        approved_at TEXT,
-        approval_sequence INTEGER,
-        status TEXT DEFAULT 'pending',
-        created_at TEXT,
-        updated_at TEXT,
-        upload_status TEXT DEFAULT 'not_started',
-        upload_started TEXT,
-        upload_completed TEXT,
-        upload_error TEXT,
-        server_response TEXT
+        {', '.join(db.column_definition(column_name, column_type) for column_name, column_type in temp_card_columns)}
     )
     ''')
 
@@ -2151,14 +2149,20 @@ def init_temp_database():
         CREATE INDEX IF NOT EXISTS idx_temp_cards_status_entry_date
         ON temp_cards (status, entry_date DESC)
     ''')
-    cursor.execute(f'''
-        CREATE INDEX IF NOT EXISTS idx_temp_cards_status_approved_order
-        ON temp_cards (
-            status,
-            {approval_timestamp_expression()},
-            {approval_sequence_expression()}
-        )
-    ''')
+    if db.is_mysql_connection(conn):
+        cursor.execute('''
+            CREATE INDEX IF NOT EXISTS idx_temp_cards_status_approved_order
+            ON temp_cards (status, approved_at, updated_at, entry_date, created_at, approval_sequence)
+        ''')
+    else:
+        cursor.execute(f'''
+            CREATE INDEX IF NOT EXISTS idx_temp_cards_status_approved_order
+            ON temp_cards (
+                status,
+                {approval_timestamp_expression()},
+                {approval_sequence_expression()}
+            )
+        ''')
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_temp_cards_identity_grade
         ON temp_cards (card_name, set_name, card_number, language, final_grade_text)
@@ -2191,14 +2195,10 @@ def init_temp_database():
     print("Temporary database initialized with updated structure")
 
 def get_temp_db_connection():
-    conn = sqlite3.connect(TEMP_DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return db.connect(TEMP_DB_PATH)
 
 def get_main_db_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return db.connect(DB_PATH)
 
 def save_uploaded_file(file, filename_prefix):
     """保存上传的文件"""

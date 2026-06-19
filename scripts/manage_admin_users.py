@@ -1,43 +1,28 @@
 #!/usr/bin/env python3
 import argparse
-import sqlite3
 from pathlib import Path
-from werkzeug.security import generate_password_hash
+import sys
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = PROJECT_ROOT / "Data" / "cards.db"
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from nxr_admin import admin_core  # noqa: E402
 
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return admin_core.get_main_db_connection()
 
 
 def ensure_table(conn):
-    conn.execute('''
-        CREATE TABLE IF NOT EXISTS admin_users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT NOT NULL,
-            password_hash TEXT NOT NULL,
-            email TEXT,
-            role TEXT DEFAULT 'admin',
-            is_active INTEGER DEFAULT 1,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            last_login DATETIME
-        )
-    ''')
-    conn.execute('''
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_admin_users_username
-        ON admin_users (username COLLATE NOCASE)
-    ''')
+    admin_core.ensure_admin_users_table(conn)
 
 
 def add_or_update_user(username, password, role, email, is_active):
     with get_connection() as conn:
         ensure_table(conn)
-        password_hash = generate_password_hash(password)
+        password_hash = admin_core.hash_admin_password(password)
+        role = admin_core.normalize_admin_role(role, default='admin')
         existing = conn.execute(
             'SELECT id FROM admin_users WHERE username = ? COLLATE NOCASE',
             (username,),
