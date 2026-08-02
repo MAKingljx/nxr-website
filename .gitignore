@@ -67,8 +67,19 @@ testpis/
 local_backups/
 recovery/
 processed_12.zip
-nxr_platform/
+# Java/Vue platform source is versioned. Keep only generated and local state out.
+nxr_platform/archive/
 nxr_platform/**/node_modules/
 nxr_platform/**/dist/
 nxr_platform/**/target/
 nxr_platform/**/.local-data/
+nxr_platform/**/logs/
+nxr_platform/**/.playwright-cli/
+nxr_platform/nxr-backend-ruoyi/ruoyi-ui/
+
+# Reproducible, non-secret frontend build profiles.
+!nxr_platform/nxr-frontend-admin-ruoyi/.env.development
+!nxr_platform/nxr-frontend-admin-ruoyi/.env.production
+!nxr_platform/nxr-frontend-admin-ruoyi/.env.staging
+!nxr_platform/nxr-frontend-admin-ruoyi/.env.java-stage
+!nxr_platform/nxr-frontend-web/.env.java-stage

@@ -1,0 +1,50 @@
+[Unit]
+Description=NXR Java staging backend
+After=network-online.target mysql.service nxr-java-redis.service
+Wants=network-online.target
+Requires=mysql.service nxr-java-redis.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=nxr-java
+Group=nxr-java
+WorkingDirectory=/opt/nxr-java/current
+EnvironmentFile=/etc/nxr-java/stage.env
+ExecStart=/usr/bin/java -Duser.home=/var/lib/nxr-java -Xms96m -Xmx384m -XX:MaxMetaspaceSize=160m -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError -jar /opt/nxr-java/current/ruoyi-admin.jar
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=90
+TimeoutStopSec=30
+SuccessExitStatus=143
+
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/nxr-java /var/log/nxr-java
+
+MemoryHigh=576M
+MemoryMax=640M
+CPUQuota=100%
+TasksMax=256
+LimitNOFILE=65535
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nxr-java-stage
+
+[Install]
+WantedBy=multi-user.target

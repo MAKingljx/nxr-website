@@ -1,0 +1,26 @@
+# Copy to /etc/nxr-java/redis.conf, replace the password, and set mode 0640.
+bind 127.0.0.1
+protected-mode yes
+port 16379
+tcp-backlog 128
+timeout 0
+tcp-keepalive 300
+daemonize no
+supervised systemd
+databases 1
+
+dir /var/lib/nxr-java/redis
+dbfilename dump.rdb
+save 900 1
+save 300 10
+save 60 10000
+appendonly yes
+appendfilename "appendonly.aof"
+appendfsync everysec
+
+maxmemory 64mb
+maxmemory-policy allkeys-lru
+requirepass __REQUIRED_RANDOM_SECRET__
+
+loglevel notice
+logfile ""

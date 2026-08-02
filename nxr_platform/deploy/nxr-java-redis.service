@@ -1,0 +1,42 @@
+[Unit]
+Description=Dedicated Redis for NXR Java staging
+After=network.target
+Before=nxr-java-stage.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=notify
+User=nxr-java
+Group=nxr-java
+ExecStart=/usr/bin/redis-server /etc/nxr-java/redis.conf --supervised systemd --daemonize no
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=20
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/nxr-java/redis
+MemoryHigh=80M
+MemoryMax=96M
+CPUQuota=25%
+TasksMax=64
+LimitNOFILE=4096
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nxr-java-redis
+
+[Install]
+WantedBy=multi-user.target
