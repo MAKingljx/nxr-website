@@ -28,7 +28,7 @@ check_contains "public overview" '"publishedCertificates"' "$(curl -fsS --max-ti
 check_contains "uppercase certificate" '"certId":"VRA003"' "$(curl -fsS --max-time 10 "$BACKEND_URL/api/public/cards/VRA003")"
 check_contains "lowercase certificate" '"certId":"VRA003"' "$(curl -fsS --max-time 10 "$BACKEND_URL/api/public/cards/vra003")"
 check_contains "missing certificate" '404' "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$BACKEND_URL/api/public/cards/NXR-STAGE-MISSING")"
-check_contains "anonymous admin blocked" '401' "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$BACKEND_URL/api/admin/dashboard")"
+check_contains "anonymous admin blocked" '"code":401' "$(curl -fsS --max-time 10 "$BACKEND_URL/api/admin/dashboard")"
 check_contains "web UI" '200' "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$WEB_URL/")"
 check_contains "admin UI" '200' "$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "$ADMIN_URL/")"
 
