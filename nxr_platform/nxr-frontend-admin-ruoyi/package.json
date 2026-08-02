@@ -9,6 +9,7 @@
     "dev": "vite",
     "build:prod": "vite build",
     "build:java-stage": "vite build --mode java-stage",
+    "build:java-remote": "vite build --mode java-remote --outDir dist-remote",
     "build:stage": "vite build --mode staging",
     "preview": "vite preview"
   },

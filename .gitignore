@@ -71,6 +71,7 @@ processed_12.zip
 nxr_platform/archive/
 nxr_platform/**/node_modules/
 nxr_platform/**/dist/
+nxr_platform/**/dist-remote/
 nxr_platform/**/target/
 nxr_platform/**/.local-data/
 nxr_platform/**/logs/
@@ -82,4 +83,6 @@ nxr_platform/nxr-backend-ruoyi/ruoyi-ui/
 !nxr_platform/nxr-frontend-admin-ruoyi/.env.production
 !nxr_platform/nxr-frontend-admin-ruoyi/.env.staging
 !nxr_platform/nxr-frontend-admin-ruoyi/.env.java-stage
+!nxr_platform/nxr-frontend-admin-ruoyi/.env.java-remote
 !nxr_platform/nxr-frontend-web/.env.java-stage
+!nxr_platform/nxr-frontend-web/.env.java-remote

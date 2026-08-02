@@ -2,6 +2,8 @@
 defineProps<{
   compact?: boolean
 }>()
+
+const logoUrl = `${import.meta.env.BASE_URL}static/images/nxr-logo-circle.png`
 </script>
 
 <template>
@@ -14,7 +16,7 @@ defineProps<{
     <div v-else class="footer-inner">
       <div class="footer-top">
         <div class="footer-brand">
-          <div class="footer-logo"><img src="/static/images/nxr-logo-circle.png" alt="NXR logo" /></div>
+          <div class="footer-logo"><img :src="logoUrl" alt="NXR logo" /></div>
           <p>Professional card grading built on AI precision, human expertise, and radical transparency.</p>
         </div>
         <div class="footer-col">

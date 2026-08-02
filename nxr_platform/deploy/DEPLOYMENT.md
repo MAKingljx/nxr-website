@@ -9,6 +9,9 @@ replace or proxy the existing Python services.
 - Java binds only to `127.0.0.1:18088`.
 - Java web/admin static builds bind only to `127.0.0.1:18080` and
   `127.0.0.1:18081`.
+- Optional remote Java builds remain loopback-only on `127.0.0.1:18082` and
+  `127.0.0.1:18083`; the existing TLS virtual host exposes only
+  `/java-stage/` and `/java-stage-admin/`.
 - Java uses the new MySQL database `nxr_java_stage` and account
   `nxr_java_stage`; it never reads or writes `/root/nxr_website/Data`.
 - Redis is a dedicated instance on `127.0.0.1:16379`.
@@ -23,6 +26,8 @@ replace or proxy the existing Python services.
     ruoyi-admin.jar
     web/
     admin/
+    web-remote/
+    admin-remote/
 ```
 
 Runtime files live under `/var/lib/nxr-java`; bounded application logs live
@@ -51,6 +56,25 @@ MB, and the accompanying MySQL drop-in at 768 MB.
    before a graceful reload.
 9. Run `verify-java-stage.sh`, then separately repeat the existing Python main
    site, verify page, card page, admin login, and hidden admin checks.
+
+## Optional HTTPS access
+
+Build both remote profiles with `npm run build:java-remote`. Install the
+resulting `dist-remote` directories as `web-remote` and `admin-remote`, then
+install `nginx-java-remote-locations.conf` as a snippet inside the existing
+`nxrgrading.com` TLS server block. Validate the complete configuration with
+`nginx -t` before a graceful reload.
+
+Before restarting Java, add `https://nxrgrading.com` to
+`NXR_CORS_ALLOWED_ORIGINS`, and set both `NXR_MEDIA_PUBLIC_BASE_URL` and
+`NXR_PUBLIC_SITE_BASE_URL` to `https://nxrgrading.com/java-stage`. Preserve all
+secret values already present in `/etc/nxr-java/stage.env`.
+
+The public stage URLs are `https://nxrgrading.com/java-stage/` and
+`https://nxrgrading.com/java-stage-admin/`. They do not replace the Python
+catch-all route or the existing hidden Python admin route. Run
+`verify-java-remote.sh` after deployment and independently recheck the Python
+routes.
 
 ## Rollback
 

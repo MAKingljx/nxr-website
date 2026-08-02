@@ -9,6 +9,7 @@ const router = useRouter()
 const cards = ref<CustomerCard[]>([])
 const loading = ref(true)
 const errorMessage = ref('')
+const placeholderImage = `${import.meta.env.BASE_URL}static/placeholder.png`
 
 async function loadCards() {
   if (!customerSession.value) {
@@ -41,7 +42,7 @@ onMounted(() => void loadCards())
     <div v-else-if="!cards.length" class="portal-empty">No cards are bound yet. Open any verified certificate to add it to your collection.</div>
     <div v-else class="collection-grid">
       <router-link v-for="card in cards" :key="card.certId" class="collection-card" :to="`/card/${encodeURIComponent(card.certId)}`">
-        <img :src="card.frontImageUrl || '/static/placeholder.png'" :alt="card.cardName" />
+        <img :src="card.frontImageUrl || placeholderImage" :alt="card.cardName" />
         <div><span class="collection-cert">{{ card.certId }}</span><h2>{{ card.cardName }}</h2><p>{{ card.brandName }} {{ card.yearLabel }}</p><strong>{{ Number(card.finalGradeValue).toFixed(1) }} {{ card.finalGradeLabel }}</strong></div>
       </router-link>
     </div>

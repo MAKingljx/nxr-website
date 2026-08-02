@@ -9,6 +9,7 @@ defineProps<{
 }>()
 
 const router = useRouter()
+const logoUrl = `${import.meta.env.BASE_URL}static/images/nxr-logo-circle.png`
 
 async function signOut() {
   await logoutCustomer()
@@ -19,7 +20,7 @@ async function signOut() {
 <template>
   <nav class="nav">
     <router-link class="nav-logo" to="/" aria-label="NXR Home">
-      <img src="/static/images/nxr-logo-circle.png" alt="NXR logo" />
+      <img :src="logoUrl" alt="NXR logo" />
     </router-link>
     <ul class="nav-links">
       <li><router-link to="/" :class="{ active: active === 'home' }">Home</router-link></li>

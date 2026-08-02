@@ -7,6 +7,7 @@
     "dev": "vite --host 0.0.0.0 --port 3000",
     "build": "vue-tsc -b && vite build",
     "build:java-stage": "vue-tsc -b && vite build --mode java-stage",
+    "build:java-remote": "vue-tsc -b && vite build --mode java-remote --outDir dist-remote",
     "preview": "vite preview"
   },
   "dependencies": {
