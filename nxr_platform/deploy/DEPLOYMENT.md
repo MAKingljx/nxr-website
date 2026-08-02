@@ -44,7 +44,9 @@ MB, and the accompanying MySQL drop-in at 768 MB.
    tables. It leaves seeded staff accounts disabled.
 7. Generate database, Redis, token, and initial admin secrets outside Git.
    Store the local operator credential in Keychain. Set a new BCrypt hash and
-   enable the stage admin in one MySQL transaction before testing login.
+   enable the stage admin in one MySQL transaction before testing login. The
+   RuoYi login pre-check accepts passwords from 5 to 20 characters, so use a
+   20-character URL-safe random password rather than a longer generated value.
 8. Install the two systemd units and local-only Nginx file. Run `nginx -t`
    before a graceful reload.
 9. Run `verify-java-stage.sh`, then separately repeat the existing Python main
