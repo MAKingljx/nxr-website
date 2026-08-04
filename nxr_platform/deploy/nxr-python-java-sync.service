@@ -1,0 +1,29 @@
+[Unit]
+Description=NXR Python SQLite to Java MySQL synchronizer
+After=mysql.service
+Wants=mysql.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/root/nxr_website
+EnvironmentFile=/etc/nxr-java/python-sync.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/nxr-java/python-sync-venv/bin/python /root/nxr_website/scripts/sync_python_to_java_mysql.py --apply --target-database ${NXR_SYNC_TARGET_DATABASE} --confirm-target-database ${NXR_SYNC_CONFIRM_TARGET_DATABASE} --full-if-due-hours 24
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+CPUQuota=25%
+MemoryMax=384M
+TimeoutStartSec=15min
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadOnlyPaths=/root/nxr_website/Data
+ReadWritePaths=/var/log/nxr-java
+
+[Install]
+WantedBy=multi-user.target

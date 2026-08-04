@@ -35,6 +35,7 @@ scripts=(
   "$PLATFORM_ROOT/nxr-sql/ruoyi/03_nxr_sys_config.sql"
   "$PLATFORM_ROOT/nxr-sql/ruoyi/04_nxr_customer_workflow.sql"
   "$PLATFORM_ROOT/nxr-sql/ruoyi/05_nxr_customer_admin.sql"
+  "$PLATFORM_ROOT/nxr-sql/ruoyi/08_nxr_python_sync.sql"
 )
 
 for script in "${scripts[@]}"; do

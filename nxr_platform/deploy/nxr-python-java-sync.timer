@@ -1,0 +1,13 @@
+[Unit]
+Description=Run NXR Python to Java data synchronization
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=1min
+AccuracySec=1s
+RandomizedDelaySec=5s
+Persistent=true
+Unit=nxr-python-java-sync.service
+
+[Install]
+WantedBy=timers.target

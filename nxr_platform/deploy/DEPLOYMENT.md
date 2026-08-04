@@ -14,6 +14,8 @@ replace or proxy the existing Python services.
   `/java-stage/` and `/java-stage-admin/`.
 - Java uses the new MySQL database `nxr_java_stage` and account
   `nxr_java_stage`; it never reads or writes `/root/nxr_website/Data`.
+- The optional Python-to-Java synchronizer reads both SQLite files read-only.
+  MySQL failures stop only that one-shot task and never enter Flask requests.
 - Redis is a dedicated instance on `127.0.0.1:16379`.
 - Real secrets live only in root-readable `/etc/nxr-java` files.
 
@@ -56,6 +58,26 @@ MB, and the accompanying MySQL drop-in at 768 MB.
    before a graceful reload.
 9. Run `verify-java-stage.sh`, then separately repeat the existing Python main
    site, verify page, card page, admin login, and hidden admin checks.
+
+## Python data synchronization
+
+Install `08_nxr_python_sync.sql` only in the cloned Java database selected for
+migration. Put its exact database name twice in the root-readable
+`/etc/nxr-java/python-sync.env`, install the `nxr-python-java-sync` service and
+timer, then run one manual full synchronization before enabling the timer.
+Create `/opt/nxr-java/python-sync-venv` with the system Python venv module and
+install only `requirements-mysql.txt`; the system Python environment stays
+unchanged.
+
+Use a dedicated `nxr_python_sync` MySQL account for the selected clone. Grant
+only `SELECT`, `INSERT`, `UPDATE`, and `CREATE TEMPORARY TABLES`; do not grant
+schema changes or row deletion. Store its generated password only in the same
+root-readable synchronization environment file.
+
+The task performs minute-level incremental synchronization and a full source
+reconciliation every 24 hours. Source cursors and target writes commit in the
+same MySQL transaction. The SQLite files remain the source of truth and are
+never opened writable by this task.
 
 ## Optional HTTPS access
 
