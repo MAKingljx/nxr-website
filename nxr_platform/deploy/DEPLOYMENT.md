@@ -74,10 +74,12 @@ only `SELECT`, `INSERT`, `UPDATE`, and `CREATE TEMPORARY TABLES`; do not grant
 schema changes or row deletion. Store its generated password only in the same
 root-readable synchronization environment file.
 
-The task performs minute-level incremental synchronization and a full source
-reconciliation every 24 hours. Source cursors and target writes commit in the
-same MySQL transaction. The SQLite files remain the source of truth and are
-never opened writable by this task.
+The timer runs the synchronizer once per day at 00:00 Asia/Shanghai. It has no
+minute-level, boot-time, or missed-run catch-up trigger. The synchronizer still
+selects a full source reconciliation when the previous full sync is at least 24
+hours old. Source cursors and target writes commit in the same MySQL transaction.
+The SQLite files remain the source of truth and are never opened writable by
+this task.
 
 ## Optional HTTPS access
 
