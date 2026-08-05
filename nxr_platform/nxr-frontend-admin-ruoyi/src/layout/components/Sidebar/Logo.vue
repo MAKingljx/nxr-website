@@ -7,7 +7,10 @@
       </router-link>
       <router-link v-else key="expand" class="sidebar-logo-link" to="/">
         <img v-if="logo" :src="logo" class="sidebar-logo" />
-        <h1 class="sidebar-title">{{ title }}</h1>
+        <span class="sidebar-brand">
+          <strong>NXR GRADING</strong>
+          <small>Operations</small>
+        </span>
       </router-link>
     </transition>
   </div>
@@ -25,7 +28,7 @@ defineProps({
   }
 })
 
-const title = import.meta.env.VITE_APP_TITLE
+const title = 'NXR'
 const settingsStore = useSettingsStore()
 const sideTheme = computed(() => settingsStore.sideTheme)
 
@@ -91,11 +94,46 @@ const getLogoTextColor = computed(() => {
       font-family: Avenir, Helvetica Neue, Arial, Helvetica, sans-serif;
       vertical-align: middle;
     }
+
+    & .sidebar-brand {
+      display: inline-flex;
+      max-width: 132px;
+      flex-direction: column;
+      justify-content: center;
+      vertical-align: middle;
+      text-align: left;
+      line-height: 1.1;
+
+      strong,
+      small {
+        display: block;
+        overflow: hidden;
+        color: v-bind(getLogoTextColor);
+        letter-spacing: 0;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      strong {
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      small {
+        margin-top: 3px;
+        opacity: 0.58;
+        font-size: 9px;
+      }
+    }
   }
 
   &.collapse {
     .sidebar-logo {
       margin-right: 0px;
+    }
+
+    .sidebar-brand {
+      display: none;
     }
   }
 }
