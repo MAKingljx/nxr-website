@@ -1,12 +1,13 @@
-const HIDDEN_SCAFFOLD_ROOTS = new Set(['system', 'monitor', 'tool'])
+const HIDDEN_TOOL_COMPONENTS = new Set(['tool/build/index', 'tool/gen/index'])
 
 function cleanPath(path = '') {
   return String(path).replace(/^\/+|\/+$/g, '')
 }
 
-function normalizeRoute(route, depth) {
-  const path = cleanPath(route.path)
-  if (depth === 0 && HIDDEN_SCAFFOLD_ROOTS.has(path)) {
+function normalizeRoute(route) {
+  const component = cleanPath(route.component)
+
+  if (HIDDEN_TOOL_COMPONENTS.has(component)) {
     return null
   }
 
@@ -22,7 +23,7 @@ function normalizeRoute(route, depth) {
 
   if (Array.isArray(route.children)) {
     normalized.children = route.children
-      .map((child) => normalizeRoute(child, depth + 1))
+      .map((child) => normalizeRoute(child))
       .filter(Boolean)
   }
 
@@ -30,10 +31,5 @@ function normalizeRoute(route, depth) {
 }
 
 export function prepareNxrBusinessRoutes(routes = []) {
-  return routes.map((route) => normalizeRoute(route, 0)).filter(Boolean)
-}
-
-export function isNxrBusinessPath(path = '') {
-  const root = cleanPath(path).split('/')[0]
-  return !HIDDEN_SCAFFOLD_ROOTS.has(root)
+  return routes.map((route) => normalizeRoute(route)).filter(Boolean)
 }
