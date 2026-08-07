@@ -25,7 +25,7 @@
       </el-table-column>
       <el-table-column label="评级" width="150" align="right">
         <template #default="scope">
-          <span class="grade-badge" :class="gradeClass(scope.row.finalGradeValue)">
+          <span class="grade-badge">
             <strong>{{ displayGrade(scope.row.finalGradeValue) }}</strong>
             <small>{{ scope.row.finalGradeLabel }}</small>
           </span>
@@ -51,20 +51,14 @@ function displayGrade(value) {
   return Number.isFinite(number) ? number.toFixed(1) : '-'
 }
 
-function gradeClass(value) {
-  const grade = Number(value)
-  if (grade >= 9.5) return 'grade-badge--gem'
-  if (grade >= 9) return 'grade-badge--mint'
-  return 'grade-badge--standard'
-}
 </script>
 
 <style scoped>
 .dashboard-panel {
   min-width: 0;
-  border: 1px solid #e2e8e6;
+  border: 1px solid var(--nxr-border);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--nxr-surface);
 }
 
 .panel-header {
@@ -74,12 +68,12 @@ function gradeClass(value) {
   justify-content: space-between;
   gap: 16px;
   padding: 16px 20px;
-  border-bottom: 1px solid #edf1f0;
+  border-bottom: 1px solid var(--nxr-border-subtle);
 }
 
 .panel-kicker {
   margin: 0 0 4px;
-  color: #16766e;
+  color: var(--nxr-accent);
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0;
@@ -87,7 +81,7 @@ function gradeClass(value) {
 
 .panel-header h2 {
   margin: 0;
-  color: #17221f;
+  color: var(--nxr-text-strong);
   font-size: 17px;
   line-height: 1.2;
 }
@@ -97,7 +91,7 @@ function gradeClass(value) {
 }
 
 .cert-id {
-  color: #2f5f65;
+  color: var(--nxr-accent);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   font-weight: 700;
@@ -112,13 +106,13 @@ function gradeClass(value) {
 }
 
 .card-name {
-  color: #23302d;
+  color: var(--nxr-text);
   font-size: 13px;
 }
 
 .card-brand {
   margin-top: 3px;
-  color: #8a9491;
+  color: var(--nxr-text-faint);
   font-size: 11px;
 }
 
@@ -128,10 +122,11 @@ function gradeClass(value) {
   align-items: baseline;
   justify-content: flex-end;
   gap: 7px;
-  color: #4d5b57;
+  color: var(--nxr-text-muted);
 }
 
 .grade-badge strong {
+  color: var(--nxr-accent);
   font-size: 16px;
   font-variant-numeric: tabular-nums;
 }
@@ -139,15 +134,11 @@ function gradeClass(value) {
 .grade-badge small {
   max-width: 70px;
   overflow: hidden;
-  color: #7a8581;
+  color: var(--nxr-text-faint);
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-.grade-badge--gem strong { color: #16766e; }
-.grade-badge--mint strong { color: #3d6b8d; }
-.grade-badge--standard strong { color: #7a6653; }
 
 :deep(.el-table__inner-wrapper::before) {
   display: none;
@@ -155,13 +146,13 @@ function gradeClass(value) {
 
 :deep(.el-table th.el-table__cell) {
   height: 42px;
-  background: #f7f9f8;
-  color: #697570;
+  background: var(--nxr-surface-subtle);
+  color: var(--nxr-text-muted);
   font-size: 12px;
 }
 
 :deep(.el-table td.el-table__cell) {
   height: 54px;
-  border-bottom-color: #edf1f0;
+  border-bottom-color: var(--nxr-border-subtle);
 }
 </style>

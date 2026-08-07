@@ -170,5 +170,5 @@ loadOrders()
 </script>
 
 <style scoped>
-small,.timeline-detail{color:#909399}.link-submission{display:flex;align-items:center;gap:8px}.link-submission .el-input-number{width:120px}.timeline-detail{margin:5px 0 0;line-height:1.5}
+small,.timeline-detail{color:var(--nxr-text-faint)}.link-submission{display:flex;align-items:center;gap:8px}.link-submission .el-input-number{width:120px}.timeline-detail{margin:5px 0 0;line-height:1.5}
 </style>

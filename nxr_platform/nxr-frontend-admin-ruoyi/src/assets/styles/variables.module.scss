@@ -10,9 +10,9 @@ $panGreen: #30B08F;
 
 // 默认主题变量
 $menuText: #bfcbd9;
-$menuActiveText: #67d9c8;
-$menuBg: #18211f;
-$menuHover: #24312e;
+$menuActiveText: #6997ba;
+$menuBg: #17191d;
+$menuHover: #25282e;
 
 // 浅色主题theme-light
 $menuLightBg: #ffffff;
@@ -27,12 +27,12 @@ $sideBarWidth: 200px;
 // 菜单暗色变量
 $base-menu-color: rgba(255,255,255,.65);
 $base-menu-color-active: #ffffff;
-$base-menu-background: #18211f;
-$base-sub-menu-background: #111816;
+$base-menu-background: #17191d;
+$base-sub-menu-background: #111214;
 $base-sub-menu-hover: rgba(255,255,255,.06);
 
 // 组件变量
-$--color-primary: #16766E;
+$--color-primary: #2F6F9F;
 $--color-success: #67C23A;
 $--color-warning: #E6A23C;
 $--color-danger: #F56C6C;
@@ -83,35 +83,35 @@ $--color-info: #909399;
 // 暗黑模式变量
 html.dark {
   /* 默认通用 */
-  --el-bg-color: #141414;
-  --el-bg-color-overlay: #1d1e1f;
-  --el-text-color-primary: #ffffff;
-  --el-text-color-regular: #d0d0d0;
-  --el-border-color: #434343;
-  --el-border-color-light: #434343;
-  --el-menu-text-color: #d0d0d0;
-  --sidebar-logo-text: #d0d0d0;
+  --el-bg-color: var(--nxr-surface, #191a1d);
+  --el-bg-color-overlay: var(--nxr-surface-subtle, #1f2024);
+  --el-text-color-primary: var(--nxr-text-strong, #f3f4f6);
+  --el-text-color-regular: var(--nxr-text, #d9dce1);
+  --el-border-color: var(--nxr-border, #383b43);
+  --el-border-color-light: var(--nxr-border-subtle, #2b2e34);
+  --el-menu-text-color: var(--nxr-text, #d9dce1);
+  --sidebar-logo-text: var(--nxr-text, #d9dce1);
   
   /* primary */
   --primary-bg: #18212b;
 
   /* 侧边栏 */
-  --sidebar-bg: #141414;
+  --sidebar-bg: var(--nxr-page-bg, #111214);
   --sidebar-text: #ffffff;
-  --menu-hover: #2d2d2d;
+  --menu-hover: var(--nxr-surface-hover, #2b2e34);
   --menu-active-text: #{$menuActiveText};
 
   /* 顶部导航栏 */
-  --navbar-bg: #141414;
+  --navbar-bg: var(--nxr-page-bg, #111214);
   --navbar-text: #ffffff;
-  --navbar-hover: #141414;
+  --navbar-hover: var(--nxr-surface-hover, #2b2e34);
 
   /* 标签栏 */
-  --tags-bg: #141414;
-  --tags-item-bg: #1d1e1f;
-  --tags-item-border: #303030;
-  --tags-item-text: #d0d0d0;
-  --tags-item-hover: #2d2d2d;
+  --tags-bg: var(--nxr-page-bg, #111214);
+  --tags-item-bg: var(--nxr-surface-subtle, #1f2024);
+  --tags-item-border: var(--nxr-border-subtle, #2b2e34);
+  --tags-item-text: var(--nxr-text, #d9dce1);
+  --tags-item-hover: var(--nxr-surface-hover, #2b2e34);
   --tags-close-hover: #64666a;
   /* 卡片模式激活页签 */
   --tags-card-active-bg: var(--el-bg-color-overlay);
@@ -119,21 +119,21 @@ html.dark {
   --tags-card-active-border: var(--tags-card-active-bg);
 
   /* splitpanes 组件暗黑模式变量 */
-  --splitpanes-bg: #141414;
-  --splitpanes-border: #303030;
-  --splitpanes-splitter-bg: #1d1e1f;
-  --splitpanes-splitter-hover-bg: #2d2d2d;
+  --splitpanes-bg: var(--nxr-surface, #191a1d);
+  --splitpanes-border: var(--nxr-border-subtle, #2b2e34);
+  --splitpanes-splitter-bg: var(--nxr-surface-subtle, #1f2024);
+  --splitpanes-splitter-hover-bg: var(--nxr-surface-hover, #2b2e34);
 
   /* blockquote 暗黑模式变量 */
-  --blockquote-bg: #1d1e1f;
-  --blockquote-border: #303030;
-  --blockquote-text: #d0d0d0;
+  --blockquote-bg: var(--nxr-surface-subtle, #1f2024);
+  --blockquote-border: var(--nxr-border-subtle, #2b2e34);
+  --blockquote-text: var(--nxr-text, #d9dce1);
   
   /* Cron 时间表达式 模式变量 */
-  --cron-border: #303030;
+  --cron-border: var(--nxr-border-subtle, #2b2e34);
 
   /* splitpanes default-theme 暗黑模式变量 */
-  --splitpanes-default-bg: #141414;
+  --splitpanes-default-bg: var(--nxr-surface, #191a1d);
 
   /* 侧边栏菜单覆盖 */
   .sidebar-container {

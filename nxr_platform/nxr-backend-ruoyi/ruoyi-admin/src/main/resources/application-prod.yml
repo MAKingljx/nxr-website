@@ -39,9 +39,14 @@ spring:
       min-idle: 1
       max-active: 8
       web-stat-filter:
-        enabled: false
+        enabled: ${NXR_DRUID_WEB_STATS_ENABLED:false}
       stat-view-servlet:
-        enabled: false
+        enabled: ${NXR_DRUID_CONSOLE_ENABLED:false}
+        allow: ${NXR_DRUID_CONSOLE_ALLOW:127.0.0.1}
+        url-pattern: /druid/*
+        login-username: ${NXR_DRUID_CONSOLE_USERNAME:}
+        login-password: ${NXR_DRUID_CONSOLE_PASSWORD:}
+        reset-enable: false
 
 token:
   # Deliberately has no default. Production startup must fail if it is absent.

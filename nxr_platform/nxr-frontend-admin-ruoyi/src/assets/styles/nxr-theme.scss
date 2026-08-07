@@ -1,0 +1,117 @@
+:root {
+  color-scheme: light;
+
+  --nxr-page-bg: #f4f7f6;
+  --nxr-surface: #ffffff;
+  --nxr-surface-subtle: #f7f9f8;
+  --nxr-surface-muted: #eef3f1;
+  --nxr-surface-hover: #f4f8f7;
+  --nxr-border: #e0e7e4;
+  --nxr-border-subtle: #edf1f0;
+  --nxr-text-strong: #17221f;
+  --nxr-text: #283531;
+  --nxr-text-muted: #707b77;
+  --nxr-text-faint: #8a9491;
+  --nxr-text-placeholder: #98a19e;
+  --nxr-accent: var(--el-color-primary, #2f6f9f);
+  --nxr-accent-hover: var(--el-color-primary-dark-2, #255a82);
+  --nxr-accent-soft: color-mix(in srgb, var(--el-color-primary, #2f6f9f) 14%, var(--nxr-surface) 86%);
+  --nxr-info: #3d6b8d;
+  --nxr-info-soft: #edf4f8;
+  --nxr-warning: #b66a28;
+  --nxr-warning-soft: #fff5e9;
+  --nxr-success: #3b7652;
+  --nxr-success-soft: #edf6ef;
+  --nxr-danger: #bb4e4e;
+  --nxr-danger-soft: #fbeeee;
+  --nxr-warm-surface: #fffaf3;
+  --nxr-warm-border: #eadfce;
+  --nxr-warm-text: #795334;
+  --nxr-warm-muted: #8b7968;
+  --nxr-warm-icon: #a85f24;
+  --nxr-warm-icon-bg: #f5e5d1;
+  --nxr-warm-control-border: #ddc6aa;
+  --nxr-scroll-track: #e8edeb;
+  --nxr-scroll-thumb: #b8c3bf;
+}
+
+html.dark {
+  color-scheme: dark;
+
+  --nxr-page-bg: #111214;
+  --nxr-surface: #191a1d;
+  --nxr-surface-subtle: #1f2024;
+  --nxr-surface-muted: #25272c;
+  --nxr-surface-hover: #2b2e34;
+  --nxr-border: #383b43;
+  --nxr-border-subtle: #2b2e34;
+  --nxr-text-strong: #f3f4f6;
+  --nxr-text: #d9dce1;
+  --nxr-text-muted: #a7acb4;
+  --nxr-text-faint: #888e98;
+  --nxr-text-placeholder: #737a85;
+  --nxr-info: #84b2cf;
+  --nxr-info-soft: #1d303c;
+  --nxr-warning: #dfa066;
+  --nxr-warning-soft: #3b2a1c;
+  --nxr-success: #7cc094;
+  --nxr-success-soft: #1e3627;
+  --nxr-danger: #e28383;
+  --nxr-danger-soft: #3c2222;
+  --nxr-warm-surface: #28231d;
+  --nxr-warm-border: #4a3b2d;
+  --nxr-warm-text: #e2bb91;
+  --nxr-warm-muted: #b99e83;
+  --nxr-warm-icon: #efaa6c;
+  --nxr-warm-icon-bg: #3a2b1e;
+  --nxr-warm-control-border: #5b4734;
+  --nxr-scroll-track: #17181b;
+  --nxr-scroll-thumb: #454952;
+
+  --el-bg-color-page: var(--nxr-page-bg);
+  --el-bg-color: var(--nxr-surface);
+  --el-bg-color-overlay: var(--nxr-surface-subtle);
+  --el-fill-color: var(--nxr-surface-muted);
+  --el-fill-color-light: #222429;
+  --el-fill-color-lighter: var(--nxr-surface-subtle);
+  --el-fill-color-extra-light: #1c1d20;
+  --el-fill-color-dark: var(--nxr-surface-hover);
+  --el-fill-color-darker: #33363d;
+  --el-fill-color-blank: var(--nxr-surface);
+  --el-border-color-darker: #444852;
+  --el-border-color-dark: #3e424b;
+  --el-border-color: var(--nxr-border);
+  --el-border-color-light: #32353d;
+  --el-border-color-lighter: var(--nxr-border-subtle);
+  --el-border-color-extra-light: #25282e;
+  --el-text-color-primary: var(--nxr-text-strong);
+  --el-text-color-regular: var(--nxr-text);
+  --el-text-color-secondary: var(--nxr-text-muted);
+  --el-text-color-placeholder: var(--nxr-text-placeholder);
+  --el-text-color-disabled: #626975;
+  --el-mask-color: rgba(0, 0, 0, 0.72);
+  --el-mask-color-extra-light: rgba(0, 0, 0, 0.34);
+}
+
+body,
+#app,
+.app-wrapper,
+.main-container,
+.app-main {
+  background-color: var(--nxr-page-bg);
+  color: var(--nxr-text);
+}
+
+.nxr-workspace {
+  min-height: 100%;
+  padding: 26px 28px 34px;
+  background: var(--nxr-page-bg);
+  color: var(--nxr-text);
+  transition: background-color 180ms ease, color 180ms ease;
+}
+
+@media (max-width: 900px) {
+  .nxr-workspace {
+    padding: 20px 16px 28px;
+  }
+}

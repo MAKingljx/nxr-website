@@ -48,6 +48,7 @@ spring:
                 url-pattern: /druid/*
                 login-username: ${NXR_DRUID_CONSOLE_USERNAME:}
                 login-password: ${NXR_DRUID_CONSOLE_PASSWORD:}
+                reset-enable: false
             filter:
                 stat:
                     enabled: true

@@ -281,13 +281,13 @@ loadQueue()
 }
 
 .picker-meta {
-  color: #909399;
+  color: var(--nxr-text-faint);
   font-size: 13px;
 }
 
 .upload-label {
   margin-top: 6px;
-  color: #909399;
+  color: var(--nxr-text-faint);
   font-size: 13px;
 }
 
@@ -308,6 +308,6 @@ loadQueue()
 }
 
 .muted {
-  color: #c0c4cc;
+  color: var(--nxr-text-placeholder);
 }
 </style>

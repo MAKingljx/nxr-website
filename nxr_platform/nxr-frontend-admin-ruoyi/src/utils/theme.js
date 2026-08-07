@@ -21,7 +21,7 @@ export function mixHexColors(fg, bg, t) {
 
 /** 暗色模式下柔化主题色 */
 export function softenPrimaryForDark(theme) {
-  return mixHexColors(theme, '#2d3036', 0.34)
+  return mixHexColors(theme, '#ffffff', 0.28)
 }
 
 // hex颜色转rgb颜色

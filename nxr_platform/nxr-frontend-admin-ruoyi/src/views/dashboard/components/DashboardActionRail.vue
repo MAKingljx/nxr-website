@@ -37,7 +37,7 @@
 </template>
 
 <script setup>
-import { Collection, Plus, ShoppingBag, UploadFilled, User } from '@element-plus/icons-vue'
+import { ArrowRight, Clock, Collection, Plus, ShoppingBag, UploadFilled, User } from '@element-plus/icons-vue'
 
 const props = defineProps({
   waitlistCount: { type: Number, default: 0 }
@@ -61,26 +61,33 @@ const actions = [
   display: grid;
   min-width: 0;
   gap: 16px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--nxr-text);
+  font-family: inherit;
+  font-size: inherit;
+  line-height: normal;
 }
 
 .waitlist-panel,
 .quick-panel {
-  border: 1px solid #e2e8e6;
+  border: 1px solid var(--nxr-border);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--nxr-surface);
 }
 
 .waitlist-panel {
   padding: 20px;
-  border-color: #eadfce;
-  background: #fffaf3;
+  border-color: var(--nxr-border);
+  background: var(--nxr-surface);
 }
 
 .waitlist-panel__top {
   display: flex;
   align-items: center;
   gap: 9px;
-  color: #7e5e3f;
+  color: var(--nxr-text);
   font-size: 13px;
   font-weight: 700;
 }
@@ -92,14 +99,14 @@ const actions = [
   align-items: center;
   justify-content: center;
   border-radius: 7px;
-  background: #f5e5d1;
-  color: #a85f24;
+  background: var(--nxr-accent-soft);
+  color: var(--nxr-accent);
 }
 
 .waitlist-panel > strong {
   display: block;
   margin-top: 16px;
-  color: #31271e;
+  color: var(--nxr-text-strong);
   font-size: 30px;
   line-height: 1;
   font-variant-numeric: tabular-nums;
@@ -107,15 +114,15 @@ const actions = [
 
 .waitlist-panel p {
   margin: 8px 0 16px;
-  color: #8b7968;
+  color: var(--nxr-text-faint);
   font-size: 12px;
 }
 
 .waitlist-panel__button {
   width: 100%;
-  border-color: #ddc6aa;
-  background: #ffffff;
-  color: #795334;
+  border-color: var(--nxr-border);
+  background: var(--nxr-surface);
+  color: var(--nxr-accent);
 }
 
 .quick-panel {
@@ -124,12 +131,12 @@ const actions = [
 
 .quick-panel header {
   padding: 17px 18px 13px;
-  border-bottom: 1px solid #edf1f0;
+  border-bottom: 1px solid var(--nxr-border-subtle);
 }
 
 .quick-panel header p {
   margin: 0 0 4px;
-  color: #16766e;
+  color: var(--nxr-accent);
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0;
@@ -137,7 +144,7 @@ const actions = [
 
 .quick-panel header h2 {
   margin: 0;
-  color: #17221f;
+  color: var(--nxr-text-strong);
   font-size: 16px;
 }
 
@@ -150,9 +157,9 @@ const actions = [
   gap: 11px;
   padding: 10px 16px;
   border: 0;
-  border-bottom: 1px solid #edf1f0;
-  background: #ffffff;
-  color: #25312e;
+  border-bottom: 1px solid var(--nxr-border-subtle);
+  background: var(--nxr-surface);
+  color: var(--nxr-text);
   text-align: left;
   cursor: pointer;
   transition: background-color 160ms ease;
@@ -164,7 +171,7 @@ const actions = [
 
 .quick-action:hover,
 .quick-action:focus-visible {
-  background: #f4f8f7;
+  background: var(--nxr-surface-hover);
   outline: none;
 }
 
@@ -175,8 +182,8 @@ const actions = [
   align-items: center;
   justify-content: center;
   border-radius: 7px;
-  background: #eef4f2;
-  color: #356a64;
+  background: var(--nxr-surface-muted);
+  color: var(--nxr-accent);
 }
 
 .quick-action__copy {
@@ -197,11 +204,11 @@ const actions = [
 
 .quick-action__copy small {
   margin-top: 3px;
-  color: #89938f;
+  color: var(--nxr-text-faint);
   font-size: 11px;
 }
 
 .quick-action__arrow {
-  color: #a1aaa7;
+  color: var(--nxr-text-placeholder);
 }
 </style>

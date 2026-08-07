@@ -150,8 +150,8 @@
           </el-col>
           <el-col :span="12">
             <el-form-item label="证书编号" prop="certId">
-              <el-input v-model="form.certId">
-                <template #append>
+              <el-input v-model="form.certId" readonly inputmode="numeric" placeholder="自动生成 10 位证书编号">
+                <template #append v-if="formMode === 'create'">
                   <el-button @click="fillGeneratedCertId">生成</el-button>
                 </template>
               </el-input>
@@ -280,6 +280,19 @@ const calculationLabel = ref('')
 const populationLabel = ref('')
 const brandOptions = ref([])
 
+function validateCertId(_rule, value, callback) {
+  const certId = String(value || '').trim()
+  if (!certId) {
+    callback(new Error('证书编号不能为空'))
+    return
+  }
+  if (formMode.value === 'create' && !/^\d{10}$/.test(certId)) {
+    callback(new Error('证书编号必须为 10 位数字'))
+    return
+  }
+  callback()
+}
+
 const statusOptions = [
   { value: 'pending', label: 'pending' },
   { value: 'approved', label: 'approved' },
@@ -295,7 +308,7 @@ const data = reactive({
     query: undefined
   },
   rules: {
-    certId: [{ required: true, message: '证书编号不能为空', trigger: 'blur' }],
+    certId: [{ validator: validateCertId, trigger: 'blur' }],
     cardCategory: [{ required: true, message: '请选择类目', trigger: 'change' }]
   }
 })
@@ -591,7 +604,7 @@ loadBrands()
 
 .media-grid figcaption {
   margin-top: 6px;
-  color: #909399;
+  color: var(--nxr-text-faint);
   font-size: 12px;
 }
 </style>

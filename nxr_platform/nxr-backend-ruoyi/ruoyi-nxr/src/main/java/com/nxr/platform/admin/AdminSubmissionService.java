@@ -1,5 +1,6 @@
 package com.nxr.platform.admin;
 
+import com.nxr.platform.shared.CertificateIdPolicy;
 import com.nxr.platform.shared.GradeLabelResolver;
 import com.nxr.platform.shared.NxrDictionaryService;
 import java.math.BigDecimal;
@@ -11,7 +12,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ThreadLocalRandom;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -81,16 +81,19 @@ public class AdminSubmissionService {
     private final JdbcClient jdbcClient;
     private final SimpleJdbcInsert submissionInsert;
     private final SimpleJdbcInsert scoreInsert;
+    private final CertificateIdPolicy certificateIdPolicy;
     private final GradeLabelResolver gradeLabelResolver;
     private final NxrDictionaryService nxrDictionaryService;
 
     public AdminSubmissionService(
         JdbcClient jdbcClient,
         JdbcTemplate jdbcTemplate,
+        CertificateIdPolicy certificateIdPolicy,
         GradeLabelResolver gradeLabelResolver,
         NxrDictionaryService nxrDictionaryService
     ) {
         this.jdbcClient = jdbcClient;
+        this.certificateIdPolicy = certificateIdPolicy;
         this.gradeLabelResolver = gradeLabelResolver;
         this.nxrDictionaryService = nxrDictionaryService;
         this.submissionInsert = new SimpleJdbcInsert(jdbcTemplate)
@@ -530,7 +533,7 @@ public class AdminSubmissionService {
 
     public String generateCertificateId() {
         for (int attempt = 0; attempt < 100; attempt += 1) {
-            String certId = randomTenDigitId();
+            String certId = certificateIdPolicy.generateCandidate();
             boolean exists = jdbcClient.sql("SELECT COUNT(*) FROM grading_submission WHERE cert_id = :certId")
                 .param("certId", certId)
                 .query(Integer.class)
@@ -691,7 +694,7 @@ public class AdminSubmissionService {
         BigDecimal finalGrade = gradeLabelResolver.calculateFinalGrade(centering, edges, corners, surface);
         String finalGradeLabel = gradeLabelResolver.resolveLabel(finalGrade);
 
-        String certId = requireValue(request.certId(), "Cert ID").toUpperCase(Locale.ROOT);
+        String certId = normalizeCertificateId(request.certId(), excludeSubmissionId);
         NormalizedIdentity normalizedIdentity = normalizeIdentity(category, request);
         int populationValue = countMatchingPopulation(normalizedIdentity.populationIdentity(), finalGradeLabel, excludeSubmissionId) + 1;
 
@@ -951,6 +954,25 @@ public class AdminSubmissionService {
         return normalized;
     }
 
+    private String normalizeCertificateId(String value, Long currentSubmissionId) {
+        String normalized = certificateIdPolicy.normalize(requireValue(value, "Cert ID"));
+        if (certificateIdPolicy.isCanonical(normalized)) {
+            return normalized;
+        }
+
+        if (currentSubmissionId != null) {
+            String existingValue = jdbcClient.sql("SELECT cert_id FROM grading_submission WHERE id = :submissionId")
+                .param("submissionId", currentSubmissionId)
+                .query(String.class)
+                .single();
+            if (certificateIdPolicy.preservesExistingValue(normalized, existingValue)) {
+                return existingValue;
+            }
+        }
+
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Certificate ID must be exactly 10 digits");
+    }
+
     private String normalizeFilter(String value) {
         if (value == null) {
             return null;
@@ -967,15 +989,6 @@ public class AdminSubmissionService {
     private String firstPresent(String first, String second) {
         String normalizedFirst = normalizeFilter(first);
         return normalizedFirst == null ? normalizeFilter(second) : normalizedFirst;
-    }
-
-    private String randomTenDigitId() {
-        StringBuilder builder = new StringBuilder(10);
-        ThreadLocalRandom random = ThreadLocalRandom.current();
-        for (int index = 0; index < 10; index += 1) {
-            builder.append(random.nextInt(10));
-        }
-        return builder.toString();
     }
 
     public record SubmissionListResponse(
