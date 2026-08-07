@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
 public class CertificateIdPolicy {
 
     public static final int CERTIFICATE_ID_LENGTH = 10;
-    private static final Pattern CANONICAL_PATTERN = Pattern.compile("\\d{10}");
+    private static final Pattern CANONICAL_PATTERN = Pattern.compile("[1-9]\\d{9}");
 
     public String normalize(String value) {
         return value == null ? null : value.trim().toUpperCase(Locale.ROOT);
@@ -30,7 +30,8 @@ public class CertificateIdPolicy {
     public String generateCandidate() {
         StringBuilder builder = new StringBuilder(CERTIFICATE_ID_LENGTH);
         ThreadLocalRandom random = ThreadLocalRandom.current();
-        for (int index = 0; index < CERTIFICATE_ID_LENGTH; index += 1) {
+        builder.append(random.nextInt(1, 10));
+        for (int index = 1; index < CERTIFICATE_ID_LENGTH; index += 1) {
             builder.append(random.nextInt(10));
         }
         return builder.toString();

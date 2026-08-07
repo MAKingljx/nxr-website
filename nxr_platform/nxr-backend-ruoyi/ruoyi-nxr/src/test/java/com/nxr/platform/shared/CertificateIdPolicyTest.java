@@ -9,9 +9,9 @@ class CertificateIdPolicyTest {
     private final CertificateIdPolicy policy = new CertificateIdPolicy();
 
     @Test
-    void acceptsOnlyThePythonTenDigitFormatForNewCertificates() {
+    void acceptsOnlyTenDigitIdsWithoutALeadingZeroForNewCertificates() {
         assertThat(policy.isCanonical("5703018202")).isTrue();
-        assertThat(policy.isCanonical("0123456789")).isTrue();
+        assertThat(policy.isCanonical("0123456789")).isFalse();
         assertThat(policy.isCanonical("VRA003")).isFalse();
         assertThat(policy.isCanonical("NXR2026032401")).isFalse();
         assertThat(policy.isCanonical("123456789")).isFalse();
@@ -19,15 +19,16 @@ class CertificateIdPolicyTest {
     }
 
     @Test
-    void generatedCandidatesAlwaysUseTenDigits() {
-        for (int index = 0; index < 100; index += 1) {
-            assertThat(policy.generateCandidate()).matches("\\d{10}");
+    void generatedCandidatesAlwaysUseTenDigitsWithoutALeadingZero() {
+        for (int index = 0; index < 1_000; index += 1) {
+            assertThat(policy.generateCandidate()).matches("[1-9]\\d{9}");
         }
     }
 
     @Test
     void legacyCertificateCanOnlyBePreservedUnchanged() {
         assertThat(policy.preservesExistingValue("vra003", "VRA003")).isTrue();
+        assertThat(policy.preservesExistingValue("0123456789", "0123456789")).isTrue();
         assertThat(policy.preservesExistingValue("VRA004", "VRA003")).isFalse();
     }
 }

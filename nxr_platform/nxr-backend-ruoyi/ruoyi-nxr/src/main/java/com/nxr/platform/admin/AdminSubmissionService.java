@@ -970,7 +970,10 @@ public class AdminSubmissionService {
             }
         }
 
-        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Certificate ID must be exactly 10 digits");
+        throw new ResponseStatusException(
+            HttpStatus.BAD_REQUEST,
+            "Certificate ID must be exactly 10 digits and cannot start with zero"
+        );
     }
 
     private String normalizeFilter(String value) {

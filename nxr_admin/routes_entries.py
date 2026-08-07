@@ -157,6 +157,12 @@ def new_entry():
             'updated_at': datetime.now().isoformat()
         }
 
+        if not is_canonical_cert_id(entry_data['cert_id']):
+            delete_uploaded_file(front_image_filename)
+            delete_uploaded_file(back_image_filename)
+            flash('Certificate ID must be exactly 10 digits and cannot start with zero', 'error')
+            return redirect(url_for('new_entry'))
+
         # Validate required fields
         is_valid_entry, missing_label = validate_category_required_fields(entry_data, include_cert_id=True)
         if not is_valid_entry:
@@ -165,19 +171,16 @@ def new_entry():
             flash(f'{missing_label} is required', 'error')
             return redirect(url_for('new_entry'))
 
+        if certificate_id_exists(entry_data['cert_id']):
+            delete_uploaded_file(front_image_filename)
+            delete_uploaded_file(back_image_filename)
+            flash(f"Certificate ID {entry_data['cert_id']} already exists", 'error')
+            return redirect(url_for('new_entry'))
+
         # Save to temporary database
         conn = get_temp_db_connection()
         try:
             cursor = conn.cursor()
-
-            # Check if cert_id already exists
-            cursor.execute("SELECT COUNT(*) FROM temp_cards WHERE cert_id = ?", (entry_data['cert_id'],))
-            if cursor.fetchone()[0] > 0:
-                delete_uploaded_file(front_image_filename)
-                delete_uploaded_file(back_image_filename)
-                flash(f"Certificate ID {entry_data['cert_id']} already exists", 'error')
-                conn.close()
-                return redirect(url_for('new_entry'))
 
             # Insert into temporary database
             columns = ', '.join(entry_data.keys())

@@ -32,6 +32,7 @@ DB_PATH = DATA_DIR / "cards.db"
 TEMP_DB_PATH = DATA_DIR / "temp_cards.db"
 SITE_STATIC_DIR = BASE_DIR / "nxr_site" / "static"
 SITE_STATIC_DIR.mkdir(exist_ok=True)
+CERT_ID_LENGTH = 10
 
 # Ensure directories exist
 UPLOAD_FOLDER = ADMIN_DIR / "uploads"
@@ -2293,29 +2294,48 @@ def get_upload_stats(conn):
     stats['image_stats'] = image_stats
     return stats
 
-# Generate unique 10-digit Cert ID
-def generate_cert_id():
-    """Generate a unique 10-digit certificate ID"""
-    while True:
-        # Generate 10 random digits
-        cert_id = ''.join(random.choices(string.digits, k=10))
+def is_canonical_cert_id(value):
+    """Return whether a new certificate ID uses 10 digits without a leading zero."""
+    cert_id = str(value or '').strip()
+    return (
+        len(cert_id) == CERT_ID_LENGTH
+        and cert_id[0] in string.digits[1:]
+        and all(char in string.digits for char in cert_id)
+    )
 
-        # Check if it exists in temp database
-        conn_temp = get_temp_db_connection()
-        cursor_temp = conn_temp.cursor()
-        cursor_temp.execute("SELECT COUNT(*) FROM temp_cards WHERE cert_id = ?", (cert_id,))
-        exists_temp = cursor_temp.fetchone()[0] > 0
+
+def certificate_id_exists(cert_id):
+    """Check both Python workflow databases without retaining a read lock."""
+    conn_temp = get_temp_db_connection()
+    try:
+        exists_temp = conn_temp.execute(
+            "SELECT COUNT(*) FROM temp_cards WHERE cert_id = ?",
+            (cert_id,),
+        ).fetchone()[0] > 0
+    finally:
         conn_temp.close()
 
-        # Check if it exists in main database
-        conn_main = get_main_db_connection()
-        cursor_main = conn_main.cursor()
-        cursor_main.execute("SELECT COUNT(*) FROM cards WHERE cert_id = ?", (cert_id,))
-        exists_main = cursor_main.fetchone()[0] > 0
+    if exists_temp:
+        return True
+
+    conn_main = get_main_db_connection()
+    try:
+        return conn_main.execute(
+            "SELECT COUNT(*) FROM cards WHERE cert_id = ?",
+            (cert_id,),
+        ).fetchone()[0] > 0
+    finally:
         conn_main.close()
 
-        # If not exists in both databases, return the ID
-        if not exists_temp and not exists_main:
+
+# Generate unique 10-digit Cert ID
+def generate_cert_id():
+    """Generate a unique 10-digit certificate ID without a leading zero."""
+    while True:
+        cert_id = random.choice(string.digits[1:]) + ''.join(
+            random.choices(string.digits, k=CERT_ID_LENGTH - 1)
+        )
+        if not certificate_id_exists(cert_id):
             return cert_id
 
 # Calculate final grade based on four sub-scores

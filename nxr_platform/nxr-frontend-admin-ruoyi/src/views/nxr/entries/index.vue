@@ -150,7 +150,7 @@
           </el-col>
           <el-col :span="12">
             <el-form-item label="证书编号" prop="certId">
-              <el-input v-model="form.certId" readonly inputmode="numeric" placeholder="自动生成 10 位证书编号">
+              <el-input v-model="form.certId" readonly inputmode="numeric" placeholder="自动生成 10 位证书编号（首位不为 0）">
                 <template #append v-if="formMode === 'create'">
                   <el-button @click="fillGeneratedCertId">生成</el-button>
                 </template>
@@ -286,8 +286,8 @@ function validateCertId(_rule, value, callback) {
     callback(new Error('证书编号不能为空'))
     return
   }
-  if (formMode.value === 'create' && !/^\d{10}$/.test(certId)) {
-    callback(new Error('证书编号必须为 10 位数字'))
+  if (formMode.value === 'create' && !/^[1-9]\d{9}$/.test(certId)) {
+    callback(new Error('证书编号必须为 10 位数字，且不能以 0 开头'))
     return
   }
   callback()
