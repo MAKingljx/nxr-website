@@ -1,5 +1,6 @@
 import os
 import re
+import secrets
 import smtplib
 import threading
 import hashlib
@@ -10,14 +11,15 @@ from pathlib import Path
 from urllib.parse import quote
 
 import requests
-from flask import Flask, Response, render_template, request, jsonify, redirect, send_from_directory, stream_with_context
+from flask import Flask, Response, jsonify, redirect, render_template, request, send_from_directory, stream_with_context
 from nxr_common import db
+from nxr_site import collector
 
 SITE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SITE_DIR.parent
-DATA_DIR = PROJECT_ROOT / "Data"
-DATA_DIR.mkdir(exist_ok=True)
-DB_PATH = DATA_DIR / "cards.db"
+DATA_DIR = Path(os.environ.get("NXR_DATA_DIR", PROJECT_ROOT / "Data"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DB_PATH = Path(os.environ.get("NXR_DB_PATH", DATA_DIR / "cards.db"))
 STATIC_PREFIX = "/static/"
 PLACEHOLDER_IMAGE = f"{STATIC_PREFIX}placeholder.png"
 EMAIL_PATTERN = re.compile(r"^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$", re.IGNORECASE)
@@ -70,6 +72,12 @@ CARD_CATEGORY_LABELS = {
     "sports_card": "Sports Card",
     "celebrity_card": "Celebrity Card",
 }
+DEFAULT_PRODUCT_TYPE = "graded_card"
+PRODUCT_TYPE_LABELS = {
+    "graded_card": "Graded Card",
+    "merch_product": "Merch Product",
+    "vintage_product": "Vintage Card",
+}
 AI_CHARACTER_PROMPT_VERSION = "v3"
 AI_ANIME_CONTEXT_HINTS = {
     "pokemon": {
@@ -86,6 +94,7 @@ app = Flask(
     static_folder=str(SITE_DIR / "static"),
     static_url_path="/static",
 )
+app.secret_key = os.environ.get("NXR_SITE_SECRET_KEY") or os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 
 
 def get_db_connection():
@@ -132,6 +141,7 @@ def initialize_site_database():
             )
             """
         )
+        collector.initialize_database(conn)
         conn.commit()
 
 
@@ -249,6 +259,7 @@ def send_waitlist_confirmation_via_smtp(email):
 
 
 load_env_file()
+app.secret_key = os.environ.get("NXR_SITE_SECRET_KEY") or os.environ.get("SECRET_KEY") or app.secret_key
 initialize_site_database()
 
 
@@ -288,6 +299,88 @@ def normalize_card_category(value):
         "celebrity": "celebrity_card",
     }
     return aliases.get(raw_value, DEFAULT_CARD_CATEGORY)
+
+
+def normalize_product_type(value):
+    raw_value = (value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "": DEFAULT_PRODUCT_TYPE,
+        "graded": "graded_card",
+        "graded_card": "graded_card",
+        "card": "graded_card",
+        "merch": "merch_product",
+        "merch_product": "merch_product",
+        "label": "merch_product",
+        "label_product": "merch_product",
+        "vintage": "vintage_product",
+        "vintage_card": "vintage_product",
+        "vintage_product": "vintage_product",
+    }
+    return aliases.get(raw_value, DEFAULT_PRODUCT_TYPE)
+
+
+def build_product_profile(card):
+    product_type = normalize_product_type(card.get("product_type"))
+    vintage_classification = (card.get("vintage_classification") or "").strip()
+    merch_description = (card.get("merch_description") or "").strip()
+    fact_fields = []
+
+    def add_fact(label, value):
+        if value is not None and str(value).strip():
+            fact_fields.append({"label": label, "value": value})
+
+    add_fact("Category", card.get("card_category_label"))
+    if card.get("card_category") == "movie_film":
+        add_fact("Movie name", card.get("movie_name"))
+        add_fact("Release year", card.get("release_year"))
+        add_fact("Production company", card.get("production_company"))
+        add_fact("Film type", card.get("film_type"))
+    else:
+        add_fact("Year", card.get("year"))
+        add_fact("Brand", card.get("brand"))
+        if card.get("card_category") == "sports_card":
+            add_fact("Sports type", card.get("sports_type"))
+        elif card.get("card_category") == "celebrity_card":
+            add_fact("Group name", card.get("group_name"))
+        add_fact("Set", card.get("set_name"))
+        add_fact("Card number", card.get("card_number"))
+        add_fact("Language", card.get("language_label"))
+    if product_type == "vintage_product":
+        add_fact("Condition Grade", vintage_classification)
+    elif product_type == "merch_product":
+        add_fact("Description", merch_description)
+    add_fact("Population", card.get("pop"))
+
+    profile_by_type = {
+        "graded_card": {
+            "show_final_grade": True,
+            "show_subgrades": True,
+            "show_classification": False,
+            "page_variant": "graded-card",
+            "verification_text": "Authenticated and graded by NXR.",
+        },
+        "merch_product": {
+            "show_final_grade": False,
+            "show_subgrades": False,
+            "show_classification": False,
+            "page_variant": "graded-card",
+            "verification_text": "Authenticated by NXR.",
+        },
+        "vintage_product": {
+            "show_final_grade": False,
+            "show_subgrades": False,
+            "show_classification": True,
+            "page_variant": "graded-card",
+            "verification_text": "Authenticated and classified by NXR.",
+        },
+    }
+    return {
+        "product_type": product_type,
+        "product_type_label": PRODUCT_TYPE_LABELS[product_type],
+        "vintage_classification": vintage_classification,
+        "fact_fields": fact_fields,
+        **profile_by_type[product_type],
+    }
 
 
 def normalize_video_brand_key(raw_brand):
@@ -411,6 +504,10 @@ def get_card(cert_id):
             card["front_img"] = front_image
             card["back_img"] = back_image
             card["language_label"] = get_card_language_label(card.get("language"))
+            card["product_type"] = normalize_product_type(card.get("product_type"))
+            card["vintage_classification"] = (card.get("vintage_classification") or "").strip()
+            card["merch_description"] = (card.get("merch_description") or "").strip()
+            card["product_profile"] = build_product_profile(card)
             (
                 card["youtube_url"],
                 card["youtube_name"],
@@ -419,6 +516,10 @@ def get_card(cert_id):
             ) = build_card_video_search_url(card)
             return card
     return None
+
+
+collector_service = collector.CollectorService(get_db_connection, get_card, normalize_asset_path)
+collector.register_routes(app, collector_service)
 
 
 def build_ai_card_context(card, fallback_brand="", fallback_character=""):
@@ -781,7 +882,16 @@ def about():
 def card_page(cert_id):
     card = get_card(cert_id)
     status_code = 200 if card else 404
-    return render_template("card.html", card=card, cert_id=cert_id), status_code
+    collector_context = collector_service.get_card_collectors(card["cert_id"]) if card else {}
+    return render_template(
+        "card.html",
+        card=card,
+        cert_id=cert_id,
+        binding=collector_context.get("binding"),
+        timeline=collector_context.get("timeline", []),
+        show_collector_features=False,
+        use_classic_card_layout=True,
+    ), status_code
 
 
 @app.route("/verify", methods=["GET", "POST"])

@@ -1,0 +1,10 @@
+{% if card.product_profile.fact_fields %}
+<dl class="detail-grid">
+  {% for fact in card.product_profile.fact_fields %}
+  <div class="detail-row">
+    <dt class="detail-key">{{ fact.label }}</dt>
+    <dd class="detail-val">{{ fact.value }}</dd>
+  </div>
+  {% endfor %}
+</dl>
+{% endif %}

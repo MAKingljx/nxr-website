@@ -47,10 +47,20 @@ def dashboard():
             "SELECT COUNT(*) FROM temp_cards WHERE substr(entry_date, 1, 10) = ?",
             (today,),
         ).fetchone()[0],
+        'graded_card': conn.execute(
+            f"SELECT COUNT(*) FROM temp_cards WHERE {product_type_sql_expression()} = 'graded_card'"
+        ).fetchone()[0],
+        'merch_product': conn.execute(
+            f"SELECT COUNT(*) FROM temp_cards WHERE {product_type_sql_expression()} = 'merch_product'"
+        ).fetchone()[0],
+        'vintage_product': conn.execute(
+            f"SELECT COUNT(*) FROM temp_cards WHERE {product_type_sql_expression()} = 'vintage_product'"
+        ).fetchone()[0],
     }
 
     recent_entries = conn.execute('''
-        SELECT id, cert_id, card_name, card_category, brand, set_name, language, final_grade_text, status, entry_date
+        SELECT id, cert_id, card_name, product_type, vintage_classification,
+               card_category, brand, set_name, language, final_grade_text, status, entry_date
         FROM temp_cards
         ORDER BY entry_date DESC
         LIMIT 5
@@ -61,16 +71,11 @@ def dashboard():
     return render_template('dashboard.html',
                          stats=stats,
                          recent_entries=[
-                             {
-                                 **dict(entry),
-                                 'card_category': normalize_card_category(entry['card_category']),
-                                 'card_category_label': get_card_category_label(entry['card_category']),
-                                 'language': normalize_language(entry['language']),
-                             }
+                             serialize_temp_entry(entry)
                              for entry in recent_entries
                          ],
                          username=session.get('username', 'Operator'),
                          role=session.get('role', 'reviewer'),
+                         product_type_options=PRODUCT_TYPE_OPTIONS,
                          brand_options=get_brand_options(),
                          language_options=LANGUAGE_OPTIONS)
-

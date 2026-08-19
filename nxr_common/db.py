@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
 
 try:  # Optional dependency used only when NXR_DB_BACKEND=mysql.
@@ -67,17 +68,18 @@ def mysql_connect():
         raise DatabaseConfigError("NXR_MYSQL_DATABASE is required for MySQL backend")
 
     port_value = os.environ.get("NXR_MYSQL_PORT") or os.environ.get("MYSQL_PORT") or "3306"
-    return CompatConnection(
-        pymysql.connect(
-            host=os.environ.get("NXR_MYSQL_HOST") or os.environ.get("MYSQL_HOST") or "127.0.0.1",
-            port=int(port_value),
-            user=os.environ.get("NXR_MYSQL_USER") or os.environ.get("MYSQL_USER") or "nxr",
-            password=os.environ.get("NXR_MYSQL_PASSWORD") or os.environ.get("MYSQL_PASSWORD") or "",
-            database=database,
-            charset=os.environ.get("NXR_MYSQL_CHARSET", "utf8mb4"),
-            autocommit=False,
-        )
+    raw_connection = pymysql.connect(
+        host=os.environ.get("NXR_MYSQL_HOST") or os.environ.get("MYSQL_HOST") or "127.0.0.1",
+        port=int(port_value),
+        user=os.environ.get("NXR_MYSQL_USER") or os.environ.get("MYSQL_USER") or "nxr",
+        password=os.environ.get("NXR_MYSQL_PASSWORD") or os.environ.get("MYSQL_PASSWORD") or "",
+        database=database,
+        charset=os.environ.get("NXR_MYSQL_CHARSET", "utf8mb4"),
+        autocommit=False,
     )
+    with raw_connection.cursor() as cursor:
+        cursor.execute("SET SESSION default_storage_engine = InnoDB")
+    return CompatConnection(raw_connection)
 
 
 def connect(sqlite_path=None):
@@ -152,6 +154,22 @@ class CompatCursor:
         ]
         return self
 
+    def executemany(self, sql, params):
+        original_sql = sql
+        sql = translate_sql(sql)
+        try:
+            self.raw_cursor.executemany(sql, params)
+        except DatabaseError as exc:
+            if should_ignore_mysql_duplicate_index(original_sql, exc):
+                self._columns = []
+                return self
+            raise
+        self._columns = [
+            description[0]
+            for description in (self.raw_cursor.description or [])
+        ]
+        return self
+
     def fetchone(self):
         row = self.raw_cursor.fetchone()
         if row is None:
@@ -163,6 +181,10 @@ class CompatCursor:
             CompatRow(self._columns, row)
             for row in self.raw_cursor.fetchall()
         ]
+
+    def fetchmany(self, size=None):
+        rows = self.raw_cursor.fetchmany(size) if size is not None else self.raw_cursor.fetchmany()
+        return [CompatRow(self._columns, row) for row in rows]
 
     def close(self):
         self.raw_cursor.close()
@@ -180,6 +202,9 @@ class CompatConnection:
     def execute(self, sql, params=None):
         cursor = self.cursor()
         return cursor.execute(sql, params)
+
+    def begin(self):
+        self.raw_connection.begin()
 
     def commit(self):
         self.raw_connection.commit()
@@ -200,6 +225,23 @@ class CompatConnection:
             self.rollback()
         self.close()
         return False
+
+
+@contextmanager
+def transaction(conn, immediate=False):
+    """Run one explicit transaction and roll it back on every failure path."""
+    if is_mysql_connection(conn):
+        conn.begin()
+    else:
+        conn.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
+
+    try:
+        yield conn
+    except BaseException:
+        conn.rollback()
+        raise
+    else:
+        conn.commit()
 
 
 def replace_qmark_placeholders(sql):
@@ -287,6 +329,8 @@ LONG_TEXT_COLUMNS = {
     "entry_notes",
     "error_message",
     "front_analysis_json",
+    "message",
+    "note",
     "rendered_html",
     "server_response",
 }
@@ -298,6 +342,8 @@ WIDE_VARCHAR_COLUMNS = {
     "published_front_image": 1024,
     "front_image": 1024,
     "back_image": 1024,
+    "avatar_url": 1024,
+    "bio": 500,
     "image": 1024,
     "qr_url": 1024,
 }
@@ -309,7 +355,10 @@ SHORT_VARCHAR_COLUMNS = {
     "cert_id": 64,
     "code": 64,
     "created_at": 32,
+    "display_name": 191,
+    "email": 191,
     "entry_date": 32,
+    "event_type": 32,
     "film_type": 64,
     "final_grade_text": 32,
     "language": 32,
@@ -325,6 +374,7 @@ SHORT_VARCHAR_COLUMNS = {
     "upload_status": 32,
     "username": 191,
     "value": 191,
+    "visibility": 32,
 }
 
 
@@ -391,12 +441,19 @@ def table_columns(conn, table_name):
 
 
 def upsert_clause(primary_key, columns):
-    update_columns = [column for column in columns if column != primary_key]
+    primary_keys = [primary_key] if isinstance(primary_key, str) else list(primary_key)
+    primary_key_set = set(primary_keys)
+    update_columns = [column for column in columns if column not in primary_key_set]
     if is_mysql_backend():
-        return "ON DUPLICATE KEY UPDATE " + ", ".join(
-            f"{column} = VALUES({column})" for column in update_columns
+        if not update_columns:
+            update_columns = primary_keys
+        return "AS incoming ON DUPLICATE KEY UPDATE " + ", ".join(
+            f"{column} = incoming.{column}" for column in update_columns
         )
+    conflict_target = ", ".join(primary_keys)
+    if not update_columns:
+        return f"ON CONFLICT({conflict_target}) DO NOTHING"
     return "ON CONFLICT({}) DO UPDATE SET {}".format(
-        primary_key,
+        conflict_target,
         ", ".join(f"{column} = excluded.{column}" for column in update_columns),
     )

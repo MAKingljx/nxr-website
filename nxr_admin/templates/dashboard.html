@@ -22,6 +22,7 @@
                         <div>
                             <h6 class="text-muted mb-1">Total Entries</h6>
                             <h3 class="mb-0">{{ stats.total_entries }}</h3>
+                            <small class="text-muted">{{ stats.graded_card }} graded / {{ stats.merch_product }} merch / {{ stats.vintage_product }} vintage</small>
                         </div>
                         <div class="icon-circle bg-primary text-white">
                             <i class="fas fa-database fa-2x"></i>
@@ -131,6 +132,7 @@
                                     <tr>
                                         <th>Cert ID</th>
                                         <th>Card Name</th>
+                                        <th>Product Type</th>
                                         <th>Category</th>
                                         <th>Brand</th>
                                         <th>Set</th>
@@ -146,11 +148,17 @@
                                         <tr>
                                             <td><strong>{{ entry.cert_id }}</strong></td>
                                             <td>{{ entry.card_name }}</td>
+                                            <td>
+                                                {{ entry.product_type_label }}
+                                                {% if entry.product_type == 'vintage_product' %}
+                                                <div class="small text-muted">{{ entry.vintage_classification or '-' }}</div>
+                                                {% endif %}
+                                            </td>
                                             <td>{{ entry.card_category_label }}</td>
                                             <td>{{ entry.brand }}</td>
                                             <td>{{ entry.set_name or '-' }}</td>
                                             <td>{{ entry.language or '-' }}</td>
-                                            <td>{{ entry.final_grade_text }}</td>
+                                            <td>{{ entry.final_grade_text if entry.uses_grading else '-' }}</td>
                                             <td>
                                                 {% if entry.status == 'pending' %}
                                                     <span class="badge badge-pending">Pending</span>

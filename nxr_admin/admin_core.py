@@ -26,16 +26,16 @@ from nxr_admin.image_storage import (
 # Configuration
 BASE_DIR = Path(__file__).resolve().parent.parent
 ADMIN_DIR = Path(__file__).resolve().parent
-DATA_DIR = BASE_DIR / "Data"
+DATA_DIR = Path(os.environ.get('NXR_DATA_DIR', BASE_DIR / "Data"))
 DATA_DIR.mkdir(exist_ok=True)
-DB_PATH = DATA_DIR / "cards.db"
-TEMP_DB_PATH = DATA_DIR / "temp_cards.db"
-SITE_STATIC_DIR = BASE_DIR / "nxr_site" / "static"
+DB_PATH = Path(os.environ.get('NXR_DB_PATH', DATA_DIR / "cards.db"))
+TEMP_DB_PATH = Path(os.environ.get('NXR_TEMP_DB_PATH', DATA_DIR / "temp_cards.db"))
+SITE_STATIC_DIR = Path(os.environ.get('NXR_SITE_STATIC_DIR', BASE_DIR / "nxr_site" / "static"))
 SITE_STATIC_DIR.mkdir(exist_ok=True)
 CERT_ID_LENGTH = 10
 
 # Ensure directories exist
-UPLOAD_FOLDER = ADMIN_DIR / "uploads"
+UPLOAD_FOLDER = Path(os.environ.get('NXR_ADMIN_UPLOAD_FOLDER', ADMIN_DIR / "uploads"))
 UPLOAD_FOLDER.mkdir(exist_ok=True)
 
 # Brand seed data
@@ -150,9 +150,44 @@ LANGUAGE_OPTIONS = [
 ]
 
 DEFAULT_CARD_CATEGORY = 'trading_card'
+DEFAULT_PRODUCT_TYPE = 'graded_card'
+PRODUCT_TYPE_OPTIONS = [
+    {'value': 'graded_card', 'label': 'Graded Card'},
+    {'value': 'merch_product', 'label': 'Merch Product'},
+    {'value': 'vintage_product', 'label': 'Vintage Card'},
+]
+PRODUCT_TYPE_LABELS = {
+    option['value']: option['label']
+    for option in PRODUCT_TYPE_OPTIONS
+}
+PRODUCT_TYPE_ALIASES = {
+    '': DEFAULT_PRODUCT_TYPE,
+    'graded_card': 'graded_card',
+    'graded card': 'graded_card',
+    'merch_product': 'merch_product',
+    'merch product': 'merch_product',
+    'label_product': 'merch_product',
+    'label product': 'merch_product',
+    'vintage_product': 'vintage_product',
+    'vintage product': 'vintage_product',
+    'vintage_card': 'vintage_product',
+    'vintage card': 'vintage_product',
+}
+UNSCORED_PRODUCT_TYPES = {'merch_product', 'vintage_product'}
+PRODUCT_TYPE_COLUMNS = (
+    ('product_type', "TEXT NOT NULL DEFAULT 'graded_card'"),
+    ('vintage_classification', "TEXT DEFAULT ''"),
+    ('merch_description', "TEXT DEFAULT ''"),
+)
+VINTAGE_CLASSIFICATION_DICTIONARY_CODE = 'vintage_classification'
+MAX_VINTAGE_CLASSIFICATIONS = 4
 BRAND_DICTIONARY_CODE = 'brand'
 SPORTS_TYPE_DICTIONARY_CODE = 'sports_type'
-PROTECTED_DICTIONARY_CODES = {BRAND_DICTIONARY_CODE, SPORTS_TYPE_DICTIONARY_CODE}
+PROTECTED_DICTIONARY_CODES = {
+    BRAND_DICTIONARY_CODE,
+    SPORTS_TYPE_DICTIONARY_CODE,
+    VINTAGE_CLASSIFICATION_DICTIONARY_CODE,
+}
 DEFAULT_DICTIONARIES = {
     SPORTS_TYPE_DICTIONARY_CODE: {
         'name': 'Sports Type',
@@ -165,6 +200,17 @@ DEFAULT_DICTIONARIES = {
             'Hockey',
             'Football',
             'Tennis',
+        ),
+    },
+    VINTAGE_CLASSIFICATION_DICTIONARY_CODE: {
+        'name': 'Vintage Classification',
+        'description': 'Up to four classifications used by vintage cards',
+        'sort_order': 20,
+        'items': (
+            'Flawless',
+            'Patina',
+            'Worn',
+            'Historic',
         ),
     },
 }
@@ -226,6 +272,7 @@ CARD_CATEGORY_COLUMNS = (
 )
 MAIN_CARD_COLUMNS = (
     ('card_name', 'TEXT'),
+    *PRODUCT_TYPE_COLUMNS,
     *CARD_CATEGORY_COLUMNS,
     ('grade', 'TEXT'),
     ('year', 'TEXT'),
@@ -276,6 +323,7 @@ ENTRY_FIELD_LABELS = {
     'film_type': 'Film Type',
     'sports_type': 'Sports Type',
     'group_name': 'Group Name',
+    'vintage_classification': 'Vintage Classification',
 }
 CATEGORY_REQUIRED_FIELDS = {
     'trading_card': ('card_name', 'brand', 'language', 'set_name', 'card_number'),
@@ -1052,6 +1100,17 @@ def create_dictionary_item(conn, group_id, value, aliases='', sort_order=0, is_a
     item_value = normalize_dictionary_value(value)
     if not item_value:
         raise ValueError('Dictionary item value is required')
+    group = conn.execute(
+        'SELECT code FROM dictionary_groups WHERE id = ?',
+        (group_id,),
+    ).fetchone()
+    if group and normalize_dictionary_code(group['code']) == VINTAGE_CLASSIFICATION_DICTIONARY_CODE:
+        item_count = conn.execute(
+            'SELECT COUNT(*) FROM dictionary_items WHERE group_id = ?',
+            (group_id,),
+        ).fetchone()[0]
+        if item_count >= MAX_VINTAGE_CLASSIFICATIONS:
+            raise ValueError('Vintage Classification supports at most four items')
     alias_text = '\n'.join(parse_brand_aliases(aliases))
     conn.execute(
         '''
@@ -1282,6 +1341,81 @@ def normalize_card_category(value):
     return CARD_CATEGORY_ALIASES.get(raw_value, DEFAULT_CARD_CATEGORY)
 
 
+def normalize_product_type(value):
+    raw_value = (value or '').strip().lower().replace('-', ' ')
+    return PRODUCT_TYPE_ALIASES.get(raw_value, DEFAULT_PRODUCT_TYPE)
+
+
+def normalize_submitted_product_type(value):
+    raw_value = (value or '').strip().lower().replace('-', ' ')
+    if raw_value not in PRODUCT_TYPE_ALIASES:
+        raise ValueError('Unsupported product type')
+    return PRODUCT_TYPE_ALIASES[raw_value]
+
+
+def normalize_product_type_filter(value):
+    raw_value = (value or '').strip()
+    if not raw_value:
+        return ''
+    return normalize_product_type(raw_value)
+
+
+def product_type_sql_expression(column_name='product_type'):
+    """Canonicalize current and historical product type values in SQL."""
+    raw = f"LOWER(TRIM(COALESCE({column_name}, '')))"
+    return (
+        f"CASE WHEN {raw} IN ('merch', 'merch product', 'merch_product', "
+        f"'label', 'label product', 'label_product') THEN 'merch_product' "
+        f"WHEN {raw} IN ('vintage', 'vintage card', 'vintage_card', "
+        f"'vintage product', 'vintage_product') THEN 'vintage_product' "
+        f"WHEN {raw} IN ('', 'graded', 'graded card', 'graded_card', 'card') "
+        f"THEN 'graded_card' ELSE {raw} END"
+    )
+
+
+def get_product_type_label(value):
+    return PRODUCT_TYPE_LABELS.get(
+        normalize_product_type(value),
+        PRODUCT_TYPE_LABELS[DEFAULT_PRODUCT_TYPE],
+    )
+
+
+def product_uses_grading(value):
+    return normalize_product_type(value) == DEFAULT_PRODUCT_TYPE
+
+
+def get_vintage_classification_options(current_value='', include_inactive=False):
+    options = get_dictionary_options(
+        VINTAGE_CLASSIFICATION_DICTIONARY_CODE,
+        include_inactive=include_inactive,
+    )
+    current = normalize_dictionary_value(current_value)
+    if current and not any(current.lower() == option.lower() for option in options):
+        options.append(current)
+    return options
+
+
+def normalize_vintage_classification(value):
+    return normalize_dictionary_value(value)
+
+
+def validate_product_policy(entry_data):
+    product_type = normalize_product_type(entry_data.get('product_type'))
+    if product_type != 'vintage_product':
+        return True, ''
+
+    configured_options = get_vintage_classification_options()
+    if not configured_options:
+        return False, 'Vintage classifications are not configured. Add up to four options in Dictionary Settings.'
+
+    classification = normalize_vintage_classification(entry_data.get('vintage_classification'))
+    if not classification:
+        return False, 'Vintage Classification is required'
+    if not any(classification.lower() == option.lower() for option in configured_options):
+        return False, 'Vintage Classification must use an active Dictionary Settings option'
+    return True, ''
+
+
 def normalize_card_category_filter(value):
     raw_value = (value or '').strip()
     if not raw_value:
@@ -1377,7 +1511,7 @@ def canonical_grade_sql_expression(column_name='final_grade_text'):
             WHEN trim({column_name}) IN ('9', '9.0', '9.00') THEN '9'
             WHEN trim({column_name}) IN ('9.5', '9.50') THEN '9.5'
             WHEN trim({column_name}) IN ('10', '10.0', '10.00') THEN '10'
-            WHEN {compact} LIKE '%pristine10%' OR {compact} LIKE '%stine10%' THEN 'Pristine 10'
+            WHEN instr({compact}, 'pristine10') > 0 OR instr({compact}, 'stine10') > 0 THEN 'Pristine 10'
             ELSE NULL
         END
     """.strip()
@@ -1390,6 +1524,7 @@ def get_grade_filter_options(conn, status_filter='all'):
         FROM (
             SELECT {canonical_grade} AS canonical_grade, status
             FROM temp_cards
+            WHERE {product_type_sql_expression()} = 'graded_card'
         ) grade_rows
     '''
     params = []
@@ -1407,7 +1542,8 @@ def build_grade_filter_sql(grade_filter, table_alias=''):
     canonical_grade = canonical_grade_sql_expression(
         f"{table_alias}.final_grade_text" if table_alias else 'final_grade_text'
     )
-    return f"{canonical_grade} = ?"
+    qualifier = f'{table_alias}.' if table_alias else ''
+    return f"{product_type_sql_expression(f'{qualifier}product_type')} = 'graded_card' AND {canonical_grade} = ?"
 
 
 def format_export_date_range(df):
@@ -1483,8 +1619,24 @@ def get_entry_display_timestamp(entry):
 
 def serialize_temp_entry(entry):
     entry_dict = dict(entry)
-    entry_dict['card_category'] = normalize_card_category(entry_dict.get('card_category'))
-    entry_dict['card_category_label'] = get_card_category_label(entry_dict.get('card_category'))
+    entry_dict['product_type'] = normalize_product_type(entry_dict.get('product_type'))
+    entry_dict['product_type_label'] = get_product_type_label(entry_dict['product_type'])
+    entry_dict['uses_grading'] = product_uses_grading(entry_dict['product_type'])
+    entry_dict['card_category'] = (
+        normalize_card_category(entry_dict.get('card_category'))
+        if entry_dict['uses_grading']
+        else DEFAULT_CARD_CATEGORY
+    )
+    entry_dict['card_category_label'] = get_card_category_label(entry_dict['card_category'])
+    entry_dict['vintage_classification'] = (
+        normalize_vintage_classification(entry_dict.get('vintage_classification'))
+        if entry_dict['product_type'] == 'vintage_product'
+        else ''
+    )
+    if not entry_dict['uses_grading']:
+        for field in ('centering', 'edges', 'corners', 'surface', 'final_grade'):
+            entry_dict[field] = None
+        entry_dict['final_grade_text'] = ''
     entry_dict['language'] = normalize_language(entry_dict.get('language'))
     entry_dict['display_date'] = format_display_datetime(get_entry_display_timestamp(entry_dict))
     entry_dict['approved_at_display'] = format_display_datetime(entry_dict.get('approved_at') or '')
@@ -1682,6 +1834,17 @@ def normalize_card_category_values(conn, table_name):
     )
 
 
+def normalize_product_type_values(conn, table_name):
+    conn.execute(
+        f'''
+            UPDATE {table_name}
+            SET product_type = ?
+            WHERE product_type IS NULL OR trim(product_type) = ''
+        ''',
+        (DEFAULT_PRODUCT_TYPE,),
+    )
+
+
 def row_value(row, key, default=''):
     if row is None:
         return default
@@ -1709,6 +1872,7 @@ def initialize_main_database():
     ''')
     ensure_columns(conn, 'cards', MAIN_CARD_COLUMNS)
     normalize_card_category_values(conn, 'cards')
+    normalize_product_type_values(conn, 'cards')
 
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_cards_identity_grade
@@ -1730,6 +1894,10 @@ def initialize_main_database():
         CREATE INDEX IF NOT EXISTS idx_cards_set_name_number
         ON cards (set_name, card_number)
     ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_cards_product_identity
+        ON cards (product_type, vintage_classification)
+    ''')
     normalize_language_values(conn, 'cards')
 
     conn.commit()
@@ -1749,14 +1917,20 @@ def _build_population_filter(
     film_type='',
     sports_type='',
     group_name='',
+    product_type=DEFAULT_PRODUCT_TYPE,
+    vintage_classification='',
 ):
     category = normalize_card_category(card_category)
+    normalized_product_type = normalize_product_type(product_type)
     normalized_language = normalize_language(language)
     grade_text = (final_grade_text or '').strip()
-    if not grade_text:
+    classification = normalize_vintage_classification(vintage_classification)
+    if product_uses_grading(normalized_product_type) and not grade_text:
+        return category, normalized_language, None, []
+    if normalized_product_type == 'vintage_product' and not classification:
         return category, normalized_language, None, []
 
-    category_sql = "COALESCE(NULLIF(card_category, ''), 'trading_card') = ?"
+    category_sql = f"{product_type_sql_expression()} = ? AND COALESCE(NULLIF(card_category, ''), 'trading_card') = ?"
     if category == 'movie_film':
         identity = [
             (movie_name or card_name or '').strip(),
@@ -1777,7 +1951,7 @@ def _build_population_filter(
                 AND film_type = ? COLLATE NOCASE
                 AND final_grade_text = ?
             ''',
-            [category, *identity, grade_text],
+            [normalized_product_type, category, *identity, grade_text],
         )
 
     language_variants = get_language_variants(normalized_language)
@@ -1802,7 +1976,7 @@ def _build_population_filter(
                 AND language IN ({language_placeholders})
                 AND final_grade_text = ?
             ''',
-            [category, *identity, extra_value, *language_variants, grade_text],
+            [normalized_product_type, category, *identity, extra_value, *language_variants, grade_text],
         )
 
     if category == 'celebrity_card':
@@ -1821,24 +1995,26 @@ def _build_population_filter(
                 AND language IN ({language_placeholders})
                 AND final_grade_text = ?
             ''',
-            [category, *identity, extra_value, *language_variants, grade_text],
+            [normalized_product_type, category, *identity, extra_value, *language_variants, grade_text],
         )
 
     if not all(identity):
         return category, normalized_language, None, []
-    return (
-        category,
-        normalized_language,
-        f'''
-            {category_sql}
-            AND card_name = ? COLLATE NOCASE
-            AND set_name = ? COLLATE NOCASE
-            AND card_number = ? COLLATE NOCASE
-            AND language IN ({language_placeholders})
-            AND final_grade_text = ?
-        ''',
-        [category, *identity, *language_variants, grade_text],
-    )
+    clauses = [
+        category_sql,
+        'card_name = ? COLLATE NOCASE',
+        'set_name = ? COLLATE NOCASE',
+        'card_number = ? COLLATE NOCASE',
+        f'language IN ({language_placeholders})',
+    ]
+    params = [normalized_product_type, category, *identity, *language_variants]
+    if product_uses_grading(normalized_product_type):
+        clauses.append('final_grade_text = ?')
+        params.append(grade_text)
+    elif normalized_product_type == 'vintage_product':
+        clauses.append('vintage_classification = ? COLLATE NOCASE')
+        params.append(classification)
+    return category, normalized_language, '\n AND '.join(clauses), params
 
 
 def calculate_population(
@@ -1855,6 +2031,8 @@ def calculate_population(
     film_type='',
     sports_type='',
     group_name='',
+    product_type=DEFAULT_PRODUCT_TYPE,
+    vintage_classification='',
 ):
     category, normalized_language, where_sql, params = _build_population_filter(
         card_category=card_category,
@@ -1869,6 +2047,8 @@ def calculate_population(
         film_type=film_type,
         sports_type=sports_type,
         group_name=group_name,
+        product_type=product_type,
+        vintage_classification=vintage_classification,
     )
 
     if not where_sql:
@@ -1927,20 +2107,37 @@ def prepare_main_card_images(entry, existing_row=None, require_complete=False):
 
 def build_main_card_payload(entry, front_image='', back_image=''):
     cert_id = entry['cert_id']
+    product_type = normalize_product_type(row_value(entry, 'product_type'))
+    uses_grading = product_uses_grading(product_type)
     created_at = entry['created_at'] or entry['entry_date'] or datetime.now().isoformat()
     updated_at = entry['updated_at'] or created_at
 
     return {
         'cert_id': cert_id,
         'card_name': entry['card_name'] or '',
-        'card_category': normalize_card_category(row_value(entry, 'card_category')),
+        'product_type': product_type,
+        'vintage_classification': (
+            normalize_vintage_classification(row_value(entry, 'vintage_classification'))
+            if product_type == 'vintage_product'
+            else ''
+        ),
+        'merch_description': (
+            row_value(entry, 'merch_description') or ''
+            if product_type == 'merch_product'
+            else ''
+        ),
+        'card_category': (
+            normalize_card_category(row_value(entry, 'card_category'))
+            if uses_grading
+            else DEFAULT_CARD_CATEGORY
+        ),
         'movie_name': row_value(entry, 'movie_name') or '',
         'release_year': row_value(entry, 'release_year') or '',
         'production_company': row_value(entry, 'production_company') or '',
         'film_type': row_value(entry, 'film_type') or '',
         'sports_type': row_value(entry, 'sports_type') or '',
         'group_name': row_value(entry, 'group_name') or '',
-        'grade': entry['final_grade_text'] or '',
+        'grade': (entry['final_grade_text'] or '') if uses_grading else '',
         'year': entry['year'] or '',
         'brand': entry['brand'] or '',
         'player': '',
@@ -1950,10 +2147,10 @@ def build_main_card_payload(entry, front_image='', back_image=''):
         'back_image': back_image,
         'front_image': front_image,
         'qr_url': f'/card/{cert_id}',
-        'centering': entry['centering'] or 0,
-        'edges': entry['edges'] or 0,
-        'corners': entry['corners'] or 0,
-        'surface': entry['surface'] or 0,
+        'centering': entry['centering'] if uses_grading else None,
+        'edges': entry['edges'] if uses_grading else None,
+        'corners': entry['corners'] if uses_grading else None,
+        'surface': entry['surface'] if uses_grading else None,
         'language': normalize_language(entry['language']),
         'set_name': entry['set_name'] or '',
         'card_number': entry['card_number'] or '',
@@ -1968,13 +2165,13 @@ def build_main_card_payload(entry, front_image='', back_image=''):
         'ai_edges': None,
         'ai_corners': None,
         'ai_surface': None,
-        'final_grade': entry['final_grade'] or 0,
+        'final_grade': entry['final_grade'] if uses_grading else None,
         'decision_method': 'human_only',
         'decision_notes': entry['entry_notes'] or '',
         'ai_front_analysis': '',
         'ai_back_analysis': '',
         'has_ai_analysis': 0,
-        'final_grade_text': entry['final_grade_text'] or '',
+        'final_grade_text': (entry['final_grade_text'] or '') if uses_grading else '',
     }
 
 
@@ -2087,6 +2284,9 @@ def init_temp_database():
         ('id', db.auto_increment_primary_key()),
         ('cert_id', 'TEXT UNIQUE'),
         ('card_name', 'TEXT'),
+        ('product_type', "TEXT NOT NULL DEFAULT 'graded_card'"),
+        ('vintage_classification', "TEXT DEFAULT ''"),
+        ('merch_description', "TEXT DEFAULT ''"),
         ('card_category', "TEXT NOT NULL DEFAULT 'trading_card'"),
         ('movie_name', "TEXT DEFAULT ''"),
         ('release_year', "TEXT DEFAULT ''"),
@@ -2133,6 +2333,7 @@ def init_temp_database():
 
     ensure_columns(conn, 'temp_cards', [
         ('updated_at', 'TEXT'),
+        *PRODUCT_TYPE_COLUMNS,
         *CARD_CATEGORY_COLUMNS,
         ('approved_at', 'TEXT'),
         ('approval_sequence', 'INTEGER'),
@@ -2145,6 +2346,7 @@ def init_temp_database():
         ('published_back_image', "TEXT DEFAULT ''"),
     ])
     normalize_card_category_values(conn, 'temp_cards')
+    normalize_product_type_values(conn, 'temp_cards')
 
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_temp_cards_status_entry_date
@@ -2171,6 +2373,10 @@ def init_temp_database():
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_temp_cards_category_grade
         ON temp_cards (card_category, final_grade_text)
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_temp_cards_product_identity
+        ON temp_cards (product_type, vintage_classification)
     ''')
     cursor.execute('''
         CREATE INDEX IF NOT EXISTS idx_temp_cards_movie_identity_grade

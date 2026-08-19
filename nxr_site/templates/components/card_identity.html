@@ -1,0 +1,12 @@
+<header class="card-identity">
+  <div class="product-type-label">{{ card.product_profile.product_type_label }}</div>
+  <h1 class="card-title">{{ card.card_name }}</h1>
+  <div class="card-cert">Certificate ID: {{ card.cert_id }}</div>
+
+  {% if card.product_profile.show_classification and card.product_profile.vintage_classification and not use_classic_card_layout|default(false) %}
+  <div class="vintage-badge vintage-classification">
+    <span class="vintage-badge-label">Condition Grade</span>
+    <span class="vintage-badge-value">{{ card.product_profile.vintage_classification }}</span>
+  </div>
+  {% endif %}
+</header>

@@ -1,0 +1,31 @@
+{% extends "base_site.html" %}
+{% set nav_active = "account" %}
+
+{% block title %}Sign In | NXR Grading{% endblock %}
+
+{% block page_css %}
+<style>{% include "components/account_styles.html" %}</style>
+{% endblock %}
+
+{% block content %}
+<div class="account-page compact">
+  <div class="account-panel">
+    <h1 class="account-title">Sign In</h1>
+    <p class="account-subtitle">Access your collector account to bind cards and follow their ownership history.</p>
+    {% if error %}<div class="account-error">{{ error }}</div>{% endif %}
+    <form class="account-form" method="POST" action="/account/login">
+      <input type="hidden" name="csrf_token" value="{{ collector_csrf_token() }}">
+      <div>
+        <label for="email">Email</label>
+        <input id="email" type="email" name="email" value="{{ form.email or '' }}" required autocomplete="email">
+      </div>
+      <div>
+        <label for="password">Password</label>
+        <input id="password" type="password" name="password" required autocomplete="current-password">
+      </div>
+      <button class="account-submit" type="submit">Sign In</button>
+    </form>
+    <p class="account-switch">New to NXR? <a href="/account/register">Create an account</a></p>
+  </div>
+</div>
+{% endblock %}

@@ -43,7 +43,7 @@ def waitlist_submitters():
                 SELECT id, email, created_at
                 FROM waitlist
                 {where_clause}
-                ORDER BY datetime(created_at) {order_direction}, id {order_direction}
+                ORDER BY created_at {order_direction}, id {order_direction}
                 LIMIT ? OFFSET ?
             ''',
             [*params, page_size, offset],

@@ -2,7 +2,12 @@ from nxr_admin.admin_core import *
 
 
 def collect_category_form_data():
+    product_type = normalize_submitted_product_type(
+        request.form.get('product_type', DEFAULT_PRODUCT_TYPE)
+    )
     category = normalize_card_category(request.form.get('card_category', DEFAULT_CARD_CATEGORY))
+    if not product_uses_grading(product_type):
+        category = DEFAULT_CARD_CATEGORY
     movie_name = request.form.get('movie_name', '').strip()
     release_year = request.form.get('release_year', '').strip()
     production_company = request.form.get('production_company', '').strip()
@@ -38,6 +43,17 @@ def collect_category_form_data():
             group_name = ''
 
     return {
+        'product_type': product_type,
+        'vintage_classification': (
+            normalize_vintage_classification(request.form.get('vintage_classification', ''))
+            if product_type == 'vintage_product'
+            else ''
+        ),
+        'merch_description': (
+            request.form.get('merch_description', '').strip()
+            if product_type == 'merch_product'
+            else ''
+        ),
         'card_category': category,
         'card_name': card_name,
         'movie_name': movie_name,
@@ -56,8 +72,9 @@ def collect_category_form_data():
 
 
 def is_pop_request_complete(card_data, final_grade_text):
+    product_type = normalize_product_type(card_data.get('product_type'))
     category = normalize_card_category(card_data.get('card_category'))
-    required = ['final_grade_text']
+    required = ['final_grade_text'] if product_uses_grading(product_type) else []
     if category == 'movie_film':
         required.extend(['movie_name', 'release_year', 'production_company', 'film_type'])
     else:
@@ -66,6 +83,8 @@ def is_pop_request_complete(card_data, final_grade_text):
             required.append('sports_type')
         elif category == 'celebrity_card':
             required.append('group_name')
+    if product_type == 'vintage_product':
+        required.append('vintage_classification')
 
     values = {**card_data, 'final_grade_text': final_grade_text}
     return all(str(values.get(field) or '').strip() for field in required)
@@ -86,39 +105,56 @@ def calculate_population_for_card_data(card_data, final_grade_text, exclude_entr
         film_type=card_data.get('film_type', ''),
         sports_type=card_data.get('sports_type', ''),
         group_name=card_data.get('group_name', ''),
+        product_type=card_data.get('product_type', DEFAULT_PRODUCT_TYPE),
+        vintage_classification=card_data.get('vintage_classification', ''),
     )
+
+
+def collect_grading_data(product_type):
+    if not product_uses_grading(product_type):
+        return {
+            'centering': 1.0,
+            'edges': 1.0,
+            'corners': 1.0,
+            'surface': 1.0,
+            'final_grade': 1.0,
+            'final_grade_text': '',
+        }, ''
+
+    raw_scores = {
+        'centering': request.form.get('centering', '0').strip(),
+        'edges': request.form.get('edges', '0').strip(),
+        'corners': request.form.get('corners', '0').strip(),
+        'surface': request.form.get('surface', '0').strip(),
+    }
+    is_valid, error_msg = validate_sub_scores(**raw_scores)
+    if not is_valid:
+        return None, error_msg
+    scores = {name: float(value) for name, value in raw_scores.items()}
+    final_grade, final_grade_text = calculate_final_grade(**scores)
+    return {**scores, 'final_grade': final_grade, 'final_grade_text': final_grade_text}, ''
 
 # ========== New Entry ==========
 @app.route('/admin/entry/new', methods=['GET', 'POST'])
 @login_required
 def new_entry():
     if request.method == 'POST':
-        # Collect form data
-        centering = request.form.get('centering', '0').strip()
-        edges = request.form.get('edges', '0').strip()
-        corners = request.form.get('corners', '0').strip()
-        surface = request.form.get('surface', '0').strip()
-
-        # Validate sub-scores
-        is_valid, error_msg = validate_sub_scores(centering, edges, corners, surface)
-        if not is_valid:
+        try:
+            card_data = collect_category_form_data()
+        except ValueError as error:
+            flash(str(error), 'error')
+            return redirect(url_for('new_entry'))
+        is_valid_product, product_error = validate_product_policy(card_data)
+        if not is_valid_product:
+            flash(product_error, 'error')
+            return redirect(url_for('new_entry'))
+        grading_data, error_msg = collect_grading_data(card_data['product_type'])
+        if grading_data is None:
             flash(f'Invalid scores: {error_msg}', 'error')
             return redirect(url_for('new_entry'))
-
-        # Calculate final grade
-        centering_float = float(centering)
-        edges_float = float(edges)
-        corners_float = float(corners)
-        surface_float = float(surface)
-
-        final_grade, final_grade_text = calculate_final_grade(
-            centering_float, edges_float, corners_float, surface_float
-        )
-
-        card_data = collect_category_form_data()
         total_pop, language, _, _ = calculate_population_for_card_data(
             card_data,
-            final_grade_text,
+            grading_data['final_grade_text'],
         )
 
         # Handle file uploads
@@ -139,12 +175,7 @@ def new_entry():
             **card_data,
             'pop': str(total_pop),  # Auto-calculated POP
             'language': language,
-            'centering': centering_float,
-            'edges': edges_float,
-            'corners': corners_float,
-            'surface': surface_float,
-            'final_grade': final_grade,
-            'final_grade_text': final_grade_text,
+            **grading_data,
             'front_image': front_image_filename or '',
             'back_image': back_image_filename or '',
             'published_front_image': '',
@@ -170,7 +201,6 @@ def new_entry():
             delete_uploaded_file(back_image_filename)
             flash(f'{missing_label} is required', 'error')
             return redirect(url_for('new_entry'))
-
         if certificate_id_exists(entry_data['cert_id']):
             delete_uploaded_file(front_image_filename)
             delete_uploaded_file(back_image_filename)
@@ -190,7 +220,8 @@ def new_entry():
             cursor.execute(f"INSERT INTO temp_cards ({columns}) VALUES ({placeholders})", values)
             conn.commit()
 
-            flash(f"Card {entry_data['cert_id']} entered successfully! Grade: {final_grade_text}", 'success')
+            result_label = grading_data['final_grade_text'] or get_product_type_label(card_data['product_type'])
+            flash(f"Card {entry_data['cert_id']} entered successfully! {result_label}", 'success')
             conn.close()
             return redirect(url_for('entry_list'))
 
@@ -211,6 +242,8 @@ def new_entry():
                          card=None,
                          auto_cert_id=auto_cert_id,
                          card_category_options=CARD_CATEGORY_OPTIONS,
+                         product_type_options=PRODUCT_TYPE_OPTIONS,
+                         vintage_classification_options=get_vintage_classification_options(),
                          sports_type_options=get_sports_type_options(),
                          brand_options=get_brand_options(),
                          language_options=LANGUAGE_OPTIONS)
@@ -224,6 +257,7 @@ def entry_list():
     cert_id_filter = request.args.get('cert_id', '').strip()
     card_name_filter = request.args.get('card_name', '').strip()
     card_category_filter = normalize_card_category_filter(request.args.get('card_category', '').strip())
+    product_type_filter = normalize_product_type_filter(request.args.get('product_type', '').strip())
     final_grade_filter = request.args.get('final_grade', '').strip()
     set_name_filter = request.args.get('set_name', '').strip()
     brand_filter = request.args.get('brand', '').strip()
@@ -235,7 +269,7 @@ def entry_list():
     page_size = get_page_size_arg(default=TEMP_LIST_DEFAULT_PAGE_SIZE)
     
     # Validate sort parameters
-    valid_sort_columns = ['entry_date', 'card_name', 'card_category', 'final_grade', 'set_name', 'language', 'cert_id', 'brand']
+    valid_sort_columns = ['entry_date', 'card_name', 'product_type', 'card_category', 'final_grade', 'set_name', 'language', 'cert_id', 'brand']
     if sort_by not in valid_sort_columns:
         sort_by = 'entry_date'
     
@@ -268,9 +302,13 @@ def entry_list():
     if card_category_filter:
         conditions.append("COALESCE(NULLIF(card_category, ''), 'trading_card') = ?")
         params.append(card_category_filter)
+
+    if product_type_filter:
+        conditions.append(f"{product_type_sql_expression()} = ?")
+        params.append(product_type_filter)
     
     if final_grade_filter:
-        conditions.append("final_grade_text = ?")
+        conditions.append(f"{product_type_sql_expression()} = 'graded_card' AND final_grade_text = ?")
         params.append(final_grade_filter)
     
     if set_name_filter:
@@ -343,6 +381,7 @@ def entry_list():
         'cert_id': cert_id_filter,
         'card_name': card_name_filter,
         'card_category': card_category_filter,
+        'product_type': product_type_filter,
         'final_grade': final_grade_filter,
         'set_name': set_name_filter,
         'brand': brand_filter,
@@ -366,6 +405,7 @@ def entry_list():
                          cert_id_filter=cert_id_filter,
                          card_name_filter=card_name_filter,
                          card_category_filter=card_category_filter,
+                         product_type_filter=product_type_filter,
                          final_grade_filter=final_grade_filter,
                          set_name_filter=set_name_filter,
                          brand_filter=brand_filter,
@@ -374,6 +414,7 @@ def entry_list():
                          # Filter options
                          grade_options=grade_options,
                          card_category_options=CARD_CATEGORY_OPTIONS,
+                         product_type_options=PRODUCT_TYPE_OPTIONS,
                          set_options=set_options,
                          brand_options_for_filter=get_brand_options(include_inactive=True),
                          entered_by_options=entered_by_options,
@@ -406,6 +447,8 @@ def entry_detail(entry_id):
 
     return render_template('entry_detail.html',
                          entry=entry,
+                         product_type_options=PRODUCT_TYPE_OPTIONS,
+                         vintage_classification_options=get_vintage_classification_options(entry.get('vintage_classification')),
                          brand_options=get_brand_options_with_current(entry.get('brand')),
                          language_options=LANGUAGE_OPTIONS)
 
@@ -422,32 +465,25 @@ def edit_entry(entry_id):
         return redirect(url_for('entry_list'))
 
     if request.method == 'POST':
-        # Get and validate sub-scores
-        centering = request.form.get('centering', '0').strip()
-        edges = request.form.get('edges', '0').strip()
-        corners = request.form.get('corners', '0').strip()
-        surface = request.form.get('surface', '0').strip()
-
-        is_valid, error_msg = validate_sub_scores(centering, edges, corners, surface)
-        if not is_valid:
+        try:
+            card_data = collect_category_form_data()
+        except ValueError as error:
+            flash(str(error), 'error')
+            conn.close()
+            return redirect(url_for('edit_entry', entry_id=entry_id))
+        is_valid_product, product_error = validate_product_policy(card_data)
+        if not is_valid_product:
+            flash(product_error, 'error')
+            conn.close()
+            return redirect(url_for('edit_entry', entry_id=entry_id))
+        grading_data, error_msg = collect_grading_data(card_data['product_type'])
+        if grading_data is None:
             flash(f'Invalid scores: {error_msg}', 'error')
             conn.close()
             return redirect(url_for('edit_entry', entry_id=entry_id))
-
-        # Calculate final grade
-        centering_float = float(centering)
-        edges_float = float(edges)
-        corners_float = float(corners)
-        surface_float = float(surface)
-
-        final_grade, final_grade_text = calculate_final_grade(
-            centering_float, edges_float, corners_float, surface_float
-        )
-
-        card_data = collect_category_form_data()
         total_pop, language, _, _ = calculate_population_for_card_data(
             card_data,
-            final_grade_text,
+            grading_data['final_grade_text'],
             exclude_entry_id=entry_id,
         )
 
@@ -475,12 +511,7 @@ def edit_entry(entry_id):
             **card_data,
             'pop': str(total_pop),  # Auto-calculated POP
             'language': language,
-            'centering': centering_float,
-            'edges': edges_float,
-            'corners': corners_float,
-            'surface': surface_float,
-            'final_grade': final_grade,
-            'final_grade_text': final_grade_text,
+            **grading_data,
             'entry_notes': request.form.get('entry_notes', '').strip(),
             'updated_at': datetime.now().isoformat(),
         }
@@ -518,7 +549,6 @@ def edit_entry(entry_id):
             flash(f'{missing_label} is required', 'error')
             conn.close()
             return redirect(url_for('edit_entry', entry_id=entry_id))
-
         try:
             # Build update query
             set_clause = ', '.join([f"{key} = ?" for key in update_data.keys()])
@@ -534,7 +564,8 @@ def edit_entry(entry_id):
             for image_url in dict.fromkeys(published_images_to_delete):
                 delete_public_image(image_url)
 
-            flash(f"Entry updated successfully. New grade: {final_grade_text}", 'success')
+            result_label = grading_data['final_grade_text'] or get_product_type_label(card_data['product_type'])
+            flash(f"Entry updated successfully. {result_label}", 'success')
             return redirect(url_for('entry_detail', entry_id=entry_id))
 
         except Exception as e:
@@ -554,6 +585,8 @@ def edit_entry(entry_id):
                          action=url_for('edit_entry', entry_id=entry_id),
                          card=entry,
                          card_category_options=CARD_CATEGORY_OPTIONS,
+                         product_type_options=PRODUCT_TYPE_OPTIONS,
+                         vintage_classification_options=get_vintage_classification_options(entry.get('vintage_classification')),
                          sports_type_options=get_sports_type_options(entry.get('sports_type')),
                          brand_options=get_brand_options_with_current(entry.get('brand')),
                          language_options=LANGUAGE_OPTIONS)
@@ -667,7 +700,12 @@ def api_generate_cert_id():
 def api_calculate_grade():
     """API endpoint to calculate final grade from sub-scores"""
     try:
-        data = request.get_json()
+        data = request.get_json() or {}
+        product_type = normalize_submitted_product_type(
+            data.get('product_type', DEFAULT_PRODUCT_TYPE)
+        )
+        if not product_uses_grading(product_type):
+            return jsonify({'error': 'This product type does not accept grading scores'}), 400
         centering = float(data.get('centering', 0))
         edges = float(data.get('edges', 0))
         corners = float(data.get('corners', 0))
@@ -700,6 +738,9 @@ def api_calculate_pop():
     try:
         data = request.get_json() or {}
         card_data = {
+            'product_type': normalize_submitted_product_type(
+                data.get('product_type', DEFAULT_PRODUCT_TYPE)
+            ),
             'card_category': normalize_card_category(data.get('card_category', DEFAULT_CARD_CATEGORY)),
             'card_name': data.get('card_name', '').strip(),
             'set_name': data.get('set_name', '').strip(),
@@ -711,7 +752,10 @@ def api_calculate_pop():
             'film_type': data.get('film_type', '').strip(),
             'sports_type': normalize_sports_type(data.get('sports_type', '')),
             'group_name': data.get('group_name', '').strip(),
+            'vintage_classification': normalize_vintage_classification(data.get('vintage_classification', '')),
         }
+        if not product_uses_grading(card_data['product_type']):
+            card_data['card_category'] = DEFAULT_CARD_CATEGORY
         final_grade_text = data.get('final_grade_text', '').strip()
         current_entry_id = data.get('current_entry_id')
 
@@ -751,8 +795,10 @@ def api_calculate_pop():
             'calculation': f'Temporary DB: {temp_count} + Main DB: {main_count} + 1 = {total_pop}',
             'details': {
                 'card_category': category,
+                'product_type': card_data['product_type'],
                 'card_identity': identity,
-                'grade': final_grade_text,
+                'grade': final_grade_text if product_uses_grading(card_data['product_type']) else '',
+                'vintage_classification': card_data['vintage_classification'],
                 'temp_count': temp_count,
                 'main_count': main_count
             }
@@ -769,7 +815,12 @@ def api_match_card():
     """Auto-fill card metadata from existing temp or main records."""
     try:
         data = request.get_json() or {}
+        product_type = normalize_submitted_product_type(
+            data.get('product_type', DEFAULT_PRODUCT_TYPE)
+        )
         card_category = normalize_card_category(data.get('card_category', DEFAULT_CARD_CATEGORY))
+        if not product_uses_grading(product_type):
+            card_category = DEFAULT_CARD_CATEGORY
         set_name = data.get('set_name', '').strip()
         card_number = data.get('card_number', '').strip()
 
@@ -779,13 +830,14 @@ def api_match_card():
         if not set_name or not card_number:
             return jsonify({'error': 'Set name and card number are required'}), 400
 
-        lookup_sql = '''
+        lookup_sql = f'''
             SELECT card_name, brand, year, variety, language, sports_type, group_name
-            FROM {table_name}
-            WHERE COALESCE(NULLIF(card_category, ''), 'trading_card') = ?
+            FROM {{table_name}}
+            WHERE {product_type_sql_expression()} = ?
+              AND COALESCE(NULLIF(card_category, ''), 'trading_card') = ?
               AND set_name = ? COLLATE NOCASE
               AND card_number = ? COLLATE NOCASE
-            {order_clause}
+            {{order_clause}}
             LIMIT 1
         '''
 
@@ -817,13 +869,14 @@ def api_match_card():
             with connection_factory() as conn:
                 row = conn.execute(
                     lookup_sql.format(table_name=table_name, order_clause=order_clause),
-                    (card_category, set_name, card_number),
+                    (product_type, card_category, set_name, card_number),
                 ).fetchone()
             if not row:
                 continue
 
             return jsonify({
                 'found': True,
+                'product_type': product_type,
                 'card_name': row['card_name'] or '',
                 'brand': normalize_brand(row['brand']),
                 'year': row['year'] or '',

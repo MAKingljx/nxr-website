@@ -41,6 +41,16 @@
                                     <td>{{ entry.card_name }}</td>
                                 </tr>
                                 <tr>
+                                    <th>Product Type:</th>
+                                    <td>{{ entry.product_type_label }}</td>
+                                </tr>
+                                {% if entry.product_type == 'vintage_product' %}
+                                <tr>
+                                    <th>Classification:</th>
+                                    <td>{{ entry.vintage_classification or '-' }}</td>
+                                </tr>
+                                {% endif %}
+                                <tr>
                                     <th>Category:</th>
                                     <td>{{ entry.card_category_label }}</td>
                                 </tr>
@@ -109,8 +119,12 @@
                                 <tr>
                                     <th>Final Grade:</th>
                                     <td>
+                                        {% if entry.uses_grading %}
                                         <strong>{{ entry.final_grade_text }}</strong>
                                         <small class="text-muted ms-2">(Calculated: {{ entry.final_grade }})</small>
+                                        {% else %}
+                                        -
+                                        {% endif %}
                                     </td>
                                 </tr>
                             </table>
@@ -120,6 +134,7 @@
             </div>
 
             <!-- Grading Details -->
+            {% if entry.uses_grading %}
             <div class="card mb-4">
                 <div class="card-header">
                     <h6 class="mb-0"><i class="fas fa-star me-2"></i>Grading Details</h6>
@@ -153,6 +168,7 @@
                     </div>
                 </div>
             </div>
+            {% endif %}
 
             <!-- Notes -->
             <div class="card">

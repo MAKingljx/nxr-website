@@ -7,6 +7,8 @@
     <li><a href="/verify" class="{% if nav_active == 'verify' %}active{% endif %}">Verify</a></li>
     <li><a href="/about" class="{% if nav_active == 'about' %}active{% endif %}">About</a></li>
     <li><a href="/faq" class="{% if nav_active == 'faq' %}active{% endif %}">FAQ</a></li>
+    {# Account entry points are intentionally hidden from the public navigation.
+       Account routes and collector operations remain available by direct URL. #}
   </ul>
   <a href="{{ nav_cta_href|default('/submit') }}" class="nav-cta">{{ nav_cta_label|default('Submit Now') }}</a>
 </nav>

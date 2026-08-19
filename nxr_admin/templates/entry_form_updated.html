@@ -59,6 +59,12 @@
     
     // Function to calculate final grade
     function calculateFinalGrade() {
+        if (getSelectedProductType() !== 'graded_card') {
+            document.getElementById('final_grade').value = '';
+            document.getElementById('final_grade_text').value = '';
+            document.getElementById('grade_calculation').textContent = '';
+            return;
+        }
         const centering = parseFloat(document.getElementById('centering').value) || 0;
         const edges = parseFloat(document.getElementById('edges').value) || 0;
         const corners = parseFloat(document.getElementById('corners').value) || 0;
@@ -83,6 +89,7 @@
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
+                product_type: getSelectedProductType(),
                 centering: centering,
                 edges: edges,
                 corners: corners,
@@ -137,6 +144,11 @@
         return categoryField ? categoryField.value : 'trading_card';
     }
 
+    function getSelectedProductType() {
+        const field = document.getElementById('product_type');
+        return field ? field.value : 'graded_card';
+    }
+
     function setFieldRequired(fieldId, required) {
         const field = document.getElementById(fieldId);
         if (!field) {
@@ -157,6 +169,13 @@
     }
 
     function updateCategoryFields() {
+        const productType = getSelectedProductType();
+        const usesGrading = productType === 'graded_card';
+        const isVintage = productType === 'vintage_product';
+        const isMerch = productType === 'merch_product';
+        if (!usesGrading) {
+            document.getElementById('card_category').value = 'trading_card';
+        }
         const category = getSelectedCategory();
         const isMovie = category === 'movie_film';
         const isSports = category === 'sports_card';
@@ -167,6 +186,24 @@
         setBlockVisible('standard-card-details', !isMovie);
         setBlockVisible('sports-type-field', isSports);
         setBlockVisible('group-name-field', isCelebrity);
+        setBlockVisible('card-category-field', usesGrading);
+        setBlockVisible('vintage-classification-field', isVintage);
+        setBlockVisible('merch-description-field', isMerch);
+        setBlockVisible('grading-fields', usesGrading);
+
+        if (!usesGrading) {
+            document.getElementById('final_grade').value = '';
+            document.getElementById('final_grade_text').value = '';
+            document.getElementById('grade_calculation').textContent = '';
+        }
+        const popHelp = document.getElementById('pop-help');
+        if (popHelp) {
+            popHelp.textContent = usesGrading
+                ? 'Automatically calculated: Count of same card with same grade'
+                : isVintage
+                    ? 'Automatically calculated: Count of same vintage product and classification'
+                    : 'Automatically calculated: Count of same merch product';
+        }
 
         ['card_name', 'brand', 'language', 'set_name', 'card_number'].forEach(fieldId => {
             setFieldRequired(fieldId, !isMovie);
@@ -176,6 +213,10 @@
         });
         setFieldRequired('sports_type', isSports);
         setFieldRequired('group_name', isCelebrity);
+        setFieldRequired('vintage_classification', isVintage);
+        ['centering', 'edges', 'corners', 'surface'].forEach(fieldId => {
+            setFieldRequired(fieldId, usesGrading);
+        });
 
         const matchButton = document.getElementById('match-card-button');
         if (matchButton) {
@@ -208,6 +249,7 @@
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
+                product_type: getSelectedProductType(),
                 card_category: category,
                 set_name: setName,
                 card_number: cardNumber
@@ -260,8 +302,15 @@
 
     // Function to validate required fields
     function validateRequiredFields() {
+        const productType = getSelectedProductType();
         const category = getSelectedCategory();
-        const requiredFields = ['cert_id', 'centering', 'edges', 'corners', 'surface'];
+        const requiredFields = ['cert_id'];
+        if (productType === 'graded_card') {
+            requiredFields.push('centering', 'edges', 'corners', 'surface');
+        }
+        if (productType === 'vintage_product') {
+            requiredFields.push('vintage_classification');
+        }
         if (category === 'movie_film') {
             requiredFields.push('movie_name', 'release_year', 'production_company', 'film_type');
         } else {
@@ -308,7 +357,7 @@
             }
             
             // Validate scores are between 1 and 10
-            const scores = ['centering', 'edges', 'corners', 'surface'];
+            const scores = getSelectedProductType() === 'graded_card' ? ['centering', 'edges', 'corners', 'surface'] : [];
             for (let fieldId of scores) {
                 const value = parseFloat(document.getElementById(fieldId).value);
                 if (isNaN(value) || value < 1 || value > 10) {
@@ -345,12 +394,18 @@
             calculatePOP();
             validateRequiredFields();
         });
+        document.getElementById('product_type').addEventListener('change', function() {
+            updateCategoryFields();
+            calculatePOP();
+            validateRequiredFields();
+        });
 
         // Auto-validate required fields
         [
             'card_name', 'brand', 'language', 'set_name', 'card_number',
             'movie_name', 'release_year', 'production_company', 'film_type',
             'sports_type', 'group_name'
+            , 'vintage_classification'
         ].forEach(field => {
             const element = document.getElementById(field);
             if (!element) {
@@ -370,6 +425,7 @@
         // Function to calculate and update POP
         function calculatePOP() {
             const category = getSelectedCategory();
+            const productType = getSelectedProductType();
             const cardName = document.getElementById('card_name').value.trim();
             const setName = document.getElementById('set_name').value.trim();
             const cardNumber = document.getElementById('card_number').value.trim();
@@ -381,10 +437,12 @@
             const sportsType = document.getElementById('sports_type').value.trim();
             const groupName = document.getElementById('group_name').value.trim();
             const gradeText = document.getElementById('final_grade_text').value;
+            const vintageClassification = document.getElementById('vintage_classification').value;
 
             // Only calculate if all required fields are filled
-            const isMovieReady = category === 'movie_film' && movieName && releaseYear && productionCompany && filmType && gradeText;
-            const isStandardReady = category !== 'movie_film' && cardName && setName && cardNumber && language && gradeText;
+            const resultReady = productType === 'graded_card' ? Boolean(gradeText) : productType !== 'vintage_product' || Boolean(vintageClassification);
+            const isMovieReady = category === 'movie_film' && movieName && releaseYear && productionCompany && filmType && resultReady;
+            const isStandardReady = category !== 'movie_film' && cardName && setName && cardNumber && language && resultReady;
             const isSportsReady = category !== 'sports_card' || sportsType;
             const isCelebrityReady = category !== 'celebrity_card' || groupName;
             if (!(isMovieReady || (isStandardReady && isSportsReady && isCelebrityReady))) {
@@ -401,6 +459,7 @@
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({
+                    product_type: productType,
                     card_category: category,
                     card_name: cardName,
                     set_name: setName,
@@ -412,6 +471,7 @@
                     film_type: filmType,
                     sports_type: sportsType,
                     group_name: groupName,
+                    vintage_classification: vintageClassification,
                     final_grade_text: gradeText,
                     current_entry_id: {% if card %}{{ card.id if card else 'null' }}{% else %}null{% endif %}
                 })
@@ -433,9 +493,9 @@
         
         // Update POP when relevant fields change
         [
-            'card_category', 'card_name', 'set_name', 'card_number', 'language',
+            'product_type', 'card_category', 'card_name', 'set_name', 'card_number', 'language',
             'movie_name', 'release_year', 'production_company', 'film_type',
-            'sports_type', 'group_name'
+            'sports_type', 'group_name', 'vintage_classification'
         ].forEach(field => {
             const element = document.getElementById(field);
             if (!element) {
@@ -463,7 +523,9 @@
         // Initial validation and calculations
         updateCategoryFields();
         validateCertId();
-        calculateFinalGrade();
+        if (getSelectedProductType() === 'graded_card') {
+            calculateFinalGrade();
+        }
         calculatePOP();
     });
 
@@ -607,11 +669,42 @@
                                             </span>
                                         </small>
                                     </div>
-                                    <div id="cert_id_message"></div>
+                                <div id="cert_id_message"></div>
                                     <div class="form-text">10-digit unique identifier (auto-generated, guaranteed unique)</div>
                                 </div>
 
                                 <div class="mb-3">
+                                    <label for="product_type" class="form-label">Product Type *</label>
+                                    <select class="form-select" id="product_type" name="product_type" required>
+                                        {% for option in product_type_options %}
+                                            <option value="{{ option.value }}"
+                                                {% if (card and card.product_type == option.value) or (not card and option.value == 'graded_card') %}selected{% endif %}>
+                                                {{ option.label }}
+                                            </option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+
+                                <div id="vintage-classification-field" class="mb-3 d-none">
+                                    <label for="vintage_classification" class="form-label">Vintage Classification *</label>
+                                    <select class="form-select" id="vintage_classification" name="vintage_classification">
+                                        <option value="">-- Select Classification --</option>
+                                        {% for classification in vintage_classification_options %}
+                                            <option value="{{ classification }}" {% if card and card.vintage_classification == classification %}selected{% endif %}>{{ classification }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    {% if not vintage_classification_options %}
+                                    <div class="form-text text-danger">Configure Vintage Classification in Dictionary Settings before creating this product.</div>
+                                    {% endif %}
+                                </div>
+
+                                <div id="merch-description-field" class="mb-3 d-none">
+                                    <label for="merch_description" class="form-label">Merch Description</label>
+                                    <textarea class="form-control" id="merch_description" name="merch_description" rows="4" placeholder="Enter details about this merch item...">{{ card.merch_description if card else '' }}</textarea>
+                                    <div class="form-text">Describe this merch product (materials, size, features, etc.).</div>
+                                </div>
+
+                                <div class="mb-3" id="card-category-field">
                                     <label for="card_category" class="form-label">Card Category *</label>
                                     <select class="form-select" id="card_category" name="card_category" required>
                                         {% for option in card_category_options %}
@@ -693,7 +786,7 @@
                                             <i class="fas fa-calculator"></i> Auto-calculated
                                         </span>
                                     </div>
-                                    <div class="form-text">
+                                    <div class="form-text" id="pop-help">
                                         <i class="fas fa-info-circle me-1"></i>
                                         Automatically calculated: Count of same card with same grade
                                     </div>
@@ -756,31 +849,32 @@
                                     </div>
                                 </div>
 
+                                <div id="grading-fields">
                                 <h6 class="border-bottom pb-2 mb-3 mt-4">Grading Details <span class="text-danger">* Required (1-10)</span></h6>
                                 
                                 <div class="row">
                                     <div class="col-md-3 mb-3">
                                         <label for="centering" class="form-label">Centering *</label>
                                         <input type="number" step="0.1" min="1" max="10" class="form-control" id="centering" name="centering" 
-                                               value="{{ card.centering if card else '1' }}" required>
+                                               value="{{ card.centering if card and card.uses_grading else '1' }}" required>
                                         <div class="invalid-feedback">Must be between 1 and 10</div>
                                     </div>
                                     <div class="col-md-3 mb-3">
                                         <label for="edges" class="form-label">Edges *</label>
                                         <input type="number" step="0.1" min="1" max="10" class="form-control" id="edges" name="edges" 
-                                               value="{{ card.edges if card else '1' }}" required>
+                                               value="{{ card.edges if card and card.uses_grading else '1' }}" required>
                                         <div class="invalid-feedback">Must be between 1 and 10</div>
                                     </div>
                                     <div class="col-md-3 mb-3">
                                         <label for="corners" class="form-label">Corners *</label>
                                         <input type="number" step="0.1" min="1" max="10" class="form-control" id="corners" name="corners" 
-                                               value="{{ card.corners if card else '1' }}" required>
+                                               value="{{ card.corners if card and card.uses_grading else '1' }}" required>
                                         <div class="invalid-feedback">Must be between 1 and 10</div>
                                     </div>
                                     <div class="col-md-3 mb-3">
                                         <label for="surface" class="form-label">Surface *</label>
                                         <input type="number" step="0.1" min="1" max="10" class="form-control" id="surface" name="surface" 
-                                               value="{{ card.surface if card else '1' }}" required>
+                                               value="{{ card.surface if card and card.uses_grading else '1' }}" required>
                                         <div class="invalid-feedback">Must be between 1 and 10</div>
                                     </div>
                                 </div>
@@ -791,9 +885,9 @@
                                     <div class="input-group mb-2">
                                         <span class="input-group-text">Final Grade</span>
                                         <input type="number" step="0.01" class="form-control" id="final_grade" name="final_grade" 
-                                               value="{{ card.final_grade if card else '' }}" readonly>
+                                               value="{{ card.final_grade if card and card.uses_grading else '' }}" readonly>
                                         <input type="text" class="form-control" id="final_grade_text" name="final_grade_text" 
-                                               value="{{ card.final_grade_text if card else '' }}" readonly placeholder="Grade Text">
+                                               value="{{ card.final_grade_text if card and card.uses_grading else '' }}" readonly placeholder="Grade Text">
                                     </div>
                                     <div id="grade_calculation" class="form-text">
                                         Enter scores above to calculate final grade
@@ -804,7 +898,8 @@
                                         9.35-9.74 → 9.5 | 9.75-9.9 → 10 | 10.0 → Pristine 10
                                     </div>
                                 </div>
-                                
+                                </div>
+
                                 <div class="mb-3">
                                     <label for="entry_notes" class="form-label">Entry Notes</label>
                                     <textarea class="form-control" id="entry_notes" name="entry_notes" rows="3">{{ card.entry_notes if card else '' }}</textarea>

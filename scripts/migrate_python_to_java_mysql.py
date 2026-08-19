@@ -40,6 +40,23 @@ SUPPORTED_CATEGORIES = {
     "sports_card",
     "celebrity_card",
 }
+DEFAULT_PRODUCT_TYPE = "graded_card"
+SUPPORTED_PRODUCT_TYPES = {
+    DEFAULT_PRODUCT_TYPE,
+    "label_product",
+    "vintage_product",
+}
+PRODUCT_TYPE_ALIASES = {
+    "": DEFAULT_PRODUCT_TYPE,
+    "graded": DEFAULT_PRODUCT_TYPE,
+    "graded_card": DEFAULT_PRODUCT_TYPE,
+    "tcg_card": DEFAULT_PRODUCT_TYPE,
+    "label": "label_product",
+    "label_product": "label_product",
+    "vintage": "vintage_product",
+    "vintage_card": "vintage_product",
+    "vintage_product": "vintage_product",
+}
 EXCLUDED_FK_VIOLATION_TABLES = {"grading_history", "human_grading_details"}
 
 TARGET_TABLES = (
@@ -85,6 +102,8 @@ SUBMISSION_COLUMNS = (
     "status_code",
     "grading_phase_code",
     "card_category_code",
+    "product_type_code",
+    "vintage_classification_code",
     "movie_name",
     "release_year",
     "production_company",
@@ -133,6 +152,7 @@ class SourceStats:
     temp_only_approved: int
     temp_only_pending_or_review: int
     submissions: int
+    graded_submissions: int
     published_certificates: int
     published_media: int
     waitlist: int
@@ -153,6 +173,10 @@ class TargetBaseline:
 
 def clean(value: Any) -> str:
     return " ".join(str(value or "").strip().split())
+
+
+def source_value(row: Mapping[str, Any], key: str, default: Any = None) -> Any:
+    return row[key] if key in row.keys() else default
 
 
 def optional_text(value: Any) -> str | None:
@@ -188,6 +212,14 @@ def normalize_category(value: Any) -> str:
     if normalized not in SUPPORTED_CATEGORIES:
         raise MigrationError(f"Unsupported card category: {normalized!r}")
     return normalized
+
+
+def normalize_product_type(value: Any) -> str:
+    normalized = clean(value).lower().replace("-", "_").replace(" ", "_")
+    product_type = PRODUCT_TYPE_ALIASES.get(normalized, normalized)
+    if product_type not in SUPPORTED_PRODUCT_TYPES:
+        raise MigrationError(f"Unsupported product type: {product_type!r}")
+    return product_type
 
 
 def normalize_language(value: Any) -> str:
@@ -295,7 +327,22 @@ def finalize_submission(mapped: dict[str, Any]) -> dict[str, Any]:
 
 def _base_submission(row: Mapping[str, Any]) -> dict[str, Any]:
     population = max(1, to_int(row["pop"], default=1))
+    product_type = normalize_product_type(source_value(row, "product_type", ""))
     category = normalize_category(row["card_category"])
+    vintage_classification = truncate(
+        source_value(row, "vintage_classification", ""),
+        64,
+        field="vintage_classification",
+    ) or None
+    if product_type != DEFAULT_PRODUCT_TYPE:
+        category = "trading_card"
+    if product_type == "vintage_product" and not vintage_classification:
+        raise MigrationError("Vintage product requires a vintage classification")
+    if product_type != "vintage_product" and vintage_classification:
+        raise MigrationError(
+            "Vintage classification is only valid for vintage products"
+        )
+    has_grading = product_type == DEFAULT_PRODUCT_TYPE
     created_at = to_datetime(row["created_at"])
     updated_at = to_datetime(row["updated_at"]) or created_at
     return {
@@ -311,6 +358,8 @@ def _base_submission(row: Mapping[str, Any]) -> dict[str, Any]:
         "population_value": population,
         "grading_phase_code": "human_only",
         "card_category_code": category,
+        "product_type_code": product_type,
+        "vintage_classification_code": vintage_classification,
         "movie_name": truncate(row["movie_name"], 255, field="movie_name") or None,
         "release_year": truncate(row["release_year"], 16, field="release_year") or None,
         "production_company": truncate(
@@ -326,12 +375,12 @@ def _base_submission(row: Mapping[str, Any]) -> dict[str, Any]:
         "published_at": None,
         "created_at": created_at or dt.datetime(1970, 1, 1),
         "updated_at": updated_at or created_at or dt.datetime(1970, 1, 1),
-        "centering_score": to_decimal(row["centering"]),
-        "edges_score": to_decimal(row["edges"]),
-        "corners_score": to_decimal(row["corners"]),
-        "surface_score": to_decimal(row["surface"]),
-        "final_grade_value": to_decimal(row["final_grade"]),
-        "final_grade_label": grade_label(row),
+        "centering_score": to_decimal(row["centering"]) if has_grading else None,
+        "edges_score": to_decimal(row["edges"]) if has_grading else None,
+        "corners_score": to_decimal(row["corners"]) if has_grading else None,
+        "surface_score": to_decimal(row["surface"]) if has_grading else None,
+        "final_grade_value": to_decimal(row["final_grade"]) if has_grading else None,
+        "final_grade_label": grade_label(row) if has_grading else None,
         "ai_grade_value": None,
         "ai_confidence_value": None,
         "decision_method_code": "human_only",
@@ -347,7 +396,9 @@ def _base_submission(row: Mapping[str, Any]) -> dict[str, Any]:
 def map_published_row(row: Mapping[str, Any]) -> dict[str, Any]:
     mapped = _base_submission(row)
     cert_id = mapped["cert_id"]
-    if "has_ai_analysis" in row.keys():
+    if mapped["product_type_code"] != DEFAULT_PRODUCT_TYPE:
+        has_ai_analysis = False
+    elif "has_ai_analysis" in row.keys():
         has_ai_analysis = bool(to_int(row["has_ai_analysis"]))
     else:
         has_ai_analysis = row["ai_grade"] is not None or to_confidence(
@@ -586,6 +637,11 @@ class SourceBundle:
             WHERE LOWER(TRIM(g.code)) = 'sports_type'
             """
         ).fetchone()[0]
+        graded_submissions = sum(
+            1
+            for row in self.iter_submissions()
+            if row["product_type_code"] == DEFAULT_PRODUCT_TYPE
+        )
         return SourceStats(
             cards=cards,
             temp_cards=temp_cards,
@@ -595,6 +651,7 @@ class SourceBundle:
                 status_counts.get("pending", 0) + status_counts.get("review", 0)
             ),
             submissions=cards + temp_cards - overlap,
+            graded_submissions=graded_submissions,
             published_certificates=cards,
             published_media=media,
             waitlist=query("SELECT COUNT(*) FROM main.waitlist").fetchone()[0],
@@ -911,6 +968,8 @@ class JavaMySqlMigration:
                 status_code VARCHAR(32) NOT NULL,
                 grading_phase_code VARCHAR(32) NOT NULL,
                 card_category_code VARCHAR(32) NOT NULL,
+                product_type_code VARCHAR(32) NOT NULL,
+                vintage_classification_code VARCHAR(64) NULL,
                 movie_name VARCHAR(255) NULL,
                 release_year VARCHAR(16) NULL,
                 production_company VARCHAR(128) NULL,
@@ -923,12 +982,12 @@ class JavaMySqlMigration:
                 published_at DATETIME(6) NULL,
                 created_at DATETIME(6) NOT NULL,
                 updated_at DATETIME(6) NOT NULL,
-                centering_score DECIMAL(4,1) NOT NULL,
-                edges_score DECIMAL(4,1) NOT NULL,
-                corners_score DECIMAL(4,1) NOT NULL,
-                surface_score DECIMAL(4,1) NOT NULL,
-                final_grade_value DECIMAL(4,1) NOT NULL,
-                final_grade_label VARCHAR(64) NOT NULL,
+                centering_score DECIMAL(4,1) NULL,
+                edges_score DECIMAL(4,1) NULL,
+                corners_score DECIMAL(4,1) NULL,
+                surface_score DECIMAL(4,1) NULL,
+                final_grade_value DECIMAL(4,1) NULL,
+                final_grade_label VARCHAR(64) NULL,
                 ai_grade_value DECIMAL(4,1) NULL,
                 ai_confidence_value DECIMAL(5,2) NULL,
                 decision_method_code VARCHAR(32) NOT NULL,
@@ -1103,7 +1162,8 @@ class JavaMySqlMigration:
             INSERT INTO grading_submission (
                 cert_id,card_name,year_label,brand_name,player_name,variety_name,
                 set_name,card_number,language_code,population_value,status_code,
-                grading_phase_code,card_category_code,movie_name,release_year,
+                grading_phase_code,card_category_code,product_type_code,
+                vintage_classification_code,movie_name,release_year,
                 production_company,film_type,sports_type,group_name,approval_sequence,
                 entry_notes,entry_by_user_id,approved_by_user_id,approved_at,published_at,
                 created_at,updated_at
@@ -1111,7 +1171,8 @@ class JavaMySqlMigration:
             SELECT
                 cert_id,card_name,year_label,brand_name,player_name,variety_name,
                 set_name,card_number,language_code,population_value,status_code,
-                grading_phase_code,card_category_code,movie_name,release_year,
+                grading_phase_code,card_category_code,product_type_code,
+                vintage_classification_code,movie_name,release_year,
                 production_company,film_type,sports_type,group_name,approval_sequence,
                 entry_notes,NULL,NULL,approved_at,published_at,created_at,updated_at
             FROM tmp_nxr_submission
@@ -1128,6 +1189,7 @@ class JavaMySqlMigration:
                 t.decision_method_code,t.decision_notes,t.created_at,t.updated_at
             FROM tmp_nxr_submission t
             JOIN grading_submission s ON s.cert_id=t.cert_id
+            WHERE t.product_type_code='graded_card'
             """,
             """
             INSERT INTO submission_media (
@@ -1259,7 +1321,7 @@ class JavaMySqlMigration:
         baseline = self.baseline
         expected = dict(baseline.counts)
         expected["grading_submission"] += stats.submissions
-        expected["grading_score"] += stats.submissions
+        expected["grading_score"] += stats.graded_submissions
         expected["submission_media"] += stats.published_media
         expected["published_certificate"] += stats.published_certificates
         expected["waitlist_email"] += stats.waitlist - baseline.waitlist_overlap
@@ -1297,6 +1359,8 @@ class JavaMySqlMigration:
                         AND s.status_code <=> t.status_code
                         AND s.grading_phase_code <=> t.grading_phase_code
                         AND s.card_category_code <=> t.card_category_code
+                        AND s.product_type_code <=> t.product_type_code
+                        AND s.vintage_classification_code <=> t.vintage_classification_code
                         AND s.movie_name <=> t.movie_name
                         AND s.release_year <=> t.release_year
                         AND s.production_company <=> t.production_company
@@ -1316,8 +1380,9 @@ class JavaMySqlMigration:
                     FROM tmp_nxr_submission t
                     JOIN grading_submission s ON s.cert_id=t.cert_id
                     LEFT JOIN grading_score g ON g.submission_id=s.id
-                    WHERE g.submission_id IS NULL
-                       OR NOT (
+                    WHERE (t.product_type_code='graded_card' AND (
+                            g.submission_id IS NULL
+                         OR NOT (
                             g.centering_score <=> t.centering_score
                         AND g.edges_score <=> t.edges_score
                         AND g.corners_score <=> t.corners_score
@@ -1328,7 +1393,9 @@ class JavaMySqlMigration:
                         AND g.ai_confidence_value <=> t.ai_confidence_value
                         AND g.decision_method_code <=> t.decision_method_code
                         AND g.decision_notes <=> t.decision_notes
-                       )
+                         )
+                       ))
+                       OR (t.product_type_code<>'graded_card' AND g.submission_id IS NOT NULL)
                 """,
                 "publication": """
                     SELECT COUNT(*) AS count
@@ -1490,8 +1557,8 @@ def print_plan(stats: SourceStats) -> None:
     print("source_validation=ok")
     for field in stats.__dataclass_fields__:
         print(f"source_{field}={getattr(stats, field)}")
-    print("mapping_cards=grading_submission+grading_score+published_certificate+submission_media")
-    print("mapping_temp_only=grading_submission+grading_score")
+    print("mapping_cards=grading_submission+optional_grading_score+published_certificate+submission_media")
+    print("mapping_temp_only=grading_submission+optional_grading_score")
     print("mapping_dictionary_brand=brand_settings")
     print("mapping_dictionary_sports_type=sys_dict_data:nxr_sports_type")
     print("mapping_waitlist=waitlist_email")

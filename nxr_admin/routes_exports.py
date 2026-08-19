@@ -18,6 +18,11 @@ SCORE_EXPORT_COLUMNS = (
 
 
 def normalize_score_columns_for_export(df, pd_module):
+    if 'product_type' in df.columns:
+        unscored_mask = df['product_type'].fillna(DEFAULT_PRODUCT_TYPE).map(normalize_product_type) != DEFAULT_PRODUCT_TYPE
+        for column_name in SCORE_EXPORT_COLUMNS:
+            if column_name in df.columns:
+                df.loc[unscored_mask, column_name] = pd_module.NA
     for column_name in SCORE_EXPORT_COLUMNS:
         if column_name not in df.columns:
             continue
@@ -181,7 +186,8 @@ def preview_excel_export():
         total_count = conn.execute(f"SELECT COUNT(*) FROM ({query})", params).fetchone()[0]
         rows = conn.execute(
             f'''
-                SELECT cert_id, card_name, card_category, brand, final_grade_text, entry_date
+                SELECT cert_id, card_name, product_type, vintage_classification,
+                       card_category, brand, final_grade_text, entry_date
                 FROM ({query})
                 ORDER BY {build_approved_order_clause()}
                 LIMIT 20
@@ -204,6 +210,13 @@ def preview_excel_export():
         'rows': [
             {
                 **dict(row),
+                'product_type': normalize_product_type(row['product_type']),
+                'product_type_label': get_product_type_label(row['product_type']),
+                'final_grade_text': (
+                    row['final_grade_text']
+                    if product_uses_grading(row['product_type'])
+                    else ''
+                ),
                 'card_category_label': get_card_category_label(row['card_category']),
                 'landing_page_url': f"nxrgrading.com/card/{row['cert_id']}",
             }

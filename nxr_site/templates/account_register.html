@@ -1,0 +1,36 @@
+{% extends "base_site.html" %}
+{% set nav_active = "account" %}
+
+{% block title %}Create Account | NXR Grading{% endblock %}
+
+{% block page_css %}
+<style>{% include "components/account_styles.html" %}</style>
+{% endblock %}
+
+{% block content %}
+<div class="account-page">
+  <div class="account-panel">
+    <h1 class="account-title">Create Account</h1>
+    <p class="account-subtitle">Create a collector profile for cards you own and transfer. Public verification remains open to everyone.</p>
+    {% if error %}<div class="account-error">{{ error }}</div>{% endif %}
+    <form class="account-form" method="POST" action="/account/register">
+      <input type="hidden" name="csrf_token" value="{{ collector_csrf_token() }}">
+      <div>
+        <label for="display_name">Display name</label>
+        <input id="display_name" type="text" name="display_name" value="{{ form.display_name or '' }}" maxlength="80" autocomplete="nickname">
+      </div>
+      <div>
+        <label for="email">Email</label>
+        <input id="email" type="email" name="email" value="{{ form.email or '' }}" required autocomplete="email">
+      </div>
+      <div>
+        <label for="password">Password</label>
+        <input id="password" type="password" name="password" required minlength="8" autocomplete="new-password">
+      </div>
+      <p class="account-note">Use at least 8 characters. Your email is used for sign-in and card transfers.</p>
+      <button class="account-submit" type="submit">Create Account</button>
+    </form>
+    <p class="account-switch">Already have an account? <a href="/account/login">Sign in</a></p>
+  </div>
+</div>
+{% endblock %}

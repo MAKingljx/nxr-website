@@ -866,6 +866,16 @@
                 </div>
 
                 <div class="col-md-2">
+                    <label class="form-label">Product Type</label>
+                    <select class="form-select" name="product_type">
+                        <option value="">All Product Types</option>
+                        {% for option in product_type_options %}
+                        <option value="{{ option.value }}" {% if product_type_filter == option.value %}selected{% endif %}>{{ option.label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="col-md-2">
                     <label class="form-label">Brand</label>
                     <select class="form-select" name="brand">
                         <option value="">All Brands</option>
@@ -955,6 +965,7 @@
                                 </th>
                                 <th>Cert ID</th>
                                 <th>Card Name</th>
+                                <th>Product Type</th>
                                 <th>Category</th>
                                 <th>Brand</th>
                                 <th>Grade</th>
@@ -976,11 +987,21 @@
                                     </td>
                                     <td><strong>{{ entry.cert_id }}</strong></td>
                                     <td>{{ entry.card_name }}</td>
+                                    <td>
+                                        {{ entry.product_type_label }}
+                                        {% if entry.product_type == 'vintage_product' %}
+                                        <div class="small text-muted">{{ entry.vintage_classification or '-' }}</div>
+                                        {% endif %}
+                                    </td>
                                     <td>{{ entry.card_category_label }}</td>
                                     <td>{{ entry.brand }}</td>
                                     <td>
+                                        {% if entry.uses_grading %}
                                         <strong>{{ entry.final_grade_text }}</strong>
                                         <small class="text-muted">({{ entry.final_grade }})</small>
+                                        {% else %}
+                                        -
+                                        {% endif %}
                                     </td>
                                     <td>
                                         <div class="image-status">
@@ -1082,6 +1103,7 @@
                         <input type="hidden" name="cert_id" value="{{ cert_id_filter }}">
                         <input type="hidden" name="card_name" value="{{ card_name_filter }}">
                         <input type="hidden" name="card_category" value="{{ card_category_filter }}">
+                        <input type="hidden" name="product_type" value="{{ product_type_filter }}">
                         <input type="hidden" name="brand" value="{{ brand_filter }}">
                         <input type="hidden" name="language" value="{{ language_filter }}">
                         <input type="hidden" name="final_grade" value="{{ final_grade_filter }}">

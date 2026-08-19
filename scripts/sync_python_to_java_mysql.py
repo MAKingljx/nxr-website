@@ -549,7 +549,8 @@ class PythonToJavaSync:
             INSERT INTO grading_submission (
                 cert_id,card_name,year_label,brand_name,player_name,variety_name,
                 set_name,card_number,language_code,population_value,status_code,
-                grading_phase_code,card_category_code,movie_name,release_year,
+                grading_phase_code,card_category_code,product_type_code,
+                vintage_classification_code,movie_name,release_year,
                 production_company,film_type,sports_type,group_name,approval_sequence,
                 entry_notes,entry_by_user_id,approved_by_user_id,approved_at,published_at,
                 created_at,updated_at
@@ -557,7 +558,8 @@ class PythonToJavaSync:
             SELECT
                 cert_id,card_name,year_label,brand_name,player_name,variety_name,
                 set_name,card_number,language_code,population_value,status_code,
-                grading_phase_code,card_category_code,movie_name,release_year,
+                grading_phase_code,card_category_code,product_type_code,
+                vintage_classification_code,movie_name,release_year,
                 production_company,film_type,sports_type,group_name,approval_sequence,
                 entry_notes,NULL,NULL,approved_at,published_at,created_at,updated_at
             FROM tmp_nxr_submission
@@ -568,13 +570,23 @@ class PythonToJavaSync:
                 card_number=VALUES(card_number),language_code=VALUES(language_code),
                 population_value=VALUES(population_value),status_code=VALUES(status_code),
                 grading_phase_code=VALUES(grading_phase_code),
-                card_category_code=VALUES(card_category_code),movie_name=VALUES(movie_name),
+                card_category_code=VALUES(card_category_code),
+                product_type_code=VALUES(product_type_code),
+                vintage_classification_code=VALUES(vintage_classification_code),
+                movie_name=VALUES(movie_name),
                 release_year=VALUES(release_year),
                 production_company=VALUES(production_company),film_type=VALUES(film_type),
                 sports_type=VALUES(sports_type),group_name=VALUES(group_name),
                 approval_sequence=VALUES(approval_sequence),entry_notes=VALUES(entry_notes),
                 approved_at=VALUES(approved_at),published_at=VALUES(published_at),
                 created_at=VALUES(created_at),updated_at=VALUES(updated_at)
+            """,
+            """
+            DELETE g
+            FROM grading_score g
+            JOIN grading_submission s ON s.id=g.submission_id
+            JOIN tmp_nxr_submission t ON t.cert_id=s.cert_id
+            WHERE t.product_type_code<>'graded_card'
             """,
             """
             INSERT INTO grading_score (
@@ -588,6 +600,7 @@ class PythonToJavaSync:
                 t.decision_method_code,t.decision_notes,t.created_at,t.updated_at
             FROM tmp_nxr_submission t
             JOIN grading_submission s ON s.cert_id=t.cert_id
+            WHERE t.product_type_code='graded_card'
             ON DUPLICATE KEY UPDATE
                 centering_score=VALUES(centering_score),edges_score=VALUES(edges_score),
                 corners_score=VALUES(corners_score),surface_score=VALUES(surface_score),
@@ -775,6 +788,8 @@ class PythonToJavaSync:
                    AND s.status_code <=> t.status_code
                    AND s.grading_phase_code <=> t.grading_phase_code
                    AND s.card_category_code <=> t.card_category_code
+                   AND s.product_type_code <=> t.product_type_code
+                   AND s.vintage_classification_code <=> t.vintage_classification_code
                    AND s.movie_name <=> t.movie_name
                    AND s.release_year <=> t.release_year
                    AND s.production_company <=> t.production_company
@@ -792,7 +807,8 @@ class PythonToJavaSync:
                 FROM tmp_nxr_submission t
                 JOIN grading_submission s ON s.cert_id=t.cert_id
                 LEFT JOIN grading_score g ON g.submission_id=s.id
-                WHERE g.submission_id IS NULL OR NOT (
+                WHERE (t.product_type_code='graded_card' AND (
+                       g.submission_id IS NULL OR NOT (
                        g.centering_score <=> t.centering_score
                    AND g.edges_score <=> t.edges_score
                    AND g.corners_score <=> t.corners_score
@@ -803,7 +819,9 @@ class PythonToJavaSync:
                    AND g.ai_confidence_value <=> t.ai_confidence_value
                    AND g.decision_method_code <=> t.decision_method_code
                    AND g.decision_notes <=> t.decision_notes
-                )
+                       )
+                ))
+                OR (t.product_type_code<>'graded_card' AND g.submission_id IS NOT NULL)
             """,
             "managed_submission": """
                 SELECT COUNT(*) AS count

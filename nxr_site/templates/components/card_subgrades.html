@@ -1,0 +1,42 @@
+{% if card.product_profile.show_subgrades %}
+<section class="subgrades-section" aria-labelledby="subgrades-title">
+  <h2 class="subgrades-title" id="subgrades-title">Sub-Grades</h2>
+  <div class="subgrades-grid">
+    {% if card.centering is not none %}
+    <div class="subgrade-card">
+      <div class="subgrade-name">Centering</div>
+      <div class="subgrade-score {% if card.centering >= 9.5 %}subgrade-perfect{% elif card.centering >= 8.0 %}subgrade-good{% elif card.centering >= 6.0 %}subgrade-fair{% else %}subgrade-poor{% endif %}">
+        {{ "%.1f"|format(card.centering) }}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if card.edges is not none %}
+    <div class="subgrade-card">
+      <div class="subgrade-name">Edges</div>
+      <div class="subgrade-score {% if card.edges >= 9.5 %}subgrade-perfect{% elif card.edges >= 8.0 %}subgrade-good{% elif card.edges >= 6.0 %}subgrade-fair{% else %}subgrade-poor{% endif %}">
+        {{ "%.1f"|format(card.edges) }}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if card.corners is not none %}
+    <div class="subgrade-card">
+      <div class="subgrade-name">Corners</div>
+      <div class="subgrade-score {% if card.corners >= 9.5 %}subgrade-perfect{% elif card.corners >= 8.0 %}subgrade-good{% elif card.corners >= 6.0 %}subgrade-fair{% else %}subgrade-poor{% endif %}">
+        {{ "%.1f"|format(card.corners) }}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if card.surface is not none %}
+    <div class="subgrade-card">
+      <div class="subgrade-name">Surface</div>
+      <div class="subgrade-score {% if card.surface >= 9.5 %}subgrade-perfect{% elif card.surface >= 8.0 %}subgrade-good{% elif card.surface >= 6.0 %}subgrade-fair{% else %}subgrade-poor{% endif %}">
+        {{ "%.1f"|format(card.surface) }}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</section>
+{% endif %}

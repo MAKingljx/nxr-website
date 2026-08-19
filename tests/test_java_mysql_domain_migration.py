@@ -298,6 +298,122 @@ class JavaDomainMigrationTests(unittest.TestCase):
         self.assertEqual(rows["APPROVED1"]["status_code"], "approved")
         self.assertIsNotNone(rows["APPROVED1"]["approved_at"])
 
+    def test_product_types_map_without_fake_grading_scores(self):
+        cards = sqlite3.connect(self.fixture.cards_path)
+        cards.execute(
+            "ALTER TABLE cards ADD COLUMN product_type TEXT NOT NULL DEFAULT 'graded_card'"
+        )
+        cards.execute(
+            "ALTER TABLE cards ADD COLUMN vintage_classification TEXT DEFAULT ''"
+        )
+        cards.commit()
+        cards.close()
+
+        temp = sqlite3.connect(self.fixture.temp_path)
+        temp.execute(
+            "ALTER TABLE temp_cards ADD COLUMN product_type TEXT NOT NULL DEFAULT 'graded_card'"
+        )
+        temp.execute(
+            "ALTER TABLE temp_cards ADD COLUMN vintage_classification TEXT DEFAULT ''"
+        )
+        insert_temp_card(temp, "LABEL001", status="approved")
+        insert_temp_card(temp, "VINTAGE1", status="approved")
+        temp.execute(
+            """
+            UPDATE temp_cards
+            SET product_type='label_product', centering=1, edges=1, corners=1,
+                surface=1, final_grade=1, final_grade_text=''
+            WHERE cert_id='LABEL001'
+            """
+        )
+        temp.execute(
+            """
+            UPDATE temp_cards
+            SET product_type='vintage_product', vintage_classification='Archive A',
+                centering=1, edges=1, corners=1, surface=1,
+                final_grade=1, final_grade_text=''
+            WHERE cert_id='VINTAGE1'
+            """
+        )
+        temp.commit()
+        temp.close()
+
+        with migration.SourceBundle(
+            self.fixture.cards_path, self.fixture.temp_path
+        ) as source:
+            stats = source.validate()
+            rows = {row["cert_id"]: row for row in source.iter_submissions()}
+
+        self.assertEqual(stats.submissions, 2)
+        self.assertEqual(stats.graded_submissions, 0)
+        self.assertEqual(rows["LABEL001"]["product_type_code"], "label_product")
+        self.assertIsNone(rows["LABEL001"]["final_grade_value"])
+        self.assertIsNone(rows["LABEL001"]["final_grade_label"])
+        self.assertEqual(
+            rows["VINTAGE1"]["vintage_classification_code"], "Archive A"
+        )
+        self.assertIsNone(rows["VINTAGE1"]["centering_score"])
+
+    def test_published_non_graded_product_discards_legacy_ai_grade(self):
+        cards = sqlite3.connect(self.fixture.cards_path)
+        cards.execute(
+            "ALTER TABLE cards ADD COLUMN product_type TEXT NOT NULL DEFAULT 'graded_card'"
+        )
+        cards.execute(
+            "ALTER TABLE cards ADD COLUMN vintage_classification TEXT DEFAULT ''"
+        )
+        cards.execute(
+            """
+            INSERT INTO cards (
+                cert_id, card_name, grade, year, brand, variety, pop, language,
+                set_name, card_number, grading_phase, created_at, updated_at,
+                ai_confidence, ai_grade, has_ai_analysis, final_grade,
+                decision_method, final_grade_text, card_category, product_type,
+                vintage_classification
+            ) VALUES (
+                'LABELAI1', 'Label AI Record', '', '2026', 'Pokemon', 'Label',
+                '1', 'EN', 'Set', '001', 'human_only', '2026-07-01',
+                '2026-07-01', 0.97, 9.5, 1, NULL, 'human_only', '',
+                'trading_card', 'label_product', ''
+            )
+            """
+        )
+        cards.commit()
+        cards.close()
+
+        with migration.SourceBundle(
+            self.fixture.cards_path, self.fixture.temp_path
+        ) as source:
+            source.validate()
+            row = list(source.iter_submissions())[0]
+
+        self.assertEqual(row["product_type_code"], "label_product")
+        self.assertIsNone(row["ai_grade_value"])
+        self.assertIsNone(row["ai_confidence_value"])
+
+    def test_vintage_product_requires_classification(self):
+        temp = sqlite3.connect(self.fixture.temp_path)
+        temp.execute(
+            "ALTER TABLE temp_cards ADD COLUMN product_type TEXT NOT NULL DEFAULT 'graded_card'"
+        )
+        temp.execute(
+            "ALTER TABLE temp_cards ADD COLUMN vintage_classification TEXT DEFAULT ''"
+        )
+        insert_temp_card(temp, "VINTAGE2", status="pending")
+        temp.execute(
+            "UPDATE temp_cards SET product_type='vintage_product' WHERE cert_id='VINTAGE2'"
+        )
+        temp.commit()
+        temp.close()
+
+        with migration.SourceBundle(
+            self.fixture.cards_path, self.fixture.temp_path
+        ) as source:
+            with self.assertRaisesRegex(
+                migration.MigrationError, "requires a vintage classification"
+            ):
+                source.validate()
+
     def test_ai_cache_uses_latest_cert_language_row(self):
         cards = sqlite3.connect(self.fixture.cards_path)
         cards.execute(

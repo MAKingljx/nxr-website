@@ -1,0 +1,3 @@
+{% if card.product_profile.show_final_grade and (card.grade or card.final_grade_text) %}
+<div class="grade-badge">Final Grade: {{ card.grade or card.final_grade_text }}</div>
+{% endif %}

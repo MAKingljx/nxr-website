@@ -1,0 +1,60 @@
+<div class="collector-section" id="collector-ledger">
+  <div class="collector-header">
+    <div>
+      <div class="collector-title">Collector Ledger</div>
+      <div class="collector-subtitle">Bind this card to a collector account and preserve its ownership path without changing the verified grading record.</div>
+    </div>
+    {% if binding %}
+    <div class="collector-pill">Bound to {{ binding.owner_label }}</div>
+    {% else %}
+    <div class="collector-pill">Unbound card</div>
+    {% endif %}
+  </div>
+
+  {% if current_site_user %}
+    {% if binding %}
+      {% if binding.user_id == current_site_user.id %}
+      <p class="collector-empty">This card is currently in your collection.</p>
+      <form class="collector-form" method="POST" action="/card/{{ card.cert_id }}/transfer">
+        <input type="hidden" name="csrf_token" value="{{ collector_csrf_token() }}">
+        <label for="recipient_email">Transfer to account email</label>
+        <input id="recipient_email" type="email" name="recipient_email" placeholder="recipient@example.com" required>
+        <div class="collector-select-row">
+          <div>
+            <label for="transfer_visibility">New owner visibility</label>
+            <select id="transfer_visibility" name="visibility">
+              <option value="public" {% if binding.visibility == 'public' %}selected{% endif %}>Show collector name</option>
+              <option value="anonymous" {% if binding.visibility == 'anonymous' %}selected{% endif %}>Show as private collector</option>
+              <option value="private" {% if binding.visibility == 'private' %}selected{% endif %}>Hide owner publicly</option>
+            </select>
+          </div>
+        </div>
+        <label for="transfer_message">Transfer note</label>
+        <textarea id="transfer_message" name="message" maxlength="1000" placeholder="Optional note for the ownership history"></textarea>
+        <div class="collector-actions">
+          <button class="collector-button" type="submit">Transfer Card</button>
+        </div>
+      </form>
+      {% else %}
+      <p class="collector-empty">This card is already bound to another collector. Public verification remains available.</p>
+      {% endif %}
+    {% else %}
+    <form class="collector-form" method="POST" action="/card/{{ card.cert_id }}/claim">
+      <input type="hidden" name="csrf_token" value="{{ collector_csrf_token() }}">
+      <label for="claim_visibility">Owner visibility</label>
+      <select id="claim_visibility" name="visibility">
+        <option value="public">Show my collector name</option>
+        <option value="anonymous">Show as private collector</option>
+        <option value="private">Hide owner publicly</option>
+      </select>
+      <label for="claim_note">Binding note</label>
+      <textarea id="claim_note" name="note" maxlength="1000" placeholder="Optional note for the ownership history"></textarea>
+      <div class="collector-actions">
+        <button class="collector-button" type="submit">Bind Card</button>
+      </div>
+    </form>
+    {% endif %}
+  {% else %}
+  <p class="collector-empty"><a href="/account/login">Sign in</a> to bind this card or transfer ownership. Public card verification remains available without an account.</p>
+  {% endif %}
+</div>

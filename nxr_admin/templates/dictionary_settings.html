@@ -134,29 +134,33 @@
         <div class="card mb-4">
             <div class="card-header">
                 <i class="fas fa-plus me-2"></i>Add Item to {{ selected_group.name }}
+                {% if selected_group.code == vintage_classification_dictionary_code %}
+                <span class="badge bg-light text-dark border ms-2">{{ total_item_count }}/{{ max_vintage_classifications }}</span>
+                {% endif %}
             </div>
             <div class="card-body">
+                {% set vintage_limit_reached = selected_group.code == vintage_classification_dictionary_code and total_item_count >= max_vintage_classifications %}
                 <form method="post" action="{{ url_for('create_dictionary_item_route', group_id=selected_group.id) }}" class="row g-3 align-items-end">
                     <div class="col-md-3">
                         <label for="item_value" class="form-label">Value</label>
-                        <input type="text" class="form-control" id="item_value" name="value" maxlength="120" required>
+                        <input type="text" class="form-control" id="item_value" name="value" maxlength="120" required {% if vintage_limit_reached %}disabled{% endif %}>
                     </div>
                     <div class="col-md-4">
                         <label for="item_aliases" class="form-label">Aliases</label>
-                        <textarea class="form-control" id="item_aliases" name="aliases" rows="1" placeholder="One alias per line"></textarea>
+                        <textarea class="form-control" id="item_aliases" name="aliases" rows="1" placeholder="One alias per line" {% if vintage_limit_reached %}disabled{% endif %}></textarea>
                     </div>
                     <div class="col-md-2">
                         <label for="item_sort_order" class="form-label">Order</label>
-                        <input type="number" class="form-control" id="item_sort_order" name="sort_order" value="0">
+                        <input type="number" class="form-control" id="item_sort_order" name="sort_order" value="0" {% if vintage_limit_reached %}disabled{% endif %}>
                     </div>
                     <div class="col-md-1">
                         <div class="form-check form-switch mb-2">
-                            <input class="form-check-input" type="checkbox" role="switch" id="item_is_active" name="is_active" value="1" checked>
+                            <input class="form-check-input" type="checkbox" role="switch" id="item_is_active" name="is_active" value="1" checked {% if vintage_limit_reached %}disabled{% endif %}>
                             <label class="form-check-label" for="item_is_active">Active</label>
                         </div>
                     </div>
                     <div class="col-md-2">
-                        <button type="submit" class="btn btn-primary w-100">
+                        <button type="submit" class="btn btn-primary w-100" {% if vintage_limit_reached %}disabled{% endif %}>
                             <i class="fas fa-save me-1"></i>Add
                         </button>
                     </div>

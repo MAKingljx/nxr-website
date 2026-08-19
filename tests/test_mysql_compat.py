@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import unittest
 from unittest import mock
 
@@ -6,6 +7,49 @@ from nxr_common import db
 
 
 class MysqlCompatTests(unittest.TestCase):
+    def test_explicit_transaction_commits_or_rolls_back(self):
+        class FakeMysqlConnection:
+            backend = db.MYSQL_BACKEND
+
+            def __init__(self):
+                self.events = []
+
+            def begin(self):
+                self.events.append("begin")
+
+            def commit(self):
+                self.events.append("commit")
+
+            def rollback(self):
+                self.events.append("rollback")
+
+        successful = FakeMysqlConnection()
+        with db.transaction(successful):
+            successful.events.append("write")
+        self.assertEqual(successful.events, ["begin", "write", "commit"])
+
+        failed = FakeMysqlConnection()
+        with self.assertRaisesRegex(RuntimeError, "failed write"):
+            with db.transaction(failed):
+                failed.events.append("write")
+                raise RuntimeError("failed write")
+        self.assertEqual(failed.events, ["begin", "write", "rollback"])
+
+    def test_grade_expression_avoids_driver_percent_placeholders(self):
+        from nxr_admin.admin_core import canonical_grade_sql_expression
+
+        expression = canonical_grade_sql_expression("grade")
+        self.assertNotIn("%", expression)
+
+        conn = sqlite3.connect(":memory:")
+        try:
+            row = conn.execute(
+                f"SELECT {expression} FROM (SELECT 'Pristine-10' AS grade)"
+            ).fetchone()
+        finally:
+            conn.close()
+        self.assertEqual(row[0], "Pristine 10")
+
     def test_translate_qmark_placeholders_preserves_literals(self):
         sql = "SELECT '?' AS literal, name FROM cards WHERE cert_id = ? AND note = \"?\""
 
@@ -73,7 +117,15 @@ class MysqlCompatTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"NXR_DB_BACKEND": "mysql"}, clear=False):
             self.assertEqual(
                 db.upsert_clause("cert_id", ["cert_id", "name", "grade"]),
-                "ON DUPLICATE KEY UPDATE name = VALUES(name), grade = VALUES(grade)",
+                "AS incoming ON DUPLICATE KEY UPDATE name = incoming.name, grade = incoming.grade",
+            )
+
+            self.assertEqual(
+                db.upsert_clause(
+                    ["cert_id", "language"],
+                    ["cert_id", "language", "content_json"],
+                ),
+                "AS incoming ON DUPLICATE KEY UPDATE content_json = incoming.content_json",
             )
 
     def test_compat_row_keeps_sqlite_row_access_patterns(self):

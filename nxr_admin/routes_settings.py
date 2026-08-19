@@ -186,6 +186,8 @@ def dictionary_settings():
         total_item_count=len(items),
         brand_dictionary_code=BRAND_DICTIONARY_CODE,
         protected_dictionary_codes=PROTECTED_DICTIONARY_CODES,
+        vintage_classification_dictionary_code=VINTAGE_CLASSIFICATION_DICTIONARY_CODE,
+        max_vintage_classifications=MAX_VINTAGE_CLASSIFICATIONS,
     )
 
 

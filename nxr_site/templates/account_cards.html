@@ -1,0 +1,64 @@
+{% extends "base_site.html" %}
+{% set nav_active = "account" %}
+
+{% block title %}My Cards | NXR Grading{% endblock %}
+
+{% block page_css %}
+<style>
+.cards-page{padding:130px 40px 80px;max-width:1040px;margin:0 auto}
+.cards-header{display:flex;justify-content:space-between;align-items:flex-end;gap:24px;margin-bottom:32px}
+.cards-title{font-size:clamp(30px,4vw,44px);font-weight:900;margin-bottom:8px}
+.cards-subtitle{font-size:15px;color:var(--text2);line-height:1.6}
+.cards-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:18px}
+.collection-card{background:var(--bg2);border:1px solid var(--border2);border-radius:8px;overflow:hidden}
+.collection-thumb{height:180px;background:var(--bg3);display:flex;align-items:center;justify-content:center}
+.collection-thumb img{max-width:100%;max-height:180px;object-fit:contain}
+.collection-body{padding:16px}
+.collection-cert{font-family:monospace;font-size:12px;color:var(--text3);margin-bottom:8px}
+.collection-name{font-size:16px;font-weight:800;margin-bottom:8px}
+.collection-meta{font-size:13px;color:var(--text2);line-height:1.5}
+.empty-state{background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:42px;text-align:center}
+.empty-state h2{font-size:22px;margin-bottom:10px}
+.empty-state p{color:var(--text2);font-size:14px;line-height:1.6;margin-bottom:24px}
+@media(max-width:700px){.cards-header{display:block}.cards-page{padding:120px 20px 60px}.cards-header .btn-secondary{display:inline-block;margin-top:18px}}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="cards-page">
+  <div class="cards-header">
+    <div>
+      <h1 class="cards-title">My Cards</h1>
+      <p class="cards-subtitle">Cards currently bound to your account, with ownership changes recorded on each card page.</p>
+    </div>
+    <a class="btn-secondary" href="/verify">Bind another card</a>
+  </div>
+
+  {% if cards %}
+  <div class="cards-grid">
+    {% for item in cards %}
+    <a class="collection-card" href="/card/{{ item.cert_id }}">
+      <div class="collection-thumb">
+        <img src="{{ item.front_image }}" alt="{{ item.card_name or item.cert_id }}">
+      </div>
+      <div class="collection-body">
+        <div class="collection-cert">{{ item.cert_id }}</div>
+        <div class="collection-name">{{ item.card_name or "NXR Graded Card" }}</div>
+        <div class="collection-meta">
+          {% if item.brand %}{{ item.brand }}<br>{% endif %}
+          {% if item.grade or item.final_grade_text %}Grade: {{ item.grade or item.final_grade_text }}<br>{% endif %}
+          Bound: {{ item.bound_at }}
+        </div>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="empty-state">
+    <h2>No cards bound yet</h2>
+    <p>Open a verified card and bind it from the collector section.</p>
+    <a class="btn-primary" href="/verify">Verify a card</a>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
