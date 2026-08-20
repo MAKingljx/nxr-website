@@ -37,6 +37,14 @@ CERT_ID_LENGTH = 10
 # Ensure directories exist
 UPLOAD_FOLDER = Path(os.environ.get('NXR_ADMIN_UPLOAD_FOLDER', ADMIN_DIR / "uploads"))
 UPLOAD_FOLDER.mkdir(exist_ok=True)
+try:
+    MAX_ADMIN_REQUEST_BYTES = int(
+        os.environ.get('NXR_ADMIN_MAX_REQUEST_BYTES', 32 * 1024 * 1024)
+    )
+except ValueError:
+    MAX_ADMIN_REQUEST_BYTES = 32 * 1024 * 1024
+if MAX_ADMIN_REQUEST_BYTES <= 0:
+    MAX_ADMIN_REQUEST_BYTES = 32 * 1024 * 1024
 
 # Brand seed data
 # -----------------------------------------------------------------------------
@@ -338,6 +346,9 @@ app = Flask(__name__,
             static_url_path='/admin/static')
 app.secret_key = os.environ.get('ADMIN_SECRET_KEY', 'nxr-manual-entry-2026-updated')
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+# Enforce the request limit before Werkzeug parses multipart uploads. The
+# folder-import route applies stricter per-file and aggregate image limits.
+app.config['MAX_CONTENT_LENGTH'] = MAX_ADMIN_REQUEST_BYTES
 
 DEFAULT_ADMIN_ACCOUNTS = {
     'admin': {'password': 'nxr2026', 'role': 'superadmin'},
@@ -1712,6 +1723,97 @@ def delete_uploaded_file(filename):
         app.logger.warning('Failed to delete uploaded file: %s', file_path)
 
 
+def fsync_directory(directory):
+    """Persist directory-entry changes after an atomic file publication."""
+    directory_fd = None
+    try:
+        directory_fd = os.open(directory, os.O_RDONLY)
+        os.fsync(directory_fd)
+    except OSError:
+        app.logger.warning('Failed to fsync directory: %s', directory)
+    finally:
+        if directory_fd is not None:
+            try:
+                os.close(directory_fd)
+            except OSError:
+                app.logger.warning('Failed to close directory handle: %s', directory)
+
+
+def safe_rollback(conn, operation='database operation'):
+    """Best-effort rollback that never hides the original failure."""
+    if conn is None:
+        return False
+    try:
+        conn.rollback()
+        return True
+    except Exception:
+        app.logger.exception('Failed to roll back %s', operation)
+        return False
+
+
+def safe_close(conn, operation='database connection'):
+    """Close a connection without turning a completed request into a failure."""
+    if conn is None:
+        return False
+    try:
+        conn.close()
+        return True
+    except Exception:
+        app.logger.exception('Failed to close %s', operation)
+        return False
+
+
+def delete_queue_files_if_unreferenced(conn, filenames):
+    """Delete queue images only after both reference columns are checked.
+
+    The two separate lookups intentionally match the individual indexes on
+    ``front_image`` and ``back_image``. A lookup error retains the file because
+    an orphan is safer than deleting an image that a committed row references.
+    """
+    for filename in dict.fromkeys(filenames or []):
+        normalized_name = (filename or '').strip()
+        if not normalized_name:
+            continue
+        try:
+            is_referenced = any(
+                conn.execute(
+                    f'SELECT 1 FROM temp_cards WHERE {column_name} = ? LIMIT 1',
+                    (normalized_name,),
+                ).fetchone() is not None
+                for column_name in ('front_image', 'back_image')
+            )
+        except Exception:
+            app.logger.exception(
+                'Could not verify whether queue image is still referenced'
+            )
+            continue
+        if not is_referenced:
+            delete_uploaded_file(normalized_name)
+
+
+def cleanup_uncertain_queue_files(filenames, connection_factory=None):
+    """Use a fresh connection before cleaning files after an uncertain commit."""
+    unique_filenames = [
+        filename
+        for filename in dict.fromkeys(filenames or [])
+        if (filename or '').strip()
+    ]
+    if not unique_filenames:
+        return
+
+    verification_conn = None
+    try:
+        factory = connection_factory or get_temp_db_connection
+        verification_conn = factory()
+        delete_queue_files_if_unreferenced(verification_conn, unique_filenames)
+    except Exception:
+        app.logger.exception(
+            'Could not verify uncertain image update; files were retained'
+        )
+    finally:
+        safe_close(verification_conn, 'image verification connection')
+
+
 def resolve_uploaded_file_path(filename):
     safe_name = Path(filename or '').name
     if not safe_name or safe_name != (filename or ''):
@@ -1860,6 +1962,7 @@ def row_value(row, key, default=''):
 
 def initialize_main_database():
     conn = get_main_db_connection()
+    db.configure_sqlite_journal_mode(conn)
     cursor = conn.cursor()
 
     initialize_admin_users(conn)
@@ -1898,6 +2001,7 @@ def initialize_main_database():
         CREATE INDEX IF NOT EXISTS idx_cards_product_identity
         ON cards (product_type, vintage_classification)
     ''')
+    ensure_population_lookup_indexes(conn, 'cards')
     normalize_language_values(conn, 'cards')
 
     conn.commit()
@@ -2015,6 +2119,54 @@ def _build_population_filter(
         clauses.append('vintage_classification = ? COLLATE NOCASE')
         params.append(classification)
     return category, normalized_language, '\n AND '.join(clauses), params
+
+
+def ensure_population_lookup_indexes(conn, table_name):
+    """Create SQLite expression indexes matching historical POP filters.
+
+    POP keeps accepting legacy product/category values through SQL expressions.
+    Ordinary column indexes cannot serve those expressions, so SQLite needs
+    matching expression indexes. MySQL retains its existing indexes and query
+    behavior because this SQLite syntax is deliberately not sent to MySQL.
+    """
+    if db.is_mysql_connection(conn):
+        return
+    if table_name not in {'cards', 'temp_cards'}:
+        raise ValueError('Unsupported population table')
+
+    product_expression = product_type_sql_expression()
+    category_expression = (
+        "COALESCE(NULLIF(card_category, ''), 'trading_card')"
+    )
+    common_prefix = f'''\
+        {product_expression},
+        {category_expression}
+    '''
+    index_definitions = {
+        'identity': '''
+            card_name COLLATE NOCASE,
+            set_name COLLATE NOCASE,
+            card_number COLLATE NOCASE,
+            language,
+            final_grade_text,
+            vintage_classification COLLATE NOCASE
+        ''',
+        'movie': '''
+            movie_name COLLATE NOCASE,
+            release_year COLLATE NOCASE,
+            production_company COLLATE NOCASE,
+            film_type COLLATE NOCASE,
+            final_grade_text
+        ''',
+    }
+    for suffix, lookup_columns in index_definitions.items():
+        conn.execute(f'''
+            CREATE INDEX IF NOT EXISTS idx_{table_name}_pop_{suffix}
+            ON {table_name} (
+                {common_prefix},
+                {lookup_columns}
+            )
+        ''')
 
 
 def calculate_population(
@@ -2277,6 +2429,7 @@ def initialize_databases():
 # Initialize temporary database
 def init_temp_database():
     conn = get_temp_db_connection()
+    db.configure_sqlite_journal_mode(conn)
     cursor = conn.cursor()
 
     # Create temporary cards table with updated structure
@@ -2394,6 +2547,15 @@ def init_temp_database():
         CREATE INDEX IF NOT EXISTS idx_temp_cards_set_name_number
         ON temp_cards (set_name, card_number)
     ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_temp_cards_front_image
+        ON temp_cards (front_image)
+    ''')
+    cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_temp_cards_back_image
+        ON temp_cards (back_image)
+    ''')
+    ensure_population_lookup_indexes(conn, 'temp_cards')
     backfill_approval_metadata(conn)
     normalize_language_values(conn, 'temp_cards')
 
@@ -2414,17 +2576,36 @@ def save_uploaded_file(file, filename_prefix):
 
     # 确保文件名安全
     original_filename = secure_filename(file.filename)
-
-    # 生成唯一文件名
     import uuid
     file_ext = os.path.splitext(original_filename)[1].lower()
-    unique_filename = f"{filename_prefix}_{uuid.uuid4().hex[:8]}{file_ext}"
+    upload_folder = Path(app.config['UPLOAD_FOLDER'])
+    pending_path = upload_folder / f'.entry-upload-{uuid.uuid4().hex}.part'
 
-    # 保存文件
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
-    file.save(file_path)
+    try:
+        # Save into a private name first. If the stream is interrupted, the
+        # finally block can always identify and remove the partial file.
+        file.save(str(pending_path))
+        with pending_path.open('rb') as pending_file:
+            os.fsync(pending_file.fileno())
 
-    return unique_filename
+        for _ in range(5):
+            unique_filename = f"{filename_prefix}_{uuid.uuid4().hex[:8]}{file_ext}"
+            file_path = upload_folder / unique_filename
+            try:
+                # The hard link atomically publishes a complete file and never
+                # overwrites an existing name if a UUID collision occurs.
+                os.link(pending_path, file_path)
+                fsync_directory(upload_folder)
+                return unique_filename
+            except FileExistsError:
+                continue
+        raise FileExistsError('Unable to allocate a unique upload filename')
+    finally:
+        try:
+            pending_path.unlink(missing_ok=True)
+            fsync_directory(upload_folder)
+        except OSError:
+            app.logger.warning('Failed to remove staged entry upload: %s', pending_path)
 
 
 def get_entry_image_flags(entry):

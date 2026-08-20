@@ -160,14 +160,22 @@ def new_entry():
         # Handle file uploads
         front_image_filename = None
         back_image_filename = None
+        try:
+            if 'front_image' in request.files:
+                front_image_file = request.files['front_image']
+                front_image_filename = save_uploaded_file(front_image_file, 'front')
 
-        if 'front_image' in request.files:
-            front_image_file = request.files['front_image']
-            front_image_filename = save_uploaded_file(front_image_file, 'front')
-
-        if 'back_image' in request.files:
-            back_image_file = request.files['back_image']
-            back_image_filename = save_uploaded_file(back_image_file, 'back')
+            if 'back_image' in request.files:
+                back_image_file = request.files['back_image']
+                back_image_filename = save_uploaded_file(back_image_file, 'back')
+        except Exception:
+            app.logger.exception('Failed to stage images for a new entry')
+            cleanup_uncertain_queue_files(
+                [front_image_filename, back_image_filename],
+                connection_factory=get_temp_db_connection,
+            )
+            flash('Images could not be saved. No entry was created.', 'error')
+            return redirect(url_for('new_entry'))
 
         # Prepare entry data
         entry_data = {
@@ -208,8 +216,9 @@ def new_entry():
             return redirect(url_for('new_entry'))
 
         # Save to temporary database
-        conn = get_temp_db_connection()
+        conn = None
         try:
+            conn = get_temp_db_connection()
             cursor = conn.cursor()
 
             # Insert into temporary database
@@ -222,15 +231,59 @@ def new_entry():
 
             result_label = grading_data['final_grade_text'] or get_product_type_label(card_data['product_type'])
             flash(f"Card {entry_data['cert_id']} entered successfully! {result_label}", 'success')
-            conn.close()
+            safe_close(conn, 'new entry connection')
+            conn = None
             return redirect(url_for('entry_list'))
 
-        except Exception as e:
-            conn.rollback()
-            delete_uploaded_file(front_image_filename)
-            delete_uploaded_file(back_image_filename)
-            flash(f"Error saving entry: {str(e)}", 'error')
-            conn.close()
+        except Exception:
+            app.logger.exception('Failed to create entry %s', entry_data['cert_id'])
+            safe_rollback(conn, 'new entry')
+            safe_close(conn, 'new entry connection')
+            conn = None
+
+            verification_conn = None
+            commit_was_applied = False
+            try:
+                verification_conn = get_temp_db_connection()
+                committed_row = verification_conn.execute(
+                    '''
+                        SELECT cert_id, created_at, front_image, back_image
+                        FROM temp_cards
+                        WHERE cert_id = ?
+                    ''',
+                    (entry_data['cert_id'],),
+                ).fetchone()
+                commit_was_applied = bool(
+                    committed_row is not None
+                    and (committed_row['created_at'] or '') == entry_data['created_at']
+                    and (committed_row['front_image'] or '') == entry_data['front_image']
+                    and (committed_row['back_image'] or '') == entry_data['back_image']
+                )
+                if not commit_was_applied:
+                    delete_queue_files_if_unreferenced(
+                        verification_conn,
+                        [front_image_filename, back_image_filename],
+                    )
+            except Exception:
+                app.logger.exception(
+                    'Could not reconcile new entry %s; files were retained',
+                    entry_data['cert_id'],
+                )
+            finally:
+                safe_close(verification_conn, 'new entry verification connection')
+
+            if commit_was_applied:
+                result_label = (
+                    grading_data['final_grade_text']
+                    or get_product_type_label(card_data['product_type'])
+                )
+                flash(
+                    f"Card {entry_data['cert_id']} entered successfully! {result_label}",
+                    'success',
+                )
+                return redirect(url_for('entry_list'))
+
+            flash('Entry could not be saved. Please reload before trying again.', 'error')
             return redirect(url_for('new_entry'))
 
     # GET request - show empty form with auto-generated Cert ID
@@ -490,21 +543,45 @@ def edit_entry(entry_id):
         # Handle file uploads
         front_image_filename = None
         back_image_filename = None
+        try:
+            if 'front_image' in request.files:
+                front_image_file = request.files['front_image']
+                if front_image_file and front_image_file.filename != '':
+                    front_image_filename = save_uploaded_file(front_image_file, 'front')
 
-        if 'front_image' in request.files:
-            front_image_file = request.files['front_image']
-            if front_image_file and front_image_file.filename != '':
-                front_image_filename = save_uploaded_file(front_image_file, 'front')
-
-        if 'back_image' in request.files:
-            back_image_file = request.files['back_image']
-            if back_image_file and back_image_file.filename != '':
-                back_image_filename = save_uploaded_file(back_image_file, 'back')
+            if 'back_image' in request.files:
+                back_image_file = request.files['back_image']
+                if back_image_file and back_image_file.filename != '':
+                    back_image_filename = save_uploaded_file(back_image_file, 'back')
+        except Exception:
+            app.logger.exception('Failed to stage replacement images for entry %s', entry_id)
+            safe_close(conn, 'entry edit connection')
+            cleanup_uncertain_queue_files([
+                front_image_filename,
+                back_image_filename,
+            ], connection_factory=get_temp_db_connection)
+            flash('Images could not be saved. No entry changes were applied.', 'error')
+            return redirect(url_for('edit_entry', entry_id=entry_id))
 
         delete_front_image = request.form.get('delete_front_image') == '1'
         delete_back_image = request.form.get('delete_back_image') == '1'
+        changes_queue_images = bool(
+            front_image_filename
+            or back_image_filename
+            or delete_front_image
+            or delete_back_image
+        )
         files_to_delete = []
-        published_images_to_delete = []
+
+        if (
+            changes_queue_images
+            and (existing_entry['upload_status'] or '').strip().lower() == 'uploading'
+        ):
+            delete_uploaded_file(front_image_filename)
+            delete_uploaded_file(back_image_filename)
+            flash('Images cannot be changed while this entry is uploading.', 'error')
+            conn.close()
+            return redirect(url_for('edit_entry', entry_id=entry_id))
 
         # Update entry
         update_data = {
@@ -526,8 +603,9 @@ def edit_entry(entry_id):
             update_data['published_front_image'] = ''
             if existing_entry['front_image']:
                 files_to_delete.append(existing_entry['front_image'])
-            if existing_entry['published_front_image']:
-                published_images_to_delete.append(existing_entry['published_front_image'])
+            # The published file can still be referenced by the main cards
+            # database. Clear only this queue record; orphan cleanup needs a
+            # separate cross-database verification pass.
 
         if back_image_filename:
             update_data['back_image'] = back_image_filename
@@ -538,8 +616,8 @@ def edit_entry(entry_id):
             update_data['published_back_image'] = ''
             if existing_entry['back_image']:
                 files_to_delete.append(existing_entry['back_image'])
-            if existing_entry['published_back_image']:
-                published_images_to_delete.append(existing_entry['published_back_image'])
+            # Never delete a public file from an entry edit while the main site
+            # may still reference it.
 
         # Validate required fields
         is_valid_entry, missing_label = validate_category_required_fields(update_data)
@@ -549,32 +627,123 @@ def edit_entry(entry_id):
             flash(f'{missing_label} is required', 'error')
             conn.close()
             return redirect(url_for('edit_entry', entry_id=entry_id))
+        # Build update query
+        set_clause = ', '.join([f"{key} = ?" for key in update_data.keys()])
+        values = list(update_data.values())
+        where_clause = 'id = ?'
+        values.append(entry_id)
+        if changes_queue_images:
+            where_clause += '''
+                AND COALESCE(upload_status, 'not_started') <> 'uploading'
+                AND COALESCE(front_image, '') = ?
+                AND COALESCE(back_image, '') = ?
+            '''
+            values.extend([
+                existing_entry['front_image'] or '',
+                existing_entry['back_image'] or '',
+            ])
+
+        expected_images = {
+            'front_image': update_data.get(
+                'front_image',
+                existing_entry['front_image'] or '',
+            ),
+            'back_image': update_data.get(
+                'back_image',
+                existing_entry['back_image'] or '',
+            ),
+            'published_front_image': update_data.get(
+                'published_front_image',
+                existing_entry['published_front_image'] or '',
+            ),
+            'published_back_image': update_data.get(
+                'published_back_image',
+                existing_entry['published_back_image'] or '',
+            ),
+        }
+
         try:
-            # Build update query
-            set_clause = ', '.join([f"{key} = ?" for key in update_data.keys()])
-            values = list(update_data.values())
-            values.append(entry_id)
-
-            conn.execute(f"UPDATE temp_cards SET {set_clause} WHERE id = ?", values)
+            update_cursor = conn.execute(
+                f"UPDATE temp_cards SET {set_clause} WHERE {where_clause}",
+                values,
+            )
+            if changes_queue_images and update_cursor.rowcount == 0:
+                safe_rollback(conn, 'stale entry image edit')
+                safe_close(conn, 'entry edit connection')
+                conn = None
+                cleanup_uncertain_queue_files([
+                    front_image_filename,
+                    back_image_filename,
+                ], connection_factory=get_temp_db_connection)
+                flash(
+                    'Entry images changed in another request. Reload the form and try again.',
+                    'error',
+                )
+                return redirect(url_for('edit_entry', entry_id=entry_id))
             conn.commit()
-            conn.close()
+        except Exception:
+            app.logger.exception('Entry update failed for entry %s', entry_id)
+            safe_rollback(conn, 'entry edit')
+            safe_close(conn, 'entry edit connection')
+            conn = None
 
-            for filename in dict.fromkeys(files_to_delete):
-                delete_uploaded_file(filename)
-            for image_url in dict.fromkeys(published_images_to_delete):
-                delete_public_image(image_url)
+            verification_conn = None
+            commit_was_applied = False
+            try:
+                verification_conn = get_temp_db_connection()
+                committed_row = verification_conn.execute(
+                    '''
+                        SELECT updated_at, front_image, back_image,
+                               published_front_image, published_back_image
+                        FROM temp_cards
+                        WHERE id = ?
+                    ''',
+                    (entry_id,),
+                ).fetchone()
+                commit_was_applied = bool(
+                    committed_row is not None
+                    and (committed_row['updated_at'] or '') == update_data['updated_at']
+                    and all(
+                        (committed_row[column_name] or '') == expected_value
+                        for column_name, expected_value in expected_images.items()
+                    )
+                )
+                if commit_was_applied:
+                    delete_queue_files_if_unreferenced(
+                        verification_conn,
+                        files_to_delete,
+                    )
+                else:
+                    delete_queue_files_if_unreferenced(
+                        verification_conn,
+                        [front_image_filename, back_image_filename],
+                    )
+            except Exception:
+                app.logger.exception(
+                    'Could not reconcile entry edit for entry %s; files were retained',
+                    entry_id,
+                )
+            finally:
+                safe_close(verification_conn, 'entry edit verification connection')
 
-            result_label = grading_data['final_grade_text'] or get_product_type_label(card_data['product_type'])
-            flash(f"Entry updated successfully. {result_label}", 'success')
-            return redirect(url_for('entry_detail', entry_id=entry_id))
+            if commit_was_applied:
+                result_label = (
+                    grading_data['final_grade_text']
+                    or get_product_type_label(card_data['product_type'])
+                )
+                flash(f"Entry updated successfully. {result_label}", 'success')
+                return redirect(url_for('entry_detail', entry_id=entry_id))
 
-        except Exception as e:
-            conn.rollback()
-            delete_uploaded_file(front_image_filename)
-            delete_uploaded_file(back_image_filename)
-            flash(f"Error updating entry: {str(e)}", 'error')
-            conn.close()
+            flash('Entry update failed. Reload the entry before trying again.', 'error')
             return redirect(url_for('edit_entry', entry_id=entry_id))
+
+        delete_queue_files_if_unreferenced(conn, files_to_delete)
+        safe_close(conn, 'entry edit connection')
+        conn = None
+
+        result_label = grading_data['final_grade_text'] or get_product_type_label(card_data['product_type'])
+        flash(f"Entry updated successfully. {result_label}", 'success')
+        return redirect(url_for('entry_detail', entry_id=entry_id))
 
     # GET request - show edit form
     conn.close()
@@ -804,8 +973,14 @@ def api_calculate_pop():
             }
         })
 
-    except Exception as e:
-        return jsonify({'error': str(e), 'pop': '1'}), 400
+    except ValueError as exc:
+        return jsonify({'error': str(exc), 'pop': '1'}), 400
+    except Exception:
+        app.logger.exception('POP calculation failed')
+        return jsonify({
+            'error': 'POP calculation is temporarily unavailable. Please try again.',
+            'pop': '1',
+        }), 503
 
 
 @app.route('/admin/api/match-card', methods=['POST'])
@@ -889,6 +1064,10 @@ def api_match_card():
 
         return jsonify({'found': False, 'message': 'No matching card found in database'})
 
-    except Exception as exc:
-        app.logger.error('Card matching error: %s', exc)
-        return jsonify({'error': f'Database error: {exc}'}), 500
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except Exception:
+        app.logger.exception('Card matching failed')
+        return jsonify({
+            'error': 'Card matching is temporarily unavailable. Please try again.',
+        }), 503

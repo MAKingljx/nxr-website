@@ -138,6 +138,9 @@
     let selectedEntries = new Set();
     let currentPage = {{ page }};
     let totalPages = {{ total_pages }};
+    const MAX_FOLDER_IMPORT_RETRIES = 3;
+    const FOLDER_IMPORT_RETRY_BASE_MS = 1000;
+    const FOLDER_IMPORT_RETRY_MAX_MS = 8000;
 
     function setFolderImportProgress(percent, message, tone = 'info') {
         const progressWrap = document.getElementById('folderImportProgress');
@@ -214,6 +217,7 @@
             uploadedBytes: 0,
             aggregateSummary,
             submitButton,
+            retryAttempt: 0,
         });
     }
 
@@ -244,6 +248,39 @@
         return batches;
     }
 
+    function shouldRetryFolderImport(status, response, retryAttempt) {
+        if (retryAttempt >= MAX_FOLDER_IMPORT_RETRIES) {
+            return false;
+        }
+        if (response && typeof response.retryable === 'boolean') {
+            return response.retryable;
+        }
+        return [0, 408, 409, 423, 425, 429, 500, 502, 503, 504].includes(status);
+    }
+
+    function scheduleFolderImportRetry(context, response, errorMessage) {
+        const retryAttempt = Number(context.retryAttempt) || 0;
+        const nextRetryAttempt = retryAttempt + 1;
+        const configuredBaseDelay = Number(response && response.retry_after_ms)
+            || FOLDER_IMPORT_RETRY_BASE_MS;
+        const retryDelay = Math.min(
+            configuredBaseDelay * (2 ** retryAttempt),
+            FOLDER_IMPORT_RETRY_MAX_MS,
+        );
+        const completedPercent = context.totalBytes > 0
+            ? Math.min(99, Math.round((context.uploadedBytes / context.totalBytes) * 100))
+            : 0;
+        const retryMessage = `${errorMessage} Retrying batch ${context.batchIndex + 1}/${context.batches.length} (${nextRetryAttempt}/${MAX_FOLDER_IMPORT_RETRIES}) in ${Math.ceil(retryDelay / 1000)}s...`;
+
+        setFolderImportProgress(completedPercent, retryMessage, 'warning');
+        setTimeout(() => {
+            uploadFolderImportBatch({
+                ...context,
+                retryAttempt: nextRetryAttempt,
+            });
+        }, retryDelay);
+    }
+
     function uploadFolderImportBatch(context) {
         const {
             form,
@@ -253,6 +290,7 @@
             uploadedBytes,
             aggregateSummary,
             submitButton,
+            retryAttempt = 0,
         } = context;
 
         if (batchIndex >= batches.length) {
@@ -279,8 +317,35 @@
         });
 
         const xhr = new XMLHttpRequest();
+        let requestSettled = false;
         xhr.open('POST', form.action, true);
         xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+
+        const handleFailure = function(response, errorMessage) {
+            if (requestSettled) {
+                return;
+            }
+            requestSettled = true;
+
+            if (shouldRetryFolderImport(xhr.status, response, retryAttempt)) {
+                scheduleFolderImportRetry(
+                    {...context, retryAttempt},
+                    response,
+                    errorMessage,
+                );
+                return;
+            }
+
+            if (submitButton) {
+                submitButton.disabled = false;
+            }
+            const retrySuffix = retryAttempt > 0
+                ? ' Automatic retries were exhausted. Click Import Images to try again.'
+                : '';
+            const finalMessage = `${errorMessage}${retrySuffix}`;
+            setFolderImportProgress(100, finalMessage, 'error');
+            showToast(finalMessage, 'error');
+        };
 
         xhr.upload.addEventListener('progress', function(event) {
             const loadedBytes = event.lengthComputable ? event.loaded : 0;
@@ -319,13 +384,14 @@
                 const errorMessage = response && response.message
                     ? response.message
                     : `Folder import failed on batch ${batchIndex + 1}.`;
-                if (submitButton) {
-                    submitButton.disabled = false;
-                }
-                setFolderImportProgress(100, errorMessage, 'error');
-                showToast(errorMessage, 'error');
+                handleFailure(response, errorMessage);
                 return;
             }
+
+            if (requestSettled) {
+                return;
+            }
+            requestSettled = true;
 
             const summary = response.summary || {};
             aggregateSummary.saved_files += summary.saved_files || 0;
@@ -342,15 +408,16 @@
                 uploadedBytes: uploadedBytes + batchBytes,
                 aggregateSummary,
                 submitButton,
+                retryAttempt: 0,
             });
         };
 
         xhr.onerror = function() {
-            if (submitButton) {
-                submitButton.disabled = false;
-            }
-            setFolderImportProgress(100, 'Upload request failed. Please try again.', 'error');
-            showToast('Upload request failed. Please try again.', 'error');
+            handleFailure(null, 'Upload request failed.');
+        };
+
+        xhr.ontimeout = function() {
+            handleFailure(null, 'Upload request timed out.');
         };
 
         xhr.send(formData);

@@ -1,7 +1,9 @@
+import os
 import re
-import shutil
 import uuid
 from pathlib import Path
+
+from PIL import Image, UnidentifiedImageError
 
 from nxr_admin.admin_core import *
 
@@ -11,6 +13,36 @@ IMAGE_IMPORT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 ALLOWED_IMAGE_IMPORT_EXTENSIONS = {'.webp', '.jpg', '.jpeg', '.png'}
+IMAGE_FORMAT_EXTENSIONS = {
+    'JPEG': {'.jpg', '.jpeg'},
+    'PNG': {'.png'},
+    'WEBP': {'.webp'},
+}
+SAFE_UPLOAD_FAILURE_DETAIL = 'Upload failed during server finalization'
+
+
+def positive_int_env(name, default):
+    raw_value = os.environ.get(name, '').strip()
+    try:
+        value = int(raw_value)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+MAX_IMAGE_IMPORT_FILES = positive_int_env('NXR_IMAGE_IMPORT_MAX_FILES', 12)
+MAX_IMAGE_IMPORT_FILE_BYTES = positive_int_env(
+    'NXR_IMAGE_IMPORT_MAX_FILE_BYTES',
+    24 * 1024 * 1024,
+)
+MAX_IMAGE_IMPORT_BATCH_BYTES = positive_int_env(
+    'NXR_IMAGE_IMPORT_MAX_BATCH_BYTES',
+    24 * 1024 * 1024,
+)
+MAX_IMAGE_IMPORT_PIXELS = positive_int_env(
+    'NXR_IMAGE_IMPORT_MAX_PIXELS',
+    100_000_000,
+)
 
 
 def normalize_import_side(raw_side):
@@ -40,8 +72,8 @@ def save_imported_image_upload(cert_id, side, extension, uploaded_file):
         raise ValueError(f'Unsupported image extension for {cert_id} {side}')
 
     safe_side = 'front' if side == 'front' else 'back'
-    output_name = f'{safe_side}_{cert_id}_{uuid.uuid4().hex[:8]}{normalized_extension}'
-    output_path = Path(app.config['UPLOAD_FOLDER']) / output_name
+    upload_folder = Path(app.config['UPLOAD_FOLDER'])
+    pending_path = upload_folder / f'.image-import-{uuid.uuid4().hex}.part'
 
     try:
         if hasattr(uploaded_file, 'stream') and hasattr(uploaded_file.stream, 'seek'):
@@ -49,10 +81,51 @@ def save_imported_image_upload(cert_id, side, extension, uploaded_file):
     except (OSError, ValueError):
         pass
 
-    with output_path.open('wb') as output_file:
-        shutil.copyfileobj(uploaded_file.stream, output_file, length=1024 * 1024)
+    bytes_written = 0
+    try:
+        with pending_path.open('xb') as output_file:
+            while True:
+                chunk = uploaded_file.stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                bytes_written += len(chunk)
+                if bytes_written > MAX_IMAGE_IMPORT_FILE_BYTES:
+                    raise ValueError('Image import file exceeds the configured size limit')
+                output_file.write(chunk)
+            output_file.flush()
+            os.fsync(output_file.fileno())
 
-    return output_name
+        try:
+            with Image.open(pending_path) as image:
+                detected_format = (image.format or '').upper()
+                width, height = image.size
+                if width <= 0 or height <= 0 or width * height > MAX_IMAGE_IMPORT_PIXELS:
+                    raise ValueError('Image dimensions exceed the configured limit')
+                image.verify()
+        except (UnidentifiedImageError, OSError) as exc:
+            raise ValueError('Uploaded file is not a valid supported image') from exc
+
+        if normalized_extension not in IMAGE_FORMAT_EXTENSIONS.get(detected_format, set()):
+            raise ValueError('Image content does not match its file extension')
+
+        for _ in range(5):
+            output_name = f'{safe_side}_{cert_id}_{uuid.uuid4().hex[:8]}{normalized_extension}'
+            output_path = upload_folder / output_name
+            try:
+                # A hard link publishes the fully-written image atomically and
+                # refuses to overwrite an existing UUID collision.
+                os.link(pending_path, output_path)
+                fsync_directory(upload_folder)
+                return output_name, bytes_written
+            except FileExistsError:
+                continue
+        raise FileExistsError('Unable to allocate a unique image filename')
+    finally:
+        try:
+            pending_path.unlink(missing_ok=True)
+            fsync_directory(upload_folder)
+        except OSError:
+            app.logger.warning('Failed to remove staged image file: %s', pending_path)
 
 
 def build_image_import_candidates_from_files(uploaded_files):
@@ -100,79 +173,174 @@ def import_image_candidates_to_temp_cards(candidates, invalid_names, duplicate_n
         }
 
     placeholders = ', '.join(['?' for _ in cert_ids])
-    rows = conn.execute(
+    initial_rows = conn.execute(
         f'''
             SELECT id, cert_id, front_image, back_image
             FROM temp_cards
             WHERE status = 'approved'
+              AND COALESCE(upload_status, 'not_started') <> 'uploading'
               AND cert_id IN ({placeholders})
         ''',
         cert_ids,
     ).fetchall()
-    rows_by_cert_id = {row['cert_id']: row for row in rows}
+    initial_rows_by_cert_id = {row['cert_id']: row for row in initial_rows}
 
-    matched_entries = 0
-    saved_files = 0
-    updated_sides = 0
-    updated_entry_ids = []
-    files_to_delete = []
+    # Copy uploaded bytes before starting the write transaction. This keeps the
+    # SQLite writer lock short even when a browser batch contains large images.
+    staged_names = {}
+    created_files = []
+    staged_bytes = 0
+    try:
+        for cert_id in cert_ids:
+            if cert_id not in initial_rows_by_cert_id:
+                continue
+            for side in ('front', 'back'):
+                candidate = candidates.get((cert_id, side))
+                if not candidate:
+                    continue
+                saved_name, saved_bytes = save_imported_image_upload(
+                    cert_id=cert_id,
+                    side=side,
+                    extension=candidate['extension'],
+                    uploaded_file=candidate['uploaded_file'],
+                )
+                staged_names[(cert_id, side)] = saved_name
+                created_files.append(saved_name)
+                staged_bytes += saved_bytes
+                if staged_bytes > MAX_IMAGE_IMPORT_BATCH_BYTES:
+                    raise ValueError('Image import batch exceeds the configured size limit')
 
-    for cert_id in cert_ids:
-        row = rows_by_cert_id.get(cert_id)
-        if not row:
-            continue
+        if not staged_names:
+            return {
+                'matched_entries': len(initial_rows_by_cert_id),
+                'saved_files': 0,
+                'updated_sides': 0,
+                'missing_cert_ids': [
+                    cert_id for cert_id in cert_ids if cert_id not in initial_rows_by_cert_id
+                ],
+                'invalid_names': invalid_names,
+                'duplicate_names': duplicate_names,
+                'updated_entry_ids': [],
+                '_created_files': [],
+                '_used_files': [],
+                '_obsolete_files': [],
+            }
 
-        matched_entries += 1
-        update_data = {}
+        if db.is_mysql_connection(conn):
+            conn.begin()
+        else:
+            # Acquire SQLite's single writer slot before any row changes.
+            conn.execute('BEGIN IMMEDIATE')
 
-        for side in ('front', 'back'):
-            candidate = candidates.get((cert_id, side))
-            if not candidate:
+        # Re-read after acquiring the writer lock. Another request may have
+        # changed an image reference while this batch was being copied.
+        row_lock_clause = ' FOR UPDATE' if db.is_mysql_connection(conn) else ''
+        rows = conn.execute(
+            f'''
+                SELECT id, cert_id, front_image, back_image
+                FROM temp_cards
+                WHERE status = 'approved'
+                  AND COALESCE(upload_status, 'not_started') <> 'uploading'
+                  AND cert_id IN ({placeholders})
+                {row_lock_clause}
+            ''',
+            cert_ids,
+        ).fetchall()
+        rows_by_cert_id = {row['cert_id']: row for row in rows}
+
+        matched_entries = 0
+        updated_entry_ids = []
+        used_files = []
+        files_to_delete = []
+
+        for cert_id in cert_ids:
+            row = rows_by_cert_id.get(cert_id)
+            if not row:
                 continue
 
-            saved_name = save_imported_image_upload(
-                cert_id=cert_id,
-                side=side,
-                extension=candidate['extension'],
-                uploaded_file=candidate['uploaded_file'],
+            matched_entries += 1
+            update_data = {}
+            entry_used_files = []
+            entry_obsolete_files = []
+
+            for side in ('front', 'back'):
+                saved_name = staged_names.get((cert_id, side))
+                if not saved_name:
+                    continue
+
+                entry_used_files.append(saved_name)
+                update_data[f'{side}_image'] = saved_name
+
+                existing_name = (row[f'{side}_image'] or '').strip()
+                if existing_name and existing_name != saved_name:
+                    entry_obsolete_files.append(existing_name)
+
+            if not update_data:
+                continue
+
+            update_data['updated_at'] = datetime.now().isoformat()
+            set_clause = ', '.join([f'{column} = ?' for column in update_data.keys()])
+            update_cursor = conn.execute(
+                f'''
+                    UPDATE temp_cards
+                    SET {set_clause}
+                    WHERE id = ?
+                      AND status = 'approved'
+                      AND COALESCE(upload_status, 'not_started') <> 'uploading'
+                      AND COALESCE(front_image, '') = ?
+                      AND COALESCE(back_image, '') = ?
+                ''',
+                [
+                    *update_data.values(),
+                    row['id'],
+                    row['front_image'] or '',
+                    row['back_image'] or '',
+                ],
             )
-            saved_files += 1
-            updated_sides += 1
-            update_data[f'{side}_image'] = saved_name
-
-            existing_name = (row[f'{side}_image'] or '').strip()
-            if existing_name and existing_name != saved_name:
-                files_to_delete.append(existing_name)
-
-        if not update_data:
-            continue
-
-        update_data['updated_at'] = datetime.now().isoformat()
-        set_clause = ', '.join([f'{column} = ?' for column in update_data.keys()])
-        conn.execute(
-            f'UPDATE temp_cards SET {set_clause} WHERE id = ?',
-            [*update_data.values(), row['id']],
-        )
-        updated_entry_ids.append(row['id'])
-
-    for filename in dict.fromkeys(files_to_delete):
-        delete_uploaded_file(filename)
+            if update_cursor.rowcount == 0:
+                continue
+            used_files.extend(entry_used_files)
+            files_to_delete.extend(entry_obsolete_files)
+            updated_entry_ids.append(row['id'])
+    except Exception:
+        # No database commit has happened yet, so every newly-created file is
+        # disposable. Existing files remain untouched until after commit.
+        for filename in dict.fromkeys(created_files):
+            delete_uploaded_file(filename)
+        raise
 
     missing_cert_ids = [cert_id for cert_id in cert_ids if cert_id not in rows_by_cert_id]
     return {
         'matched_entries': matched_entries,
-        'saved_files': saved_files,
-        'updated_sides': updated_sides,
+        'saved_files': len(used_files),
+        'updated_sides': len(used_files),
         'missing_cert_ids': missing_cert_ids,
         'invalid_names': invalid_names,
         'duplicate_names': duplicate_names,
         'updated_entry_ids': updated_entry_ids,
+        # Internal lifecycle lists. The route removes these before returning a
+        # response so filenames are not exposed to the browser.
+        '_created_files': created_files,
+        '_used_files': used_files,
+        '_obsolete_files': list(dict.fromkeys(files_to_delete)),
     }
 
 
 def import_uploaded_images_to_temp_cards(uploaded_files, conn):
     candidates, invalid_names, duplicate_names = build_image_import_candidates_from_files(uploaded_files)
     return import_image_candidates_to_temp_cards(candidates, invalid_names, duplicate_names, conn)
+
+
+def cleanup_failed_import_files(filenames):
+    """Resolve an uncertain commit before removing newly-created images.
+
+    If the database cannot be read, files are deliberately retained. An orphan
+    is recoverable; deleting a file that a successful commit references is not.
+    """
+    cleanup_uncertain_queue_files(
+        filenames,
+        connection_factory=get_temp_db_connection,
+    )
 
 # ========== Upload Manager ==========
 @app.route('/admin/upload')
@@ -364,14 +532,24 @@ def upload_manager():
 def import_images_by_id():
     is_ajax_request = request.headers.get('X-Requested-With') == 'XMLHttpRequest'
 
-    def respond_with_message(message, category='error', status_code=400, summary=None):
+    def respond_with_message(
+        message,
+        category='error',
+        status_code=400,
+        summary=None,
+        retryable=False,
+        retry_after_ms=None,
+    ):
         if is_ajax_request:
             payload = {
                 'success': category != 'error',
                 'message': message,
+                'retryable': bool(retryable),
             }
             if summary is not None:
                 payload['summary'] = summary
+            if retryable and retry_after_ms is not None:
+                payload['retry_after_ms'] = retry_after_ms
             return jsonify(payload), status_code
         flash(message, category)
         return redirect(url_for('upload_manager'))
@@ -383,20 +561,62 @@ def import_images_by_id():
     ]
     if not uploaded_files:
         return respond_with_message('Please choose an image folder first.', 'warning', 400)
+    if len(uploaded_files) > MAX_IMAGE_IMPORT_FILES:
+        return respond_with_message(
+            f'Each image import batch is limited to {MAX_IMAGE_IMPORT_FILES} files.',
+            'error',
+            413,
+        )
 
+    conn = None
+    created_files = []
+    used_files = []
+    obsolete_files = []
     try:
         conn = get_temp_db_connection()
         try:
             summary = import_uploaded_images_to_temp_cards(uploaded_files, conn)
+            created_files = summary.pop('_created_files', [])
+            used_files = summary.pop('_used_files', [])
+            obsolete_files = summary.pop('_obsolete_files', [])
             conn.commit()
         except Exception:
-            conn.rollback()
+            try:
+                conn.rollback()
+            except Exception:
+                app.logger.exception('Failed to roll back folder image import')
             raise
+        else:
+            used_file_set = set(used_files)
+            for filename in dict.fromkeys(created_files):
+                if filename not in used_file_set:
+                    delete_uploaded_file(filename)
+            delete_queue_files_if_unreferenced(conn, obsolete_files)
         finally:
-            conn.close()
-    except Exception as exc:
-        app.logger.error('Folder image import failed: %s', exc)
-        return respond_with_message(f'Folder image import failed: {exc}', 'error', 500)
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    app.logger.exception('Failed to close folder image import connection')
+    except ValueError as exc:
+        cleanup_failed_import_files(created_files)
+        app.logger.warning('Folder image import rejected: %s', exc)
+        return respond_with_message(
+            'Folder image import was rejected. Check image size, format, extension, and dimensions.',
+            'error',
+            422,
+            retryable=False,
+        )
+    except Exception:
+        cleanup_failed_import_files(created_files)
+        app.logger.exception('Folder image import failed')
+        return respond_with_message(
+            'Folder image import failed. No existing image reference was removed.',
+            'error',
+            500,
+            retryable=True,
+            retry_after_ms=1000,
+        )
 
     message_parts = [
         f"Imported {summary['saved_files']} image files",
@@ -434,12 +654,18 @@ def api_upload_stats():
 @login_required
 def api_upload_entry(entry_id):
     """API: 上传单条数据到主数据库并同步图片到主站静态目录"""
-    conn_temp = get_temp_db_connection()
+    conn_temp = None
     conn_main = None
     started_at = datetime.now().isoformat()
-    upload_started_in_db = False
+    claim_update_applied = False
+    entry = None
+    export_result = None
+    response_payload = None
+    local_front_image = ''
+    local_back_image = ''
 
     try:
+        conn_temp = get_temp_db_connection()
         entry = conn_temp.execute(
             '''
                 SELECT *
@@ -475,18 +701,27 @@ def api_upload_entry(entry_id):
                 WHERE id = ?
                   AND status = 'approved'
                   AND COALESCE(upload_status, 'not_started') NOT IN (?, ?)
+                  AND COALESCE(front_image, '') = ?
+                  AND COALESCE(back_image, '') = ?
             ''',
-            (started_at, entry_id, 'uploading', CLIENT_PUSHED_UPLOAD_STATUS),
+            (
+                started_at,
+                entry_id,
+                'uploading',
+                CLIENT_PUSHED_UPLOAD_STATUS,
+                entry['front_image'] or '',
+                entry['back_image'] or '',
+            ),
         )
         if update_cursor.rowcount == 0:
-            conn_temp.rollback()
+            safe_rollback(conn_temp, 'stale upload claim')
             return jsonify({
                 'success': False,
                 'error': 'Entry upload state changed before upload could start',
                 'entry_id': entry_id,
             }), 409
+        claim_update_applied = True
         conn_temp.commit()
-        upload_started_in_db = True
 
         conn_main = get_main_db_connection()
         export_result = upsert_main_card(entry, conn_main, require_complete=True)
@@ -494,8 +729,6 @@ def api_upload_entry(entry_id):
 
         local_front_image = entry['front_image'] or ''
         local_back_image = entry['back_image'] or ''
-        delete_uploaded_file(local_front_image)
-        delete_uploaded_file(local_back_image)
 
         completed_at = datetime.now().isoformat()
         response_payload = {
@@ -505,7 +738,7 @@ def api_upload_entry(entry_id):
             'front_image': export_result['front_image'],
             'back_image': export_result['back_image'],
         }
-        conn_temp.execute(
+        completion_cursor = conn_temp.execute(
             '''
                 UPDATE temp_cards
                 SET upload_status = 'uploaded',
@@ -518,6 +751,9 @@ def api_upload_entry(entry_id):
                     upload_error = NULL,
                     server_response = ?
                 WHERE id = ?
+                  AND upload_status = 'uploading'
+                  AND COALESCE(front_image, '') = ?
+                  AND COALESCE(back_image, '') = ?
             ''',
             (
                 started_at,
@@ -526,9 +762,18 @@ def api_upload_entry(entry_id):
                 export_result['back_image'],
                 json.dumps(response_payload),
                 entry_id,
+                local_front_image,
+                local_back_image,
             ),
         )
+        if completion_cursor.rowcount == 0:
+            safe_rollback(conn_temp, 'stale upload completion')
+            raise RuntimeError('Entry image state changed before upload could complete')
         conn_temp.commit()
+        delete_queue_files_if_unreferenced(
+            conn_temp,
+            [local_front_image, local_back_image],
+        )
 
         return jsonify({
             'success': True,
@@ -542,29 +787,100 @@ def api_upload_entry(entry_id):
         })
 
     except Exception as exc:
-        if conn_main is not None:
-            conn_main.rollback()
+        app.logger.exception('Single entry upload failed for entry %s', entry_id)
+        safe_rollback(conn_main, 'main card upload')
+        safe_rollback(conn_temp, 'temporary upload state')
+        safe_close(conn_main, 'main card upload connection')
+        conn_main = None
+        safe_close(conn_temp, 'temporary upload connection')
+        conn_temp = None
+
         completed_at = datetime.now().isoformat()
-        error_message = str(exc)
-        if upload_started_in_db:
-            conn_temp.execute(
-                '''
-                    UPDATE temp_cards
-                    SET upload_status = 'failed',
-                        upload_started = COALESCE(upload_started, ?),
-                        upload_completed = ?,
-                        upload_error = ?
-                    WHERE id = ?
-                ''',
-                (started_at, completed_at, error_message, entry_id),
+        verification_conn = None
+        try:
+            if claim_update_applied and entry is not None:
+                verification_conn = get_temp_db_connection()
+                state = verification_conn.execute(
+                    '''
+                        SELECT id, upload_status, upload_started,
+                               front_image, back_image,
+                               published_front_image, published_back_image
+                        FROM temp_cards
+                        WHERE id = ?
+                    ''',
+                    (entry_id,),
+                ).fetchone()
+
+                completion_was_committed = bool(
+                    state is not None
+                    and export_result is not None
+                    and response_payload is not None
+                    and (state['upload_status'] or '').strip().lower() == 'uploaded'
+                    and (state['upload_started'] or '') == started_at
+                    and not (state['front_image'] or '')
+                    and not (state['back_image'] or '')
+                    and (state['published_front_image'] or '') == export_result['front_image']
+                    and (state['published_back_image'] or '') == export_result['back_image']
+                )
+                if completion_was_committed:
+                    delete_queue_files_if_unreferenced(
+                        verification_conn,
+                        [local_front_image, local_back_image],
+                    )
+                    return jsonify({
+                        'success': True,
+                        'entry_id': entry_id,
+                        'cert_id': entry['cert_id'],
+                        'upload_status': 'uploaded',
+                        'action': export_result['action'],
+                        'front_image': export_result['front_image'],
+                        'back_image': export_result['back_image'],
+                        'message': f"Upload completed ({export_result['action']})",
+                    })
+
+                failure_cursor = verification_conn.execute(
+                    '''
+                        UPDATE temp_cards
+                        SET upload_status = 'failed',
+                            upload_completed = ?,
+                            upload_error = ?
+                        WHERE id = ?
+                          AND upload_status = 'uploading'
+                          AND upload_started = ?
+                          AND COALESCE(front_image, '') = ?
+                          AND COALESCE(back_image, '') = ?
+                    ''',
+                    (
+                        completed_at,
+                        SAFE_UPLOAD_FAILURE_DETAIL,
+                        entry_id,
+                        started_at,
+                        entry['front_image'] or '',
+                        entry['back_image'] or '',
+                    ),
+                )
+                if failure_cursor.rowcount:
+                    verification_conn.commit()
+                else:
+                    safe_rollback(verification_conn, 'stale upload failure state')
+        except Exception:
+            safe_rollback(verification_conn, 'upload recovery state')
+            app.logger.exception(
+                'Could not reconcile upload state for entry %s; state was retained',
+                entry_id,
             )
-            conn_temp.commit()
-        return jsonify({'success': False, 'error': error_message, 'entry_id': entry_id}), 400
+        finally:
+            safe_close(verification_conn, 'upload recovery connection')
+
+        return jsonify({
+            'success': False,
+            'error': 'Upload failed. Refresh the entry before trying again.',
+            'entry_id': entry_id,
+        }), 500
 
     finally:
-        conn_temp.close()
-        if conn_main is not None:
-            conn_main.close()
+        safe_close(conn_temp, 'temporary upload connection')
+        safe_close(conn_main, 'main card upload connection')
 
 
 @app.route('/admin/api/upload/<int:entry_id>/client-pushed', methods=['POST'])

@@ -6,6 +6,7 @@ SQLite remains the default backend. MySQL is enabled only when
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import sqlite3
@@ -21,6 +22,8 @@ except ImportError:  # pragma: no cover - exercised by configuration checks.
 SQLITE_BACKEND = "sqlite"
 MYSQL_BACKEND = "mysql"
 SUPPORTED_BACKENDS = {SQLITE_BACKEND, MYSQL_BACKEND}
+DEFAULT_SQLITE_TIMEOUT_SECONDS = 30.0
+SQLITE_JOURNAL_MODES = {"delete", "wal"}
 
 
 class DatabaseConfigError(RuntimeError):
@@ -50,10 +53,74 @@ def is_mysql_connection(conn):
     return getattr(conn, "backend", SQLITE_BACKEND) == MYSQL_BACKEND
 
 
+def _positive_float_from_env(name, default):
+    raw_value = os.environ.get(name)
+    if raw_value is None or not raw_value.strip():
+        return default
+    try:
+        value = float(raw_value)
+    except ValueError:
+        return default
+    return value if math.isfinite(value) and value > 0 else default
+
+
 def sqlite_connect(path):
-    conn = sqlite3.connect(Path(path))
+    """Open one SQLite connection with bounded lock waiting.
+
+    ``NXR_SQLITE_TIMEOUT_SECONDS`` controls the Python driver timeout and
+    defaults to 30 seconds. ``NXR_SQLITE_BUSY_TIMEOUT_MS`` can override the
+    matching SQLite busy timeout when a different value is required.
+
+    Journal mode is intentionally not changed here: changing it is persistent
+    database state and must happen through ``configure_sqlite_journal_mode``.
+    """
+    timeout_seconds = _positive_float_from_env(
+        "NXR_SQLITE_TIMEOUT_SECONDS",
+        DEFAULT_SQLITE_TIMEOUT_SECONDS,
+    )
+    busy_timeout_ms = int(
+        _positive_float_from_env(
+            "NXR_SQLITE_BUSY_TIMEOUT_MS",
+            timeout_seconds * 1000,
+        )
+    )
+    conn = sqlite3.connect(Path(path), timeout=timeout_seconds)
     conn.row_factory = sqlite3.Row
+    conn.execute(f"PRAGMA busy_timeout = {busy_timeout_ms}")
     return conn
+
+
+def configure_sqlite_journal_mode(conn, mode=None):
+    """Apply an explicitly requested persistent SQLite journal mode.
+
+    When *mode* is omitted, ``NXR_SQLITE_JOURNAL_MODE`` is consulted. An empty
+    value is read-only and leaves the database unchanged. Only ``delete`` and
+    ``wal`` are accepted so a typo cannot silently select an unsafe mode.
+    Call this from a controlled database-initialization phase, never from the
+    per-request connection path.
+    """
+    if is_mysql_connection(conn):
+        return None
+
+    requested_mode = mode
+    if requested_mode is None:
+        requested_mode = os.environ.get("NXR_SQLITE_JOURNAL_MODE", "")
+    normalized_mode = str(requested_mode or "").strip().lower()
+    if not normalized_mode:
+        return conn.execute("PRAGMA journal_mode").fetchone()[0]
+    if normalized_mode not in SQLITE_JOURNAL_MODES:
+        raise DatabaseConfigError(
+            "NXR_SQLITE_JOURNAL_MODE must be one of: delete, wal"
+        )
+
+    applied_mode = conn.execute(
+        f"PRAGMA journal_mode = {normalized_mode.upper()}"
+    ).fetchone()[0]
+    if str(applied_mode).lower() != normalized_mode:
+        raise DatabaseConfigError(
+            f"SQLite did not apply journal mode {normalized_mode}: {applied_mode}"
+        )
+    return applied_mode
 
 
 def mysql_connect():

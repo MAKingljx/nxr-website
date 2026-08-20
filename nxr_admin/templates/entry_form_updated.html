@@ -57,9 +57,30 @@
         }
     }
     
-    // Function to calculate final grade
-    function calculateFinalGrade() {
+    const REQUEST_DEBOUNCE_MS = 400;
+    let gradeDebounceTimer = null;
+    let gradeAbortController = null;
+    let gradeRequestSequence = 0;
+    let scheduledGradePayloadKey = null;
+    let completedGradePayloadKey = null;
+
+    function resetGradeRequest() {
+        clearTimeout(gradeDebounceTimer);
+        gradeDebounceTimer = null;
+        scheduledGradePayloadKey = null;
+        completedGradePayloadKey = null;
+        gradeRequestSequence += 1;
+        if (gradeAbortController) {
+            gradeAbortController.abort();
+            gradeAbortController = null;
+        }
+    }
+
+    // Debounced API-backed grade calculation. The server remains the source of
+    // truth, while stale or duplicate browser requests are discarded.
+    function calculateFinalGrade(options = {}) {
         if (getSelectedProductType() !== 'graded_card') {
+            resetGradeRequest();
             document.getElementById('final_grade').value = '';
             document.getElementById('final_grade_text').value = '';
             document.getElementById('grade_calculation').textContent = '';
@@ -74,6 +95,7 @@
         const scores = [centering, edges, corners, surface];
         for (let score of scores) {
             if (score < 1 || score > 10) {
+                resetGradeRequest();
                 document.getElementById('final_grade').value = '';
                 document.getElementById('final_grade_text').value = '';
                 document.getElementById('grade_calculation').textContent = 'All scores must be between 1 and 10';
@@ -81,23 +103,62 @@
                 return;
             }
         }
-        
-        // Calculate via API
+
+        const payload = {
+            product_type: getSelectedProductType(),
+            centering: centering,
+            edges: edges,
+            corners: corners,
+            surface: surface
+        };
+        const payloadKey = JSON.stringify(payload);
+        if (payloadKey === completedGradePayloadKey || payloadKey === scheduledGradePayloadKey) {
+            return;
+        }
+
+        clearTimeout(gradeDebounceTimer);
+        if (gradeAbortController) {
+            gradeAbortController.abort();
+            gradeAbortController = null;
+            gradeRequestSequence += 1;
+        }
+        completedGradePayloadKey = null;
+        scheduledGradePayloadKey = payloadKey;
+        const runCalculation = () => requestFinalGrade(payload, payloadKey);
+        if (options.immediate) {
+            runCalculation();
+        } else {
+            gradeDebounceTimer = setTimeout(runCalculation, REQUEST_DEBOUNCE_MS);
+        }
+    }
+
+    function requestFinalGrade(payload, payloadKey) {
+        gradeDebounceTimer = null;
+        if (gradeAbortController) {
+            gradeAbortController.abort();
+        }
+        const controller = new AbortController();
+        gradeAbortController = controller;
+        const requestSequence = ++gradeRequestSequence;
+
         fetch('/admin/api/calculate-grade', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({
-                product_type: getSelectedProductType(),
-                centering: centering,
-                edges: edges,
-                corners: corners,
-                surface: surface
-            })
+            body: JSON.stringify(payload),
+            signal: controller.signal
         })
-        .then(response => response.json())
+        .then(response => {
+            if (!response.ok) {
+                throw new Error(`Grade API returned ${response.status}`);
+            }
+            return response.json();
+        })
         .then(data => {
+            if (requestSequence !== gradeRequestSequence) {
+                return;
+            }
             if (data.error) {
                 document.getElementById('final_grade').value = '';
                 document.getElementById('final_grade_text').value = '';
@@ -108,23 +169,34 @@
                 document.getElementById('final_grade_text').value = data.final_grade_text;
                 document.getElementById('grade_calculation').textContent = data.calculation;
                 document.getElementById('grade_calculation').className = 'text-success';
+                completedGradePayloadKey = payloadKey;
+                if (window.schedulePOPCalculation) {
+                    window.schedulePOPCalculation();
+                }
             }
         })
         .catch(error => {
+            if (error.name === 'AbortError' || requestSequence !== gradeRequestSequence) {
+                return;
+            }
             console.error('Error calculating grade:', error);
             document.getElementById('grade_calculation').textContent = 'Error calculating grade';
             document.getElementById('grade_calculation').className = 'text-danger';
+        })
+        .finally(() => {
+            if (requestSequence === gradeRequestSequence) {
+                gradeAbortController = null;
+                scheduledGradePayloadKey = null;
+            }
         });
     }
 
-    function dispatchFieldUpdate(fieldId) {
+    function markFieldPopulated(fieldId) {
         const element = document.getElementById(fieldId);
         if (!element) {
             return;
         }
-
-        element.dispatchEvent(new Event('input', {bubbles: true}));
-        element.dispatchEvent(new Event('change', {bubbles: true}));
+        element.classList.toggle('is-invalid', Boolean(element.required && !element.value.trim()));
     }
 
     function setSelectValueWithFallback(fieldId, value) {
@@ -285,7 +357,10 @@
                 groupNameField.value = data.group_name || '';
             }
 
-            ['card_name', 'brand', 'language', 'year', 'variety', 'sports_type', 'group_name'].forEach(dispatchFieldUpdate);
+            ['card_name', 'brand', 'language', 'year', 'variety', 'sports_type', 'group_name'].forEach(markFieldPopulated);
+            if (window.schedulePOPCalculation) {
+                window.schedulePOPCalculation();
+            }
             alert('Match successful. Card information has been auto-filled.');
         })
         .catch(error => {
@@ -391,12 +466,11 @@
         
         document.getElementById('card_category').addEventListener('change', function() {
             updateCategoryFields();
-            calculatePOP();
             validateRequiredFields();
         });
         document.getElementById('product_type').addEventListener('change', function() {
             updateCategoryFields();
-            calculatePOP();
+            calculateFinalGrade();
             validateRequiredFields();
         });
 
@@ -422,8 +496,14 @@
             element.addEventListener('change', validateField);
         });
         
-        // Function to calculate and update POP
-        function calculatePOP() {
+        let popDebounceTimer = null;
+        let popAbortController = null;
+        let popRequestSequence = 0;
+        let scheduledPopPayloadKey = null;
+        let activePopPayloadKey = null;
+        let completedPopPayloadKey = null;
+
+        function collectPOPPayload() {
             const category = getSelectedCategory();
             const productType = getSelectedProductType();
             const cardName = document.getElementById('card_name').value.trim();
@@ -446,50 +526,123 @@
             const isSportsReady = category !== 'sports_card' || sportsType;
             const isCelebrityReady = category !== 'celebrity_card' || groupName;
             if (!(isMovieReady || (isStandardReady && isSportsReady && isCelebrityReady))) {
+                clearTimeout(popDebounceTimer);
+                popDebounceTimer = null;
+                scheduledPopPayloadKey = null;
+                completedPopPayloadKey = null;
+                popRequestSequence += 1;
+                if (popAbortController) {
+                    popAbortController.abort();
+                    popAbortController = null;
+                }
+                activePopPayloadKey = null;
                 document.getElementById('pop').value = '1';
-                return;
+                return null;
             }
-            
-            // Show calculating indicator
+
+            return {
+                product_type: productType,
+                card_category: category,
+                card_name: cardName,
+                set_name: setName,
+                card_number: cardNumber,
+                language: language,
+                movie_name: movieName,
+                release_year: releaseYear,
+                production_company: productionCompany,
+                film_type: filmType,
+                sports_type: sportsType,
+                group_name: groupName,
+                vintage_classification: vintageClassification,
+                final_grade_text: gradeText,
+                current_entry_id: {% if card %}{{ card.id if card else 'null' }}{% else %}null{% endif %}
+            };
+        }
+
+        function requestPOP(payload, payloadKey) {
+            popDebounceTimer = null;
+            scheduledPopPayloadKey = null;
+            if (popAbortController) {
+                popAbortController.abort();
+            }
+            const controller = new AbortController();
+            popAbortController = controller;
+            activePopPayloadKey = payloadKey;
+            const requestSequence = ++popRequestSequence;
             const popField = document.getElementById('pop');
             popField.value = 'Calculating...';
-            
-            // Call API to calculate POP
+
             fetch('/admin/api/calculate-pop', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    product_type: productType,
-                    card_category: category,
-                    card_name: cardName,
-                    set_name: setName,
-                    card_number: cardNumber,
-                    language: language,
-                    movie_name: movieName,
-                    release_year: releaseYear,
-                    production_company: productionCompany,
-                    film_type: filmType,
-                    sports_type: sportsType,
-                    group_name: groupName,
-                    vintage_classification: vintageClassification,
-                    final_grade_text: gradeText,
-                    current_entry_id: {% if card %}{{ card.id if card else 'null' }}{% else %}null{% endif %}
-                })
+                body: JSON.stringify(payload),
+                signal: controller.signal
             })
-            .then(response => response.json())
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`POP API returned ${response.status}`);
+                }
+                return response.json();
+            })
             .then(data => {
+                if (requestSequence !== popRequestSequence) {
+                    return;
+                }
                 if (data.error) {
                     popField.value = '1';
                     console.error('POP calculation error:', data.error);
                 } else {
                     popField.value = data.pop;
+                    completedPopPayloadKey = payloadKey;
                 }
             })
             .catch(error => {
+                if (error.name === 'AbortError' || requestSequence !== popRequestSequence) {
+                    return;
+                }
                 console.error('Error calculating POP:', error);
                 popField.value = '1';
+            })
+            .finally(() => {
+                if (requestSequence === popRequestSequence) {
+                    popAbortController = null;
+                    activePopPayloadKey = null;
+                }
             });
         }
+
+        function schedulePOPCalculation(options = {}) {
+            const payload = collectPOPPayload();
+            if (!payload) {
+                return;
+            }
+            const payloadKey = JSON.stringify(payload);
+            if (payloadKey === scheduledPopPayloadKey || payloadKey === activePopPayloadKey) {
+                return;
+            }
+
+            clearTimeout(popDebounceTimer);
+            popDebounceTimer = null;
+            scheduledPopPayloadKey = null;
+            if (popAbortController) {
+                popAbortController.abort();
+                popAbortController = null;
+                activePopPayloadKey = null;
+                popRequestSequence += 1;
+            }
+            if (payloadKey === completedPopPayloadKey) {
+                return;
+            }
+            completedPopPayloadKey = null;
+            scheduledPopPayloadKey = payloadKey;
+            const runCalculation = () => requestPOP(payload, payloadKey);
+            if (options.immediate) {
+                runCalculation();
+            } else {
+                popDebounceTimer = setTimeout(runCalculation, REQUEST_DEBOUNCE_MS);
+            }
+        }
+        window.schedulePOPCalculation = schedulePOPCalculation;
         
         // Update POP when relevant fields change
         [
@@ -501,32 +654,18 @@
             if (!element) {
                 return;
             }
-            element.addEventListener('input', calculatePOP);
-            element.addEventListener('change', calculatePOP);
+            const eventName = element.tagName === 'SELECT' ? 'change' : 'input';
+            element.addEventListener(eventName, schedulePOPCalculation);
         });
-        
-        // Also update POP when grade changes
-        document.addEventListener('gradeCalculated', function() {
-            setTimeout(calculatePOP, 100); // Small delay to ensure grade is updated
-        });
-        
-        // Custom event for grade calculation
-        const originalCalculateFinalGrade = calculateFinalGrade;
-        calculateFinalGrade = function() {
-            originalCalculateFinalGrade();
-            // Dispatch event after grade calculation
-            setTimeout(() => {
-                document.dispatchEvent(new Event('gradeCalculated'));
-            }, 50);
-        };
-        
+
         // Initial validation and calculations
         updateCategoryFields();
         validateCertId();
         if (getSelectedProductType() === 'graded_card') {
-            calculateFinalGrade();
+            calculateFinalGrade({immediate: true});
+        } else {
+            schedulePOPCalculation({immediate: true});
         }
-        calculatePOP();
     });
 
     // 删除图片功能
