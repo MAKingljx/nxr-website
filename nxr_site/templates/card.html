@@ -65,15 +65,24 @@
 .detail-key{font-size:13px;color:var(--text3)}
 .detail-val{font-size:14px;font-weight:600;text-align:right;overflow-wrap:anywhere}
 .subgrades-section{margin-top:32px}
-.subgrades-title{font-size:16px;font-weight:700;letter-spacing:0;color:var(--text);margin-bottom:16px}
+.subgrades-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+.subgrades-title{font-size:16px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--text)}
+.subgrades-subtitle{font-size:13px;color:var(--text3)}
 .subgrades-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
-.subgrade-card{background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:20px;display:flex;justify-content:space-between;align-items:center;gap:16px}
-.subgrade-name{font-size:14px;font-weight:700;color:var(--text);letter-spacing:0}
+.subgrade-card{background:var(--bg2);border:1px solid var(--border2);border-radius:12px;padding:24px;position:relative;transition:all .3s ease;overflow:hidden}
+.subgrade-card:hover{transform:translateY(-4px);border-color:var(--red);box-shadow:0 8px 24px rgba(233,69,96,.1)}
+.subgrade-card::before{content:'';position:absolute;top:0;left:0;right:0;height:4px;background:linear-gradient(90deg,var(--red),var(--red2))}
+.subgrade-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.subgrade-name{font-size:14px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:.5px}
 .subgrade-score{font-size:32px;font-weight:900;color:var(--red);line-height:1}
+.subgrade-desc{font-size:12px;color:var(--text3);line-height:1.5;margin-top:8px}
 .subgrade-perfect{color:#22c55e !important}
 .subgrade-good{color:#f5c842 !important}
 .subgrade-fair{color:#ff7b00 !important}
 .subgrade-poor{color:#e94560 !important}
+.perfect-subgrade{position:relative;overflow:hidden}
+.perfect-subgrade::before{content:'';position:absolute;top:0;left:0;right:0;height:4px;background:linear-gradient(90deg,#f5c842,#ffd700,#f5c842);background-size:200% 100%;animation:subgradeGlow 2s linear infinite}
+@keyframes subgradeGlow{0%{background-position:200% 0}100%{background-position:-200% 0}}
 {% if show_collector_features|default(false) %}
 {% include "components/collector_styles.html" %}
 {% endif %}

@@ -1,40 +1,55 @@
 {% if card.product_profile.show_subgrades %}
 <section class="subgrades-section" aria-labelledby="subgrades-title">
-  <h2 class="subgrades-title" id="subgrades-title">Sub-Grades</h2>
+  <div class="subgrades-header">
+    <h2 class="subgrades-title" id="subgrades-title">Sub-Grades Breakdown</h2>
+    <div class="subgrades-subtitle">Four critical components of the grade</div>
+  </div>
   <div class="subgrades-grid">
     {% if card.centering is not none %}
     <div class="subgrade-card">
-      <div class="subgrade-name">Centering</div>
-      <div class="subgrade-score {% if card.centering >= 9.5 %}subgrade-perfect{% elif card.centering >= 8.0 %}subgrade-good{% elif card.centering >= 6.0 %}subgrade-fair{% else %}subgrade-poor{% endif %}">
-        {{ "%.1f"|format(card.centering) }}
+      <div class="subgrade-header">
+        <div class="subgrade-name">Centering</div>
+        <div class="subgrade-score {% if card.centering >= 9.5 %}subgrade-perfect{% elif card.centering >= 8.0 %}subgrade-good{% elif card.centering >= 6.0 %}subgrade-fair{% else %}subgrade-poor{% endif %}">
+          {{ "%.1f"|format(card.centering) }}
+        </div>
       </div>
+      <div class="subgrade-desc">Measures how evenly the image is positioned within the borders. Critical for vintage cards.</div>
     </div>
     {% endif %}
 
     {% if card.edges is not none %}
     <div class="subgrade-card">
-      <div class="subgrade-name">Edges</div>
-      <div class="subgrade-score {% if card.edges >= 9.5 %}subgrade-perfect{% elif card.edges >= 8.0 %}subgrade-good{% elif card.edges >= 6.0 %}subgrade-fair{% else %}subgrade-poor{% endif %}">
-        {{ "%.1f"|format(card.edges) }}
+      <div class="subgrade-header">
+        <div class="subgrade-name">Edges</div>
+        <div class="subgrade-score {% if card.edges >= 9.5 %}subgrade-perfect{% elif card.edges >= 8.0 %}subgrade-good{% elif card.edges >= 6.0 %}subgrade-fair{% else %}subgrade-poor{% endif %}">
+          {{ "%.1f"|format(card.edges) }}
+        </div>
       </div>
+      <div class="subgrade-desc">Evaluates the condition of all four edges. Look for chipping, whitening, or wear.</div>
     </div>
     {% endif %}
 
     {% if card.corners is not none %}
     <div class="subgrade-card">
-      <div class="subgrade-name">Corners</div>
-      <div class="subgrade-score {% if card.corners >= 9.5 %}subgrade-perfect{% elif card.corners >= 8.0 %}subgrade-good{% elif card.corners >= 6.0 %}subgrade-fair{% else %}subgrade-poor{% endif %}">
-        {{ "%.1f"|format(card.corners) }}
+      <div class="subgrade-header">
+        <div class="subgrade-name">Corners</div>
+        <div class="subgrade-score {% if card.corners >= 9.5 %}subgrade-perfect{% elif card.corners >= 8.0 %}subgrade-good{% elif card.corners >= 6.0 %}subgrade-fair{% else %}subgrade-poor{% endif %}">
+          {{ "%.1f"|format(card.corners) }}
+        </div>
       </div>
+      <div class="subgrade-desc">Assesses sharpness and wear on all four corners. The most common area for damage.</div>
     </div>
     {% endif %}
 
     {% if card.surface is not none %}
     <div class="subgrade-card">
-      <div class="subgrade-name">Surface</div>
-      <div class="subgrade-score {% if card.surface >= 9.5 %}subgrade-perfect{% elif card.surface >= 8.0 %}subgrade-good{% elif card.surface >= 6.0 %}subgrade-fair{% else %}subgrade-poor{% endif %}">
-        {{ "%.1f"|format(card.surface) }}
+      <div class="subgrade-header">
+        <div class="subgrade-name">Surface</div>
+        <div class="subgrade-score {% if card.surface >= 9.5 %}subgrade-perfect{% elif card.surface >= 8.0 %}subgrade-good{% elif card.surface >= 6.0 %}subgrade-fair{% else %}subgrade-poor{% endif %}">
+          {{ "%.1f"|format(card.surface) }}
+        </div>
       </div>
+      <div class="subgrade-desc">Checks for scratches, print defects, stains, or other surface imperfections.</div>
     </div>
     {% endif %}
   </div>
