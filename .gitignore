@@ -2,7 +2,12 @@
 *.swp
 *.swo
 *.log
+*.log.*
+*.log-*
 output.log
+
+# Runtime verification files are provisioned outside the source release.
+.well-known/
 
 .env
 .env.*
@@ -28,12 +33,13 @@ venv/
 __pycache__/
 *.pyc
 
+# Production databases and mutable application data stay outside Git.
+# Deployment must never copy, replace, or overwrite this directory.
 cards.db
 cards_backup.db
 cards.db.backup*
 Data/
-Data/*.db
-Data/cards_backup.db
+Data/**
 Data/*.before_delete_*
 Data/*.db.backup*
 Data/*.sqlite
@@ -54,10 +60,14 @@ nxr_site.zip
 nxr_website(3).rar
 nxr_admin/__pycache__/
 nxr_admin/uploads/
+nxr_admin/uploads/**
 nxr_admin/exports/
+nxr_admin/exports/**
 nxr_site/__pycache__/
 nxr_site/static/*_front.*
 nxr_site/static/*_back.*
+nxr_site/static/*_front_*
+nxr_site/static/*_back_*
 nxr_site/static/[0-9]*_front.*
 nxr_site/static/[0-9]*_back.*
 slabs photo/
@@ -67,6 +77,10 @@ testpis/
 local_backups/
 recovery/
 processed_12.zip
+
+# Local-only review and archive artifacts.
+nxr_website.zip
+python_changes_review.csv
 # Java/Vue platform source is versioned. Keep only generated and local state out.
 nxr_platform/archive/
 nxr_platform/**/node_modules/
