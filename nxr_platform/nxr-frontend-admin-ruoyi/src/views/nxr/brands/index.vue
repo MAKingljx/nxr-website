@@ -1,13 +1,15 @@
 <template>
-  <div class="app-container">
-    <el-row :gutter="10" class="mb8">
-      <el-col :span="1.5">
+  <main class="nxr-workspace nxr-brands-workspace">
+    <nxr-page-header
+      kicker="GRADING CATALOG"
+      title="品牌设置"
+      summary="维护录入使用的品牌名称、别名和启用状态"
+    >
+      <template #actions>
         <el-button type="primary" plain icon="Plus" v-hasPermi="['nxr:brand:add']" @click="handleAdd">新增品牌</el-button>
-      </el-col>
-      <el-col :span="1.5">
         <el-button icon="Refresh" plain @click="getList">刷新</el-button>
-      </el-col>
-    </el-row>
+      </template>
+    </nxr-page-header>
 
     <el-table v-loading="loading" :data="brands">
       <el-table-column label="排序" prop="sortOrder" width="80" align="center" />
@@ -15,7 +17,7 @@
       <el-table-column label="别名（逗号分隔，用于录入规范化）" prop="aliases" min-width="280" show-overflow-tooltip />
       <el-table-column label="状态" width="100" align="center">
         <template #default="scope">
-          <el-tag :type="scope.row.isActive ? 'success' : 'info'">{{ scope.row.isActive ? '启用' : '停用' }}</el-tag>
+          <nxr-status-tag :code="scope.row.isActive ? 'active' : 'inactive'" />
         </template>
       </el-table-column>
       <el-table-column label="更新时间" prop="updatedAt" width="180" show-overflow-tooltip />
@@ -46,10 +48,12 @@
         <el-button @click="open = false">取 消</el-button>
       </template>
     </el-dialog>
-  </div>
+  </main>
 </template>
 
 <script setup name="NxrBrands">
+import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
+import NxrStatusTag from '@/components/NxrWorkspace/StatusTag.vue'
 import { fetchBrandSettings, createBrandSetting, updateBrandSetting } from '@/api/nxr/brands'
 
 const { proxy } = getCurrentInstance()

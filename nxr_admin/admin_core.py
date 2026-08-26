@@ -215,10 +215,10 @@ DEFAULT_DICTIONARIES = {
         'description': 'Up to four classifications used by vintage cards',
         'sort_order': 20,
         'items': (
-            'Flawless',
-            'Patina',
-            'Worn',
-            'Historic',
+            'Pristine',
+            'Nova',
+            'Legacy',
+            'Helix',
         ),
     },
 }

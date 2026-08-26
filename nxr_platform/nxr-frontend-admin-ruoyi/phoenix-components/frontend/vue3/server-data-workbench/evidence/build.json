@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "component": "frontend.vue3.server-data-workbench",
+  "version": "0.1.0",
+  "stack": "vue3",
+  "kind": "build",
+  "tool": "npm",
+  "command": "npm run build",
+  "result": "passed",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "node": "25.8.1",
+    "npm": "11.11.0",
+    "vite": "8.2.1",
+    "typescript": "6.0.3",
+    "vue": "3.5.41"
+  },
+  "artifacts": [
+    "dist/server-data-workbench.js",
+    "dist/server-data-workbench.css",
+    "dist/index.d.ts"
+  ]
+}

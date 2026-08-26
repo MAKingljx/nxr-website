@@ -1,5 +1,6 @@
 package com.nxr.platform.publicapi;
 
+import com.nxr.platform.shared.ProductTypePolicy;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Locale;
@@ -43,6 +44,9 @@ public class PublicSiteService {
                 """
                 SELECT
                     s.cert_id,
+                    COALESCE(NULLIF(s.product_type_code, ''), 'graded_card') AS product_type_code,
+                    s.vintage_classification_code,
+                    s.merch_description,
                     COALESCE(NULLIF(s.card_category_code, ''), 'trading_card') AS card_category_code,
                     s.card_name,
                     s.brand_name,
@@ -63,13 +67,17 @@ public class PublicSiteService {
                     ) AS front_image_url
                 FROM published_certificate pc
                 JOIN grading_submission s ON s.id = pc.submission_id
-                JOIN grading_score g ON g.submission_id = s.id
+                LEFT JOIN grading_score g ON g.submission_id = s.id
                 ORDER BY pc.published_at DESC, s.cert_id ASC
                 LIMIT 3
                 """
             )
             .query((rs, rowNum) -> new FeaturedCertificateCard(
                 rs.getString("cert_id"),
+                ProductTypePolicy.normalizeStored(rs.getString("product_type_code")),
+                productTypeLabel(rs.getString("product_type_code")),
+                rs.getString("vintage_classification_code"),
+                rs.getString("merch_description"),
                 rs.getString("card_category_code"),
                 cardCategoryLabel(rs.getString("card_category_code")),
                 rs.getString("card_name"),
@@ -102,6 +110,9 @@ public class PublicSiteService {
                     pc.verification_slug,
                     pc.qr_url,
                     pc.published_at,
+                    COALESCE(NULLIF(s.product_type_code, ''), 'graded_card') AS product_type_code,
+                    s.vintage_classification_code,
+                    s.merch_description,
                     COALESCE(NULLIF(s.card_category_code, ''), 'trading_card') AS card_category_code,
                     s.card_name,
                     s.movie_name,
@@ -148,7 +159,7 @@ public class PublicSiteService {
                     ) AS back_image_url
                 FROM published_certificate pc
                 JOIN grading_submission s ON s.id = pc.submission_id
-                JOIN grading_score g ON g.submission_id = s.id
+                LEFT JOIN grading_score g ON g.submission_id = s.id
                 WHERE UPPER(pc.cert_id) = UPPER(:certId)
                 """
             )
@@ -158,6 +169,10 @@ public class PublicSiteService {
                 rs.getString("verification_slug"),
                 rs.getString("qr_url"),
                 rs.getObject("published_at", LocalDateTime.class),
+                ProductTypePolicy.normalizeStored(rs.getString("product_type_code")),
+                productTypeLabel(rs.getString("product_type_code")),
+                rs.getString("vintage_classification_code"),
+                rs.getString("merch_description"),
                 rs.getString("card_category_code"),
                 cardCategoryLabel(rs.getString("card_category_code")),
                 rs.getString("card_name"),
@@ -225,6 +240,10 @@ public class PublicSiteService {
         return CARD_CATEGORY_LABELS.getOrDefault(normalized, "Trading Card");
     }
 
+    private String productTypeLabel(String value) {
+        return ProductTypePolicy.label(value);
+    }
+
     private String normalizeEmail(String email) {
         String normalizedEmail = email == null ? "" : email.trim().toLowerCase(Locale.ROOT);
         if (!normalizedEmail.matches("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")) {
@@ -247,6 +266,10 @@ public class PublicSiteService {
 
     public record FeaturedCertificateCard(
         String certId,
+        String productType,
+        String productTypeLabel,
+        String vintageClassification,
+        String merchDescription,
         String cardCategory,
         String cardCategoryLabel,
         String cardName,
@@ -265,6 +288,10 @@ public class PublicSiteService {
         String verificationSlug,
         String qrUrl,
         LocalDateTime publishedAt,
+        String productType,
+        String productTypeLabel,
+        String vintageClassification,
+        String merchDescription,
         String cardCategory,
         String cardCategoryLabel,
         String cardName,

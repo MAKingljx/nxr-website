@@ -1,5 +1,5 @@
 import { computed, ref } from 'vue'
-import { apiBaseUrl } from './api'
+import { apiBaseUrl, type ProductType } from './api'
 
 const customerSessionKey = 'nxr_customer_session'
 
@@ -8,6 +8,7 @@ export type CustomerProfile = {
   email: string
   displayName: string
   mobile: string | null
+  accountTypeCode: 'customer' | 'merchant'
   createdAt: string
   lastLoginAt: string | null
 }
@@ -20,13 +21,16 @@ export type CustomerSession = {
 
 export type CustomerCard = {
   certId: string
+  productType?: ProductType | 'label_product' | null
+  vintageClassification?: string | null
+  merchDescription?: string | null
   cardName: string
   brandName: string
   yearLabel: string
   setName: string
   cardNumber: string
-  finalGradeValue: number
-  finalGradeLabel: string
+  finalGradeValue: number | null
+  finalGradeLabel: string | null
   frontImageUrl: string | null
   visibilityCode: string
   note: string | null
@@ -71,23 +75,34 @@ export type OrderItem = {
 
 export type PaymentRecord = {
   id: number
+  orderId: number
   directionCode: string
   paymentTypeCode: string
+  paymentNo: string | null
   providerCode: string
+  methodLabel: string | null
   statusCode: string
   amount: number
   currencyCode: string
   payerReference: string | null
   proofReference: string | null
+  paymentUrl: string | null
+  qrPayload: string | null
   providerTransactionId: string | null
+  confirmedByUserId: number | null
   submittedAt: string | null
   confirmedAt: string | null
+  callbackReceivedAt: string | null
   note: string | null
+  createdAt: string
 }
 
 export type ShipmentRecord = {
   id: number
+  orderId: number
   directionCode: string
+  shippingOptionCode: string | null
+  shippingOptionName: string | null
   carrierName: string
   trackingNumber: string
   statusCode: string
@@ -101,6 +116,8 @@ export type GradingOrder = {
   orderNo: string
   statusCode: string
   serviceLevelCode: string
+  returnShippingOptionCode: string | null
+  returnShippingOptionName: string | null
   totalCardCount: number
   serviceFee: number
   returnShippingFee: number
@@ -115,6 +132,10 @@ export type GradingOrder = {
   returnPostalCode: string
   returnCountry: string
   customerNote: string | null
+  internalNote: string | null
+  intakeCode: string | null
+  packingSlipCode: string | null
+  shippingLabelCreatedAt: string | null
   createdAt: string
   updatedAt: string
   items: OrderItem[]
@@ -129,6 +150,128 @@ export type GradingOrder = {
     actorTypeCode: string
     createdAt: string
   }>
+}
+
+export type CustomerAddress = {
+  id: number
+  customerId: number
+  label: string
+  contactName: string
+  contactPhone: string
+  addressLine1: string
+  addressLine2: string | null
+  city: string
+  region: string | null
+  postalCode: string
+  country: string
+  defaultAddress: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+export type ShippingOption = {
+  id: number
+  optionCode: string
+  displayName: string
+  description: string | null
+  countryScope: string
+  currencyCode: string
+  priceAmount: number
+  sortOrder: number
+  active: boolean
+}
+
+export type PackingSlip = {
+  orderNo: string
+  intakeCode: string
+  packingSlipCode: string
+  qrPayload: string
+  totalCardCount: number
+  languageGroups: Array<{ languageCode: string; quantity: number }>
+  packingInstructions: string[]
+}
+
+export type OrderException = {
+  id: number
+  exceptionTypeCode: string
+  statusCode: string
+  title: string
+  detail: string | null
+  resolutionNote: string | null
+  visibleToCustomer: boolean
+  createdAt: string
+  resolvedAt: string | null
+}
+
+export type TrackingEvent = {
+  id: number
+  shipmentId: number
+  directionCode: string
+  eventCode: string
+  eventTitle: string
+  locationLabel: string | null
+  eventDetail: string | null
+  eventTime: string
+}
+
+export type TicketMessage = {
+  id: number
+  actorTypeCode: string
+  actorCustomerId: number | null
+  actorAdminUserId: number | null
+  message: string
+  attachmentReference: string | null
+  createdAt: string
+}
+
+export type SupportTicket = {
+  id: number
+  ticketNo: string
+  orderId: number
+  customerId: number
+  categoryCode: string
+  statusCode: string
+  subject: string
+  assignedUserId: number | null
+  createdAt: string
+  updatedAt: string
+  closedAt: string | null
+  messages: TicketMessage[]
+}
+
+export type ShippingChange = {
+  id: number
+  orderId: number
+  ticketId: number | null
+  oldOptionCode: string
+  oldOptionName: string
+  oldPriceAmount: number
+  newOptionCode: string
+  newOptionName: string
+  newPriceAmount: number
+  currencyCode: string
+  differenceAmount: number
+  statusCode: string
+  reason: string | null
+  paymentId: number | null
+  reviewedByUserId: number | null
+  reviewedAt: string | null
+  settledAt: string | null
+  createdAt: string
+}
+
+export type CustomerOrderOperations = {
+  packingSlip: PackingSlip | null
+  exceptions: OrderException[]
+  trackingEvents: TrackingEvent[]
+  tickets: SupportTicket[]
+  shippingChanges: ShippingChange[]
+  effectiveShippingOption: {
+    optionCode: string
+    displayName: string
+    priceAmount: number
+    currencyCode: string
+  }
 }
 
 export type GradingOrderList = {
@@ -254,6 +397,37 @@ export function createGradingOrder(payload: Record<string, unknown>) {
   return customerRequest<GradingOrder>('/api/customer/orders', { method: 'POST', body: JSON.stringify(payload) })
 }
 
+export function fetchCustomerAddresses() {
+  return customerRequest<CustomerAddress[]>('/api/customer/addresses')
+}
+
+export function createCustomerAddress(payload: Record<string, unknown>) {
+  return customerRequest<CustomerAddress>('/api/customer/addresses', { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function updateCustomerAddress(addressId: number, payload: Record<string, unknown>) {
+  return customerRequest<CustomerAddress>(`/api/customer/addresses/${addressId}`, { method: 'PUT', body: JSON.stringify(payload) })
+}
+
+export function deleteCustomerAddress(addressId: number) {
+  return customerRequest<{ success: boolean }>(`/api/customer/addresses/${addressId}`, { method: 'DELETE' })
+}
+
+export function fetchShippingOptions(country = '') {
+  const query = country.trim() ? `?country=${encodeURIComponent(country.trim())}` : ''
+  return customerRequest<ShippingOption[]>(`/api/customer/shipping-options${query}`, {}, false)
+}
+
+export function fetchServicePrice() {
+  return customerRequest<{
+    priceCode: string
+    displayName: string
+    unitPrice: number
+    currencyCode: string
+    versionNo: number
+  }>('/api/customer/service-price', {}, false)
+}
+
 export function fetchCustomerOrders() {
   return customerRequest<GradingOrderList>('/api/customer/orders')
 }
@@ -268,8 +442,63 @@ export function submitPaymentProof(orderNo: string, payload: { provider: string;
   })
 }
 
+export function createPaymentSession(orderNo: string, provider: string) {
+  return customerRequest<{
+    paymentId: number
+    paymentNo: string
+    provider: string
+    paymentUrl: string
+    qrPayload: string
+    amount: number
+    currencyCode: string
+  }>(`/api/customer/orders/${encodeURIComponent(orderNo)}/payment-session`, {
+    method: 'POST', body: JSON.stringify({ provider }),
+  })
+}
+
 export function addInboundShipment(orderNo: string, payload: { direction: string; carrierName: string; trackingNumber: string; note: string }) {
   return customerRequest<GradingOrder>(`/api/customer/orders/${encodeURIComponent(orderNo)}/inbound-shipment`, {
     method: 'POST', body: JSON.stringify(payload),
   })
+}
+
+export function fetchOrderOperations(orderNo: string) {
+  return customerRequest<CustomerOrderOperations>(`/api/customer/orders/${encodeURIComponent(orderNo)}/operations`)
+}
+
+export function createSupportTicket(orderNo: string, payload: Record<string, unknown>) {
+  return customerRequest<SupportTicket>(`/api/customer/orders/${encodeURIComponent(orderNo)}/tickets`, {
+    method: 'POST', body: JSON.stringify(payload),
+  })
+}
+
+export function addSupportTicketMessage(orderNo: string, ticketId: number, payload: Record<string, unknown>) {
+  return customerRequest<SupportTicket>(`/api/customer/orders/${encodeURIComponent(orderNo)}/tickets/${ticketId}/messages`, {
+    method: 'POST', body: JSON.stringify(payload),
+  })
+}
+
+export function requestShippingChange(orderNo: string, payload: Record<string, unknown>) {
+  return customerRequest<ShippingChange>(`/api/customer/orders/${encodeURIComponent(orderNo)}/shipping-change`, {
+    method: 'POST', body: JSON.stringify(payload),
+  })
+}
+
+export function createMerchantOrders(payload: Record<string, unknown>) {
+  return customerRequest<{
+    jobId: number
+    acceptedRows: number
+    rejectedRows: number
+    rows: Array<{ rowNo: number; statusCode: string; orderId: number | null; errorMessage: string | null }>
+  }>('/api/customer/merchant/orders/bulk', { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export async function downloadMerchantOrderTemplate() {
+  const token = customerSession.value?.token
+  if (!token) throw new Error('Please sign in to continue.')
+  const response = await fetch(`${apiBaseUrl}/api/customer/merchant/orders/template`, {
+    headers: { 'X-NXR-Customer-Token': token },
+  })
+  if (!response.ok) throw new Error(await readError(response))
+  return response.text()
 }

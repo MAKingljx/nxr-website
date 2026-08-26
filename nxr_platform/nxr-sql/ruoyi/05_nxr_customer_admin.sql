@@ -5,7 +5,7 @@
 -- ----------------------------------------------------------------------------
 
 INSERT IGNORE INTO sys_menu VALUES(
-    '2007', '用户管理', '2000', '7', 'customers', 'nxr/customers/index', '', '',
+    '2007', '客户管理', '2000', '4', 'customers', 'nxr/customers/index', '', 'NxrCustomers',
     1, 0, 'C', '0', '0', 'nxr:customer:list', 'peoples',
     'admin', sysdate(), '', null, '客户账号、持卡流转与订单概览'
 );
@@ -21,5 +21,5 @@ INSERT IGNORE INTO sys_menu VALUES(
 );
 
 INSERT IGNORE INTO sys_role_menu (role_id, menu_id) VALUES
-(100, 2007), (100, 2071), (100, 2072),
-(101, 2007), (101, 2071);
+(100, 2000), (100, 2007), (100, 2071), (100, 2072),
+(101, 2000), (101, 2007), (101, 2071);

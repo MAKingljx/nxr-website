@@ -21,7 +21,16 @@ export default defineConfig(({ mode, command }) => {
         // 设置路径
         '~': path.resolve(__dirname, './'),
         // 设置别名
-        '@': path.resolve(__dirname, './src')
+        '@': path.resolve(__dirname, './src'),
+        // 锁定到 Phoenix Component Library v0.11.1 的本地受管副本
+        '@phoenix-gallery': path.resolve(
+          __dirname,
+          './phoenix-components/frontend/vue3/component-gallery/src'
+        ),
+        '@phoenix-server-data-workbench': path.resolve(
+          __dirname,
+          './phoenix-components/frontend/vue3/server-data-workbench/src'
+        )
       },
       // https://cn.vitejs.dev/config/#resolve-extensions
       extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json', '.vue']

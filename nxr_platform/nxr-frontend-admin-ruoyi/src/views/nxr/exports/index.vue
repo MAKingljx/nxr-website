@@ -1,5 +1,11 @@
 <template>
-  <div class="app-container">
+  <main class="nxr-workspace nxr-exports-workspace">
+    <nxr-page-header
+      kicker="DATA EXPORTS"
+      title="数据导出"
+      summary="预览、生成并管理已审批或已发布的数据文件"
+    />
+
     <el-card shadow="never" class="mb8">
       <template #header><span>导出条件（仅导出已审批/已发布数据）</span></template>
       <el-form :inline="true" :model="exportForm" @submit.prevent>
@@ -39,15 +45,19 @@
         </el-alert>
         <el-table :data="preview.rows" size="small" max-height="320">
           <el-table-column label="证书编号" prop="certId" width="140" />
+          <el-table-column label="产品类型" width="125">
+            <template #default="scope">{{ productTypeLabel(scope.row.productType) }}</template>
+          </el-table-column>
           <el-table-column label="卡名" prop="cardName" min-width="160" show-overflow-tooltip />
+          <el-table-column label="商品描述" prop="merchDescription" min-width="180" show-overflow-tooltip />
           <el-table-column label="品牌" prop="brandName" width="120" />
           <el-table-column label="系列" prop="setName" min-width="140" show-overflow-tooltip />
           <el-table-column label="卡号" prop="cardNumber" width="110" />
           <el-table-column label="语言" prop="languageCode" width="80" align="center" />
           <el-table-column label="POP" prop="populationValue" width="80" align="center" />
           <el-table-column label="状态" prop="statusCode" width="100" align="center" />
-          <el-table-column label="评级" width="150">
-            <template #default="scope">{{ scope.row.finalGradeValue }} · {{ scope.row.finalGradeLabel }}</template>
+          <el-table-column label="结果" width="150">
+            <template #default="scope">{{ exportResult(scope.row) }}</template>
           </el-table-column>
         </el-table>
       </template>
@@ -83,11 +93,12 @@
         @pagination="loadExports"
       />
     </el-card>
-  </div>
+  </main>
 </template>
 
 <script setup name="NxrExports">
 import { saveAs } from 'file-saver'
+import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
 import { previewExport, generateExport, fetchExports, downloadExportBlob, deleteExport } from '@/api/nxr/exports'
 
 const { proxy } = getCurrentInstance()
@@ -100,6 +111,21 @@ const exports = ref([])
 const total = ref(0)
 const loading = ref(false)
 const pageParams = reactive({ page: 1, pageSize: 10 })
+
+function productTypeLabel(value) {
+  if (value === 'merch_product' || value === 'label_product') return 'Merch Product'
+  if (value === 'vintage_product') return 'Vintage Card'
+  return 'Graded Card'
+}
+
+function exportResult(row) {
+  if (row.productType === 'merch_product' || row.productType === 'label_product') return row.merchDescription || '-'
+  if (row.productType === 'vintage_product') return row.vintageClassification || '-'
+  const values = [row.finalGradeValue, row.finalGradeLabel].filter(
+    (value) => value !== null && value !== undefined && String(value).trim() !== ''
+  )
+  return values.length ? values.join(' · ') : '-'
+}
 
 function handlePreview() {
   previewing.value = true

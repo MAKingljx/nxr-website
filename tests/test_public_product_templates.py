@@ -101,16 +101,27 @@ class PublicProductTemplateTests(unittest.TestCase):
         self.assertNotIn("verification-mark", html)
 
     def test_vintage_product_highlights_year_and_classification_without_grade(self):
-        card = self.make_card("vintage_product", "Archive Class II")
+        card = self.make_card("vintage_product", "Nova")
         html = self.render_components(card)
         self.assertIn("vintage-classification", html)
         self.assertIn("1999", html)
-        self.assertIn("Archive Class II", html)
+        self.assertIn("Nova", html)
         self.assertNotIn("Final Grade", html)
         self.assertNotIn("Sub-Grades", html)
         self.assertIn("Authenticated and classified by NXR.", html)
         self.assertNotIn("product-type-mark", html)
         self.assertNotIn("verification-mark", html)
+
+    def test_vintage_condition_guide_uses_new_four_classification_names(self):
+        card = self.make_card("vintage_product", "Pristine")
+        html = self.templates.get_template("components/card_vintage_condition.html").render(card=card)
+        for code, name in (("I", "Pristine"), ("II", "Nova"), ("III", "Legacy"), ("IV", "Helix")):
+            self.assertIn(f'class="vintage-condition-code">{code}</div>', html)
+            self.assertIn(f'class="vintage-condition-name">{name}</div>', html)
+        self.assertNotIn("Flawless", html)
+        self.assertNotIn("Patina", html)
+        self.assertNotIn("Worn", html)
+        self.assertNotIn("Historic", html)
 
     def test_product_profiles_do_not_carry_visual_themes(self):
         graded_card = self.make_card()

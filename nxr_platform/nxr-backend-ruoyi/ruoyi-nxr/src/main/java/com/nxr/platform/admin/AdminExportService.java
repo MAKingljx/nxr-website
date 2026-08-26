@@ -1,5 +1,6 @@
 package com.nxr.platform.admin;
 
+import com.nxr.platform.shared.ProductTypePolicy;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.file.Files;
@@ -162,15 +163,15 @@ public class AdminExportService {
     private List<SimpleXlsxWriter.Sheet> buildSheets(List<ExportRow> rows, ExportFilter filter, String filename) {
         List<List<?>> approvedRows = new ArrayList<>();
         approvedRows.add(List.of(
-            "cert_id", "card_category", "card_name", "brand_name", "year_label", "set_name", "card_number",
+            "cert_id", "product_type", "vintage_classification", "merch_description", "card_category", "card_name", "brand_name", "year_label", "set_name", "card_number",
             "language_code", "population", "status", "final_grade", "final_grade_text", "centering", "edges",
             "corners", "surface", "landing_page_url"
         ));
         for (ExportRow row : rows) {
             approvedRows.add(List.of(
-                row.certId(), row.cardCategory(), row.cardName(), row.brandName(), row.yearLabel(), row.setName(),
-                row.cardNumber(), row.languageCode(), row.populationValue(), row.statusCode(), row.finalGradeValue(),
-                row.finalGradeLabel(), row.centeringScore(), row.edgesScore(), row.cornersScore(), row.surfaceScore(),
+                row.certId(), row.productType(), cell(row.vintageClassification()), cell(row.merchDescription()), row.cardCategory(), row.cardName(), row.brandName(), cell(row.yearLabel()), row.setName(),
+                row.cardNumber(), row.languageCode(), row.populationValue(), row.statusCode(), cell(row.finalGradeValue()),
+                cell(row.finalGradeLabel()), cell(row.centeringScore()), cell(row.edgesScore()), cell(row.cornersScore()), cell(row.surfaceScore()),
                 "nxrgrading.com/card/" + row.certId()
             ));
         }
@@ -183,7 +184,7 @@ public class AdminExportService {
 
         Map<String, Integer> gradeStats = new LinkedHashMap<>();
         for (ExportRow row : rows) {
-            gradeStats.merge(row.finalGradeLabel(), 1, Integer::sum);
+            gradeStats.merge(row.finalGradeLabel() == null ? "Not graded" : row.finalGradeLabel(), 1, Integer::sum);
         }
         List<List<?>> gradeRows = new ArrayList<>();
         gradeRows.add(List.of("Grade", "Count", "Percent"));
@@ -200,7 +201,7 @@ public class AdminExportService {
 
     private int countRows(ExportFilter filter) {
         QueryParts queryParts = buildWhereClause(filter);
-        return jdbcClient.sql("SELECT COUNT(*) FROM grading_submission s JOIN grading_score g ON g.submission_id = s.id " + queryParts.whereClause())
+        return jdbcClient.sql("SELECT COUNT(*) FROM grading_submission s LEFT JOIN grading_score g ON g.submission_id = s.id " + queryParts.whereClause())
             .params(queryParts.params())
             .query(Integer.class)
             .single();
@@ -214,6 +215,9 @@ public class AdminExportService {
                 """
                 SELECT
                     s.cert_id,
+                    COALESCE(NULLIF(s.product_type_code, ''), 'graded_card') AS product_type_code,
+                    s.vintage_classification_code,
+                    s.merch_description,
                     COALESCE(NULLIF(s.card_category_code, ''), 'trading_card') AS card_category_code,
                     s.card_name,
                     s.brand_name,
@@ -230,7 +234,7 @@ public class AdminExportService {
                     g.corners_score,
                     g.surface_score
                 FROM grading_submission s
-                JOIN grading_score g ON g.submission_id = s.id
+                LEFT JOIN grading_score g ON g.submission_id = s.id
                 """ + queryParts.whereClause() + """
                 ORDER BY s.approved_at DESC, s.created_at DESC, s.cert_id ASC
                 LIMIT :limit
@@ -239,6 +243,9 @@ public class AdminExportService {
             .params(params)
             .query((rs, rowNum) -> new ExportRow(
                 rs.getString("cert_id"),
+                ProductTypePolicy.normalizeStored(rs.getString("product_type_code")),
+                rs.getString("vintage_classification_code"),
+                rs.getString("merch_description"),
                 rs.getString("card_category_code"),
                 rs.getString("card_name"),
                 rs.getString("brand_name"),
@@ -263,7 +270,7 @@ public class AdminExportService {
             return List.of();
         }
         QueryParts queryParts = buildWhereClause(filter);
-        List<String> existing = jdbcClient.sql("SELECT UPPER(s.cert_id) FROM grading_submission s JOIN grading_score g ON g.submission_id = s.id " + queryParts.whereClause())
+        List<String> existing = jdbcClient.sql("SELECT UPPER(s.cert_id) FROM grading_submission s LEFT JOIN grading_score g ON g.submission_id = s.id " + queryParts.whereClause())
             .params(queryParts.params())
             .query(String.class)
             .list();
@@ -285,6 +292,10 @@ public class AdminExportService {
             params.put("certIds", normalizedCertIds);
         }
         return new QueryParts(where.toString(), params);
+    }
+
+    private Object cell(Object value) {
+        return value == null ? "" : value;
     }
 
     private ExportFilter normalizeFilter(ExportRequest request) {
@@ -370,6 +381,9 @@ public class AdminExportService {
 
     public record ExportRow(
         String certId,
+        String productType,
+        String vintageClassification,
+        String merchDescription,
         String cardCategory,
         String cardName,
         String brandName,

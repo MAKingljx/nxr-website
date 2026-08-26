@@ -19,6 +19,7 @@ Create.md
 Readme.md
 output/
 outputs/
+tmp/
 
 # Local-only operational helpers
 scripts/pull_remote_db_backup.sh

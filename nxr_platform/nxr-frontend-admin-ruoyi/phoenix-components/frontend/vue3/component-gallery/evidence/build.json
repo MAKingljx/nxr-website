@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "component": "frontend.vue3.component-gallery",
+  "version": "0.11.1",
+  "stack": "vue3",
+  "kind": "build",
+  "tool": "npm",
+  "command": "npm run build",
+  "result": "passed",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "node": "25.2.1",
+    "npm": "11.6.2",
+    "vite": "8.2.1",
+    "typescript": "6.0.3",
+    "vue": "3.5.41"
+  },
+  "artifacts": [
+    "dist/component-gallery.js",
+    "dist/component-gallery.css",
+    "dist/index.d.ts",
+    "site-dist/index.html"
+  ]
+}

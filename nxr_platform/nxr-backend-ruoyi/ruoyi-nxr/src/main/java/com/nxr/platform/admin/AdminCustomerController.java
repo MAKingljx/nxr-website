@@ -52,6 +52,16 @@ public class AdminCustomerController {
     }
 
     @PreAuthorize("@ss.hasPermi('nxr:customer:manage')")
+    @Log(title = "客户账号类型", businessType = BusinessType.UPDATE)
+    @PutMapping("/{customerId}/type")
+    public AjaxResult updateCustomerType(
+        @PathVariable long customerId,
+        @RequestBody AdminCustomerService.UpdateCustomerTypeRequest request
+    ) {
+        return AjaxResult.success(adminCustomerService.updateCustomerType(customerId, request));
+    }
+
+    @PreAuthorize("@ss.hasPermi('nxr:customer:manage')")
     @Log(title = "客户会话失效", businessType = BusinessType.UPDATE)
     @PostMapping("/{customerId}/sessions/revoke")
     public AjaxResult revokeCustomerSessions(@PathVariable long customerId) {

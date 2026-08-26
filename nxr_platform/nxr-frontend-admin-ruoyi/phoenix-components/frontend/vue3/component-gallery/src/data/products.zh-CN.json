@@ -1,0 +1,26 @@
+[
+  {
+    "id": "phoenix-component-gallery",
+    "name": "Phoenix组件展厅",
+    "type": "系统",
+    "stage": "试用",
+    "version": "0.9.1",
+    "techStack": ["Vue 3", "TypeScript", "Vite", "Vitest"],
+    "capabilities": ["组件目录", "组件发现", "组件预览", "局部主题"],
+    "summary": "全中文的 Vue 3 组件与页面框架展厅，用于在当前仓库内发现、预览和组合 Phoenix 界面能力。",
+    "sourcePath": "frontend/vue3/component-gallery",
+    "updatedAt": "2026-08-12"
+  },
+  {
+    "id": "phoenix-resource-admin-app",
+    "name": "Phoenix资源管理后台",
+    "type": "软件",
+    "stage": "试用",
+    "version": "0.2.0",
+    "techStack": ["Vue 3", "TypeScript", "Vite", "Vitest"],
+    "capabilities": ["登录", "资源管理", "账户安全", "类型化客户端"],
+    "summary": "可运行的 Vue 3 资源管理后台装配入口，提供登录、资源管理、账户安全与退出界面，最终鉴权和数据仍由宿主服务负责。",
+    "sourcePath": "frontend/vue3/resource-admin-app",
+    "updatedAt": "2026-08-11"
+  }
+]

@@ -5,9 +5,11 @@ import java.security.MessageDigest;
 import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -26,13 +28,22 @@ public class CustomerPortalController {
 
     private final CustomerAuthService customerAuthService;
     private final CustomerPortalService customerPortalService;
+    private final OrderFulfillmentService orderFulfillmentService;
+    private final MerchantBulkOrderService merchantBulkOrderService;
 
     @Value("${nxr.payments.callback-token:}")
     private String paymentCallbackToken;
 
-    public CustomerPortalController(CustomerAuthService customerAuthService, CustomerPortalService customerPortalService) {
+    public CustomerPortalController(
+        CustomerAuthService customerAuthService,
+        CustomerPortalService customerPortalService,
+        OrderFulfillmentService orderFulfillmentService,
+        MerchantBulkOrderService merchantBulkOrderService
+    ) {
         this.customerAuthService = customerAuthService;
         this.customerPortalService = customerPortalService;
+        this.orderFulfillmentService = orderFulfillmentService;
+        this.merchantBulkOrderService = merchantBulkOrderService;
     }
 
     @PostMapping("/auth/register")
@@ -54,6 +65,51 @@ public class CustomerPortalController {
     @GetMapping("/auth/me")
     public CustomerAuthService.CustomerProfile currentCustomer(@RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken) {
         return customerAuthService.profile(customerAuthService.requireCustomer(customerToken));
+    }
+
+    @GetMapping("/addresses")
+    public java.util.List<OrderFulfillmentService.CustomerAddress> addresses(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken
+    ) {
+        return orderFulfillmentService.listAddresses(current(customerToken).id());
+    }
+
+    @PostMapping("/addresses")
+    public OrderFulfillmentService.CustomerAddress createAddress(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
+        @RequestBody OrderFulfillmentService.AddressRequest request
+    ) {
+        return orderFulfillmentService.saveAddress(current(customerToken).id(), null, request);
+    }
+
+    @PutMapping("/addresses/{addressId}")
+    public OrderFulfillmentService.CustomerAddress updateAddress(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
+        @PathVariable long addressId,
+        @RequestBody OrderFulfillmentService.AddressRequest request
+    ) {
+        return orderFulfillmentService.saveAddress(current(customerToken).id(), addressId, request);
+    }
+
+    @DeleteMapping("/addresses/{addressId}")
+    public Map<String, Boolean> deleteAddress(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
+        @PathVariable long addressId
+    ) {
+        orderFulfillmentService.deleteAddress(current(customerToken).id(), addressId);
+        return Map.of("success", true);
+    }
+
+    @GetMapping("/shipping-options")
+    public java.util.List<OrderFulfillmentService.ShippingOption> shippingOptions(
+        @RequestParam(required = false) String country
+    ) {
+        return orderFulfillmentService.listShippingOptions(country, false);
+    }
+
+    @GetMapping("/service-price")
+    public OrderFulfillmentService.ServicePrice servicePrice() {
+        return orderFulfillmentService.activeServicePrice();
     }
 
     @GetMapping("/cards/{certId}/community")
@@ -120,6 +176,15 @@ public class CustomerPortalController {
         return customerPortalService.submitPaymentProof(current(customerToken).id(), orderNo, request);
     }
 
+    @PostMapping("/orders/{orderNo}/payment-session")
+    public CustomerPortalService.PaymentSessionResponse createPaymentSession(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
+        @PathVariable String orderNo,
+        @RequestBody CustomerPortalService.PaymentSessionRequest request
+    ) {
+        return customerPortalService.createPaymentSession(current(customerToken).id(), orderNo, request);
+    }
+
     @PostMapping("/orders/{orderNo}/inbound-shipment")
     public CustomerPortalService.OrderDetailResponse addInboundShipment(
         @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
@@ -127,6 +192,73 @@ public class CustomerPortalController {
         @RequestBody CustomerPortalService.CreateShipmentRequest request
     ) {
         return customerPortalService.addInboundShipment(current(customerToken).id(), orderNo, request);
+    }
+
+    @GetMapping("/orders/{orderNo}/packing-slip")
+    public OrderFulfillmentService.PackingSlip packingSlip(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
+        @PathVariable String orderNo
+    ) {
+        return orderFulfillmentService.requirePackingSlip(current(customerToken).id(), orderNo);
+    }
+
+    @GetMapping("/orders/{orderNo}/operations")
+    public OrderFulfillmentService.CustomerOperationsResponse orderOperations(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
+        @PathVariable String orderNo
+    ) {
+        return orderFulfillmentService.loadCustomerOperations(current(customerToken).id(), orderNo);
+    }
+
+    @PostMapping("/orders/{orderNo}/tickets")
+    public OrderFulfillmentService.TicketRecord createTicket(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
+        @PathVariable String orderNo,
+        @RequestBody OrderFulfillmentService.TicketRequest request
+    ) {
+        return orderFulfillmentService.createTicket(current(customerToken).id(), orderNo, request);
+    }
+
+    @PostMapping("/orders/{orderNo}/tickets/{ticketId}/messages")
+    public OrderFulfillmentService.TicketRecord addTicketMessage(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
+        @PathVariable String orderNo,
+        @PathVariable long ticketId,
+        @RequestBody OrderFulfillmentService.TicketMessageRequest request
+    ) {
+        long customerId = current(customerToken).id();
+        boolean ticketBelongsToOrder = orderFulfillmentService.listCustomerTickets(customerId, orderNo).stream()
+            .anyMatch(ticket -> ticket.id() == ticketId);
+        if (!ticketBelongsToOrder) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Support ticket not found");
+        }
+        return orderFulfillmentService.addCustomerTicketMessage(customerId, ticketId, request);
+    }
+
+    @PostMapping("/orders/{orderNo}/shipping-change")
+    public OrderFulfillmentService.ShippingChangeRecord requestShippingChange(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
+        @PathVariable String orderNo,
+        @RequestBody OrderFulfillmentService.ShippingChangeRequest request
+    ) {
+        return orderFulfillmentService.requestShippingChange(current(customerToken).id(), orderNo, request);
+    }
+
+    @GetMapping(value = "/merchant/orders/template", produces = "text/csv;charset=UTF-8")
+    public String merchantOrderTemplate(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken
+    ) {
+        orderFulfillmentService.requireMerchant(current(customerToken).id());
+        return "language_code,quantity,return_address_id,return_shipping_option_code,customer_note\n"
+            + "EN,1,1,economy_line,Example merchant order\n";
+    }
+
+    @PostMapping("/merchant/orders/bulk")
+    public OrderFulfillmentService.MerchantImportResult createMerchantOrders(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
+        @RequestBody MerchantBulkOrderService.BulkOrderRequest request
+    ) {
+        return merchantBulkOrderService.createOrders(current(customerToken).id(), request);
     }
 
     @PostMapping("/payments/callback/{provider}")

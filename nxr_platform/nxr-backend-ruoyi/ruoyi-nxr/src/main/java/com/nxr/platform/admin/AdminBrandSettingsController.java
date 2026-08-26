@@ -28,6 +28,12 @@ public class AdminBrandSettingsController {
         return AjaxResult.success(adminBrandSettingsService.listBrands());
     }
 
+    @PreAuthorize("@ss.hasAnyPermi('nxr:entry:list,nxr:entry:add')")
+    @GetMapping("/options")
+    public AjaxResult listActiveBrandOptions() {
+        return AjaxResult.success(adminBrandSettingsService.listActiveBrandOptions());
+    }
+
     @PreAuthorize("@ss.hasPermi('nxr:brand:add')")
     @Log(title = "品牌设置", businessType = BusinessType.INSERT)
     @PostMapping

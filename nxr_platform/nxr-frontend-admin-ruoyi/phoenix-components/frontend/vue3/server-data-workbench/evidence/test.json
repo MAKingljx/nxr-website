@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "component": "frontend.vue3.server-data-workbench",
+  "version": "0.1.0",
+  "stack": "vue3",
+  "kind": "test",
+  "tool": "npm",
+  "command": "npm run test",
+  "result": "passed",
+  "environment": {
+    "os": "Darwin",
+    "architecture": "arm64",
+    "node": "25.8.1",
+    "npm": "11.11.0",
+    "vitest": "4.1.10",
+    "jsdom": "29.1.1",
+    "vue": "3.5.41"
+  },
+  "summary": {
+    "testFiles": 1,
+    "tests": 8,
+    "failed": 0
+  },
+  "coverage": [
+    "native query form and host slots",
+    "replaceable filter actions",
+    "accessible loading, error, and empty defaults",
+    "replaceable state slots",
+    "controlled pagination events",
+    "numeric boundary normalization",
+    "prop updates without request side effects",
+    "full pagination slot replacement"
+  ]
+}

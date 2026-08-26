@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "scenario": {
+    "id": "user-management-page",
+    "label": "用户管理页",
+    "contract": {
+      "capabilities": ["title", "metrics", "query", "batch", "table", "create", "import", "export"],
+      "props": ["rows", "stats", "queryModel", "selectedKeys", "busy"],
+      "events": ["update:queryModel", "update:selectedKeys", "query", "reset", "batch", "clearSelection", "create", "import", "export"]
+    }
+  },
+  "methodology": {
+    "measures": ["消费者需编写的非空源代码行", "模板非空行", "样式非空行", "完整文件 UTF-8 字节"],
+    "scope": "比较两个功能契约一致、采用同一格式风格的 Vue 单文件组件，不计 Phoenix 组件库内部实现。",
+    "caveats": ["这是静态源码规模基准，不等同于真实开发人时。", "本基准不估算或宣称精确 token 节省。"]
+  },
+  "variants": {
+    "rawVue": {
+      "path": "benchmarks/development-efficiency/raw-user-management.vue",
+      "contractVerified": true,
+      "metrics": { "nonEmptySourceLines": 182, "templateLines": 68, "styleLines": 55, "utf8Bytes": 8357 }
+    },
+    "phoenixComponents": {
+      "path": "benchmarks/development-efficiency/phoenix-user-management.vue",
+      "contractVerified": true,
+      "metrics": { "nonEmptySourceLines": 94, "templateLines": 27, "styleLines": 0, "utf8Bytes": 3184 }
+    }
+  },
+  "comparison": {
+    "nonEmptySourceLines": { "absolute": 88, "percent": 48.4 },
+    "templateLines": { "absolute": 41, "percent": 60.3 },
+    "styleLines": { "absolute": 55, "percent": 100 },
+    "utf8Bytes": { "absolute": 5173, "percent": 61.9 }
+  },
+  "conclusion": {
+    "supported": true,
+    "summary": "在固定用户管理页场景中，Phoenix 复用版减少了消费者自写源码和样式；结果仅说明该场景的代码规模变化。"
+  },
+  "recommendations": [
+    "继续提供页面框架与查询、批量、表格组件的组合示例。",
+    "为常见表格页补充更短的受控事件转发约定，可进一步减少消费者胶水代码。"
+  ]
+}

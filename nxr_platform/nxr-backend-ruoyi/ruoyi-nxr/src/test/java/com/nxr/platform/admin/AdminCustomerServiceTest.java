@@ -60,6 +60,18 @@ class AdminCustomerServiceTest {
         assertThat(count("grading_order")).isEqualTo(1);
     }
 
+    @Test
+    void changesCustomerTypeWithoutChangingBusinessRecords() {
+        AdminCustomerService.CustomerDetailResponse detail = service.updateCustomerType(
+            1L,
+            new AdminCustomerService.UpdateCustomerTypeRequest("merchant")
+        );
+
+        assertThat(detail.customer().accountTypeCode()).isEqualTo("merchant");
+        assertThat(count("certificate_ownership")).isEqualTo(2);
+        assertThat(count("grading_order")).isEqualTo(1);
+    }
+
     private void resetSchema() {
         jdbcTemplate.execute("DROP ALL OBJECTS");
         jdbcTemplate.execute(
@@ -69,6 +81,7 @@ class AdminCustomerServiceTest {
                 email VARCHAR(191) NOT NULL,
                 display_name VARCHAR(128) NOT NULL,
                 mobile VARCHAR(64),
+                account_type_code VARCHAR(32) NOT NULL DEFAULT 'customer',
                 is_active TINYINT NOT NULL,
                 created_at TIMESTAMP NOT NULL,
                 last_login_at TIMESTAMP
@@ -116,6 +129,9 @@ class AdminCustomerServiceTest {
             """
             CREATE TABLE grading_submission (
                 id BIGINT PRIMARY KEY,
+                product_type_code VARCHAR(32) NOT NULL DEFAULT 'graded_card',
+                vintage_classification_code VARCHAR(64),
+                merch_description TEXT,
                 card_name VARCHAR(255) NOT NULL,
                 brand_name VARCHAR(64) NOT NULL
             )
@@ -160,12 +176,12 @@ class AdminCustomerServiceTest {
     private void seedData() {
         LocalDateTime now = LocalDateTime.now().withNano(0);
         jdbcTemplate.update(
-            "INSERT INTO customer_account VALUES (?, ?, ?, ?, ?, ?, ?)",
-            1L, "alice@example.test", "Alice", "10086", 1, now.minusDays(10), now.minusHours(1)
+            "INSERT INTO customer_account VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            1L, "alice@example.test", "Alice", "10086", "customer", 1, now.minusDays(10), now.minusHours(1)
         );
         jdbcTemplate.update(
-            "INSERT INTO customer_account VALUES (?, ?, ?, ?, ?, ?, ?)",
-            2L, "bob@example.test", "Bob", null, 0, now.minusDays(5), null
+            "INSERT INTO customer_account VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            2L, "bob@example.test", "Bob", null, "customer", 0, now.minusDays(5), null
         );
         jdbcTemplate.update(
             "INSERT INTO customer_session VALUES (?, ?, ?)",
@@ -176,7 +192,7 @@ class AdminCustomerServiceTest {
             2L, 1L, now.minusDays(1)
         );
         jdbcTemplate.update(
-            "INSERT INTO grading_submission VALUES (?, ?, ?)",
+            "INSERT INTO grading_submission (id, card_name, brand_name) VALUES (?, ?, ?)",
             10L, "Test Card", "Pokemon"
         );
         jdbcTemplate.update(

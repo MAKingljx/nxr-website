@@ -186,9 +186,9 @@ CREATE TABLE IF NOT EXISTS order_timeline_event (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- NXR operational menu and permissions. INSERT IGNORE keeps the script rerunnable.
-INSERT IGNORE INTO sys_menu VALUES('2006', '送评订单', '2000', '6', 'orders', 'nxr/orders/index', '', '', 1, 0, 'C', '0', '0', 'nxr:order:list', 'shopping', 'admin', sysdate(), '', null, '客户送评订单、收付款与物流');
+INSERT IGNORE INTO sys_menu VALUES('2006', '订单管理', '2000', '3', 'orders', 'nxr/orders/index', '', 'NxrOrders', 1, 0, 'C', '0', '0', 'nxr:order:list', 'shopping', 'admin', sysdate(), '', null, '客户送评订单、收付款与物流');
 INSERT IGNORE INTO sys_menu VALUES('2061', '订单查看', '2006', '1', '', '', '', '', 1, 0, 'F', '0', '0', 'nxr:order:list', '#', 'admin', sysdate(), '', null, '');
 INSERT IGNORE INTO sys_menu VALUES('2062', '订单处理', '2006', '2', '', '', '', '', 1, 0, 'F', '0', '0', 'nxr:order:manage', '#', 'admin', sysdate(), '', null, '');
 INSERT IGNORE INTO sys_role_menu (role_id, menu_id) VALUES
-(100, 2006), (100, 2061), (100, 2062),
-(101, 2006), (101, 2061);
+(100, 2000), (100, 2006), (100, 2061), (100, 2062),
+(101, 2000), (101, 2006), (101, 2061);

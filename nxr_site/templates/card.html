@@ -194,7 +194,7 @@
 
     <div class="card-info" data-card-brand="{{ card.brand or '' }}" data-cert-id="{{ card.cert_id or cert_id }}">
       {% include "components/card_identity.html" %}
-      {% if not use_classic_card_layout|default(false) %}
+      {% if card.product_profile.product_type == 'vintage_product' %}
       {% include "components/card_vintage_condition.html" %}
       {% endif %}
       {% include "components/card_grade.html" %}

@@ -1,4 +1,5 @@
 .DS_Store
+.phoenix-components.guard
 node_modules/
 dist/
 npm-debug.log*
@@ -21,3 +22,10 @@ selenium-debug.log
 
 package-lock.json
 yarn.lock
+
+# Keep immutable Phoenix component release sources complete in Git. These
+# narrow exceptions do not include dependency caches or build output.
+!phoenix-components/**/README.md
+!phoenix-components/**/package-lock.json
+!phoenix-components/**/src/data/
+!phoenix-components/**/src/data/**

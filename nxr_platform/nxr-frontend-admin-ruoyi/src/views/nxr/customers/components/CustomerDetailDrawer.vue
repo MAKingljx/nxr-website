@@ -15,9 +15,10 @@
           <strong>{{ detail.customer.displayName || '未设置昵称' }}</strong>
           <span>{{ detail.customer.email }}</span>
         </div>
-        <el-tag :type="detail.customer.active ? 'success' : 'info'" effect="plain">
-          {{ detail.customer.active ? '正常' : '已停用' }}
-        </el-tag>
+        <nxr-status-tag
+          :code="detail.customer.active ? 'active' : 'inactive'"
+          :label="detail.customer.active ? '正常' : '已停用'"
+        />
       </div>
       <span v-else>用户详情</span>
     </template>
@@ -37,12 +38,17 @@
               <div><dt>昵称</dt><dd>{{ detail.customer.displayName || '未填写' }}</dd></div>
               <div><dt>邮箱</dt><dd>{{ detail.customer.email }}</dd></div>
               <div><dt>手机</dt><dd>{{ detail.customer.mobile || '未填写' }}</dd></div>
+              <div><dt>账号类型</dt><dd><el-tag :type="detail.customer.accountTypeCode === 'merchant' ? 'warning' : 'info'">{{ detail.customer.accountTypeCode === 'merchant' ? '商户' : '普通客户' }}</el-tag></dd></div>
               <div><dt>加入时间</dt><dd>{{ formatCustomerDate(detail.customer.createdAt) }}</dd></div>
               <div><dt>最近登录</dt><dd>{{ detail.customer.lastLoginAt ? formatCustomerDate(detail.customer.lastLoginAt) : '尚未登录' }}</dd></div>
               <div><dt>账号编号</dt><dd>#{{ detail.customer.id }}</dd></div>
             </dl>
 
             <div v-if="canManage" class="account-actions">
+              <el-select :model-value="detail.customer.accountTypeCode" style="width: 140px" @change="$emit('change-type', detail.customer, $event)">
+                <el-option label="普通客户" value="customer" />
+                <el-option label="商户" value="merchant" />
+              </el-select>
               <el-button
                 :type="detail.customer.active ? 'danger' : 'success'"
                 plain
@@ -64,6 +70,7 @@
                 <template #default="scope">
                   <strong class="detail-card-name">{{ scope.row.cardName || '未匹配卡片资料' }}</strong>
                   <small class="detail-card-brand">{{ scope.row.brandName || '-' }}</small>
+                  <small v-if="scope.row.merchDescription" class="detail-card-brand">{{ scope.row.merchDescription }}</small>
                 </template>
               </el-table-column>
               <el-table-column label="评级" width="92">
@@ -71,9 +78,10 @@
               </el-table-column>
               <el-table-column label="状态" width="105">
                 <template #default="scope">
-                  <el-tag :type="scope.row.statusCode === 'active' ? 'success' : 'info'" effect="plain">
-                    {{ ownershipLabel(scope.row.statusCode) }}
-                  </el-tag>
+                  <nxr-status-tag
+                    :code="scope.row.statusCode"
+                    :label="ownershipLabel(scope.row.statusCode)"
+                  />
                 </template>
               </el-table-column>
               <el-table-column label="绑定时间" width="160">
@@ -129,6 +137,7 @@
 <script setup>
 import { Key } from '@element-plus/icons-vue'
 import { useWindowSize } from '@vueuse/core'
+import NxrStatusTag from '@/components/NxrWorkspace/StatusTag.vue'
 import {
   avatarColor,
   avatarText,
@@ -150,7 +159,7 @@ const props = defineProps({
   revokingSessions: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['update:modelValue', 'toggle-status', 'revoke-sessions'])
+const emit = defineEmits(['update:modelValue', 'toggle-status', 'revoke-sessions', 'change-type'])
 const { width } = useWindowSize()
 const detailTab = ref('profile')
 const drawerSize = computed(() => width.value < 760 ? '100%' : '720px')

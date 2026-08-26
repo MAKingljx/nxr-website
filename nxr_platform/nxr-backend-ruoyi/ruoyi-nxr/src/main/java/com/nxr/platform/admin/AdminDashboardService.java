@@ -1,5 +1,6 @@
 package com.nxr.platform.admin;
 
+import com.nxr.platform.shared.ProductTypePolicy;
 import java.math.BigDecimal;
 import java.util.List;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -39,19 +40,25 @@ public class AdminDashboardService {
                 """
                 SELECT
                     s.cert_id,
+                    COALESCE(NULLIF(s.product_type_code, ''), 'graded_card') AS product_type_code,
+                    s.vintage_classification_code,
+                    s.merch_description,
                     s.card_name,
                     s.brand_name,
                     g.final_grade_value,
                     g.final_grade_label
                 FROM published_certificate pc
                 JOIN grading_submission s ON s.id = pc.submission_id
-                JOIN grading_score g ON g.submission_id = s.id
+                LEFT JOIN grading_score g ON g.submission_id = s.id
                 ORDER BY pc.published_at DESC, s.cert_id ASC
                 LIMIT 5
                 """
             )
             .query((rs, rowNum) -> new RecentPublishedCard(
                 rs.getString("cert_id"),
+                ProductTypePolicy.normalizeStored(rs.getString("product_type_code")),
+                rs.getString("vintage_classification_code"),
+                rs.getString("merch_description"),
                 rs.getString("card_name"),
                 rs.getString("brand_name"),
                 rs.getBigDecimal("final_grade_value"),
@@ -81,6 +88,9 @@ public class AdminDashboardService {
 
     public record RecentPublishedCard(
         String certId,
+        String productType,
+        String vintageClassification,
+        String merchDescription,
         String cardName,
         String brandName,
         BigDecimal finalGradeValue,

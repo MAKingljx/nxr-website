@@ -2,8 +2,10 @@ package com.nxr.platform.shared;
 
 import java.util.List;
 import java.util.Locale;
+import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * 读取若依 sys_dict_data 的业务字典服务。
@@ -15,6 +17,8 @@ import org.springframework.stereotype.Service;
 public class NxrDictionaryService {
 
     public static final String SPORTS_TYPE_DICT = "nxr_sports_type";
+    public static final String PRODUCT_TYPE_DICT = "nxr_product_type";
+    public static final String VINTAGE_CLASSIFICATION_DICT = "nxr_vintage_classification";
 
     private final JdbcClient jdbcClient;
 
@@ -54,5 +58,22 @@ public class NxrDictionaryService {
             }
         }
         return trimmed;
+    }
+
+    /**
+     * 返回启用字典项的标准值；空值、未知值和停用值均拒绝。
+     */
+    public String requireActiveValue(String dictType, String rawValue, String fieldLabel) {
+        String trimmed = rawValue == null ? "" : rawValue.trim();
+        if (trimmed.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldLabel + " is required");
+        }
+        String lowered = trimmed.toLowerCase(Locale.ROOT);
+        for (String option : listActiveValues(dictType)) {
+            if (option != null && option.trim().toLowerCase(Locale.ROOT).equals(lowered)) {
+                return option.trim();
+            }
+        }
+        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, fieldLabel + " must be an active dictionary value");
     }
 }

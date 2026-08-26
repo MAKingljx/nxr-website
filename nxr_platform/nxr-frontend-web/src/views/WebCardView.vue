@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import LegacySiteFooter from '../components/LegacySiteFooter.vue'
 import LegacySiteNav from '../components/LegacySiteNav.vue'
-import { fetchAiCharacterInfo, fetchPublicCard, type PublicCardDetail } from '../lib/api'
+import { fetchAiCharacterInfo, fetchPublicCard, type ProductType, type PublicCardDetail } from '../lib/api'
 import {
   claimCustomerCard,
   customerSession,
@@ -33,12 +33,49 @@ const savingCommunity = ref(false)
 
 const isCurrentOwner = computed(() => community.value?.ownership?.customerId === customerSession.value?.customer.id)
 
+const productType = computed<ProductType>(() => {
+  const value = card.value?.productType
+  if (value === 'merch_product' || value === 'label_product') return 'merch_product'
+  return value === 'vintage_product' ? value : 'graded_card'
+})
+
+const productProfile = computed(() => {
+  const profiles = {
+    graded_card: {
+      label: 'Graded Card',
+      pageVariant: 'graded-card',
+      showFinalGrade: true,
+      showSubgrades: true,
+      showClassification: false,
+      verificationText: 'Authenticated and graded by NXR.',
+    },
+    merch_product: {
+      label: 'Merch Product',
+      pageVariant: 'merch-product',
+      showFinalGrade: false,
+      showSubgrades: false,
+      showClassification: false,
+      verificationText: 'Authenticated by NXR.',
+    },
+    vintage_product: {
+      label: 'Vintage Card',
+      pageVariant: 'vintage-product',
+      showFinalGrade: false,
+      showSubgrades: false,
+      showClassification: true,
+      verificationText: 'Authenticated and classified by NXR.',
+    },
+  }
+  return profiles[productType.value]
+})
+
 const gradeText = computed(() => {
-  if (!card.value) {
+  if (!card.value || card.value.finalGradeValue === null) {
     return 'N/A'
   }
 
-  return `${Number(card.value.finalGradeValue).toFixed(1)} (${card.value.finalGradeLabel})`
+  const value = Number(card.value.finalGradeValue).toFixed(1)
+  return card.value.finalGradeLabel ? `${value} (${card.value.finalGradeLabel})` : value
 })
 
 const displayTitle = computed(() => {
@@ -55,7 +92,7 @@ const detailRows = computed(() => {
   }
 
   const detail = card.value
-  const rows: Array<{ key: string; value: string | null | undefined }> = [
+  const rows: Array<{ key: string; value: string | number | null | undefined }> = [
     { key: 'Category', value: detail.cardCategoryLabel || detail.cardCategory },
   ]
 
@@ -67,8 +104,10 @@ const detailRows = computed(() => {
       { key: 'Film type', value: detail.filmType || detail.varietyName },
     )
   } else {
+    if (productType.value !== 'vintage_product') {
+      rows.push({ key: 'Year', value: detail.yearLabel })
+    }
     rows.push(
-      { key: 'Year', value: detail.yearLabel },
       { key: 'Brand', value: detail.brandName },
       { key: 'Set', value: detail.setName },
       { key: 'Card number', value: detail.cardNumber },
@@ -84,8 +123,12 @@ const detailRows = computed(() => {
     }
   }
 
-  rows.push({ key: 'Population', value: String(detail.populationValue) })
-  return rows.filter((row) => row.value)
+  if (productType.value === 'merch_product') {
+    rows.push({ key: 'Description', value: detail.merchDescription })
+  }
+
+  rows.push({ key: 'Population', value: detail.populationValue })
+  return rows.filter((row) => row.value !== null && row.value !== undefined && String(row.value).trim() !== '')
 })
 
 const subgrades = computed(() => {
@@ -97,24 +140,20 @@ const subgrades = computed(() => {
     {
       name: 'Centering',
       score: card.value.centeringScore,
-      desc: 'Measures how evenly the image is positioned within the borders. Critical for vintage cards.',
     },
     {
       name: 'Edges',
       score: card.value.edgesScore,
-      desc: 'Evaluates the condition of all four edges. Look for chipping, whitening, or wear.',
     },
     {
       name: 'Corners',
       score: card.value.cornersScore,
-      desc: 'Assesses sharpness and wear on all four corners. The most common area for damage.',
     },
     {
       name: 'Surface',
       score: card.value.surfaceScore,
-      desc: 'Checks for scratches, print defects, stains, or other surface imperfections.',
     },
-  ]
+  ].filter((item): item is { name: string; score: number } => item.score !== null)
 })
 
 function subgradeClass(score: number) {
@@ -234,7 +273,7 @@ watch(
 <template>
   <LegacySiteNav active="verify" />
 
-  <main class="card-page">
+  <main class="card-page" :class="card ? `card-page--${productProfile.pageVariant}` : ''">
     <div v-if="isLoading" class="error-container">
       <div class="error-icon">🔍</div>
       <h1 class="error-title">Loading Card</h1>
@@ -243,38 +282,40 @@ watch(
 
     <div v-else-if="card" class="card-layout">
       <div class="images-col">
-        <div class="img-wrap">
+        <figure class="img-wrap">
           <img :src="card.frontImageUrl || placeholderImage" alt="Front" loading="eager" @error="useFallbackImage" />
-          <div class="img-label">Front</div>
-        </div>
-        <div class="img-wrap">
+          <figcaption class="img-label">Front</figcaption>
+        </figure>
+        <figure class="img-wrap">
           <img :src="card.backImageUrl || placeholderImage" alt="Back" loading="lazy" @error="useFallbackImage" />
-          <div class="img-label">Back</div>
-        </div>
+          <figcaption class="img-label">Back</figcaption>
+        </figure>
 
         <div class="ai-character-section">
           <button class="ai-character-btn" type="button" @click="openAiInfo">
-            <span class="ai-icon">🤖</span>
             <span class="ai-text">AI Character Info</span>
-            <span class="ai-subtext">{{ card.cardCategory === 'movie_film' ? 'Learn about this film' : 'Learn about this character' }}</span>
           </button>
-          <p class="ai-note">Powered by NXR AI cache • Available in 9 languages</p>
         </div>
 
         <div class="verification-info">
           <div class="verification-title">Verification</div>
-          <p>
-            This card has been authenticated and graded by NXR Grading. The certificate ID below can be used to verify
-            this grade on our website.
-          </p>
+          <p>{{ productProfile.verificationText }}</p>
           <div class="verification-id">{{ card.certId }}</div>
         </div>
       </div>
 
       <div class="card-info">
+        <div class="product-type-label">{{ productProfile.label }}</div>
         <h1 class="card-title">{{ displayTitle }}</h1>
         <div class="card-cert">Certificate ID: {{ card.certId }}</div>
-        <div class="grade-badge">Final Grade: {{ gradeText }}</div>
+        <div
+          v-if="productProfile.showClassification && (card.yearLabel || card.vintageClassification)"
+          class="vintage-classification"
+        >
+          <span v-if="card.yearLabel">{{ card.yearLabel }}</span>
+          <strong v-if="card.vintageClassification">{{ card.vintageClassification }}</strong>
+        </div>
+        <div v-if="productProfile.showFinalGrade" class="grade-badge">Final Grade: {{ gradeText }}</div>
 
         <div class="detail-grid">
           <div v-for="row in detailRows" :key="row.key" class="detail-row">
@@ -283,24 +324,17 @@ watch(
           </div>
         </div>
 
-        <div class="subgrades-section">
-          <div class="subgrades-header">
-            <div class="subgrades-title">Sub-Grades Breakdown</div>
-            <div class="subgrades-subtitle">Four critical components of the grade</div>
-          </div>
-
+        <section v-if="productProfile.showSubgrades" class="subgrades-section">
+          <h2 class="subgrades-title">Sub-Grades</h2>
           <div class="subgrades-grid">
             <div v-for="item in subgrades" :key="item.name" class="subgrade-card">
-              <div class="subgrade-header">
-                <div class="subgrade-name">{{ item.name }}</div>
-                <div class="subgrade-score" :class="subgradeClass(item.score)">
-                  {{ Number(item.score).toFixed(1) }}
-                </div>
+              <div class="subgrade-name">{{ item.name }}</div>
+              <div class="subgrade-score" :class="subgradeClass(item.score)">
+                {{ Number(item.score).toFixed(1) }}
               </div>
-              <div class="subgrade-desc">{{ item.desc }}</div>
             </div>
           </div>
-        </div>
+        </section>
 
         <section class="community-section">
           <div class="community-heading"><div><p>Collector ledger</p><h2>Ownership History</h2></div><span v-if="community?.ownership" class="community-owner">{{ community.ownership.ownerLabel }}</span></div>
@@ -380,7 +414,7 @@ watch(
   width: min(720px, 100%);
   max-height: calc(100vh - 48px);
   overflow: auto;
-  border-radius: 18px;
+  border-radius: 8px;
   background: #fff;
   padding: 24px;
   color: #111827;
@@ -403,7 +437,7 @@ watch(
   margin-bottom: 6px;
   color: #55647f;
   font-size: 12px;
-  letter-spacing: 0.16em;
+  letter-spacing: 0;
   text-transform: uppercase;
   font-weight: 700;
 }
@@ -411,7 +445,7 @@ watch(
 .ai-modal-head button,
 .ai-language select {
   height: 42px;
-  border-radius: 12px;
+  border-radius: 8px;
   border: 1px solid rgba(20, 32, 51, 0.12);
   background: #fff;
   font: inherit;

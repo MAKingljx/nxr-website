@@ -1,12 +1,12 @@
 <template>
   <aside class="action-rail">
-    <section class="waitlist-panel">
+    <section v-if="canViewWaitlist" class="waitlist-panel">
       <div class="waitlist-panel__top">
         <span class="waitlist-panel__icon"><el-icon><Clock /></el-icon></span>
         <span>候补名单</span>
       </div>
       <strong>{{ formattedWaitlist }}</strong>
-      <p>等待后续服务通知</p>
+      <p>待跟进的候补提交者</p>
       <el-button class="waitlist-panel__button" @click="$emit('navigate', '/nxr/waitlist')">
         查看名单
         <el-icon class="el-icon--right"><ArrowRight /></el-icon>
@@ -19,7 +19,7 @@
         <h2>快捷操作</h2>
       </header>
       <button
-        v-for="action in actions"
+        v-for="action in visibleActions"
         :key="action.path"
         type="button"
         class="quick-action"
@@ -38,6 +38,7 @@
 
 <script setup>
 import { ArrowRight, Clock, Collection, Plus, ShoppingBag, UploadFilled, User } from '@element-plus/icons-vue'
+import auth from '@/plugins/auth'
 
 const props = defineProps({
   waitlistCount: { type: Number, default: 0 }
@@ -46,14 +47,17 @@ const props = defineProps({
 defineEmits(['navigate'])
 
 const formattedWaitlist = computed(() => new Intl.NumberFormat('zh-CN').format(props.waitlistCount || 0))
+const canViewWaitlist = computed(() => auth.hasPermi('nxr:waitlist:list'))
 
 const actions = [
-  { label: '录入卡片', detail: '新建或处理评级资料', path: '/nxr/entries', icon: Plus },
-  { label: '上传图片', detail: '导入卡片正反面图片', path: '/nxr/upload', icon: UploadFilled },
-  { label: '送评订单', detail: '处理付款与物流进度', path: '/nxr/orders', icon: ShoppingBag },
-  { label: '用户管理', detail: '查看账号与持卡记录', path: '/nxr/customers', icon: User },
-  { label: '品牌设置', detail: '维护品牌与显示名称', path: '/nxr/brands', icon: Collection }
+  { label: '新建卡牌', detail: '创建一条新的评级资料', path: '/nxr/cards/new-entry?mode=create', icon: Plus, permission: 'nxr:entry:add' },
+  { label: '卡图上传', detail: '导入正反面图片并发布证书', path: '/nxr/upload', icon: UploadFilled, permission: 'nxr:media:list' },
+  { label: '订单管理', detail: '处理送评订单、付款与物流', path: '/nxr/submissions/orders', icon: ShoppingBag, permission: 'nxr:order:list' },
+  { label: '客户管理', detail: '查看账号与持卡记录', path: '/nxr/customers', icon: User, permission: 'nxr:customer:list' },
+  { label: '品牌设置', detail: '维护品牌与显示名称', path: '/nxr/settings/brands', icon: Collection, permission: 'nxr:brand:list' }
 ]
+
+const visibleActions = computed(() => actions.filter((action) => auth.hasPermi(action.permission)))
 </script>
 
 <style scoped>

@@ -35,12 +35,14 @@ This new system must be developed in parallel with the current production codeba
   - grading orders now model payment confirmation, inbound logistics, receipt, grading/review milestones, return shipment, and delivery
   - staff can operate the order in RuoYi, confirm/reject payment, link an item to the existing grading submission workflow, and register logistics
   - payment provider callbacks have an idempotent endpoint but remain disabled until `NXR_PAYMENT_CALLBACK_TOKEN` is configured
+  - the eight-week fulfillment plan now covers address snapshots, language/quantity ordering, service and return-shipping pricing, payment sessions, packing slips, scan intake, exceptions, work tasks, final quality gates, tracking, tickets, shipping changes, adjustments, merchant CSV imports, audit logs, and granular operational roles
+  - exact plan mapping is recorded in `order-fulfillment-plan-status.md`; local startup, callback, pricing, backup, restore, and data-protection procedures are in `order-fulfillment-local-runbook.md`
 
 ### Local startup memory
 
 - Backend:
   - `bash ./nxr-scripts/dev-backend.sh`
-  - local profile, H2-backed, port `8088`
+  - local MySQL `nxr_ruoyi` + Redis, port `8088`; H2 is used only by isolated unit/workflow tests
 - Public frontend:
   - `bash ./nxr-scripts/dev-web.sh`
   - port `3000`

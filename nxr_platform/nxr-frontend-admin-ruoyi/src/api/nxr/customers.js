@@ -16,6 +16,14 @@ export function updateCustomerStatus(customerId, active) {
   })
 }
 
+export function updateCustomerType(customerId, accountTypeCode) {
+  return request({
+    url: `/api/admin/customers/${customerId}/type`,
+    method: 'put',
+    data: { accountTypeCode }
+  })
+}
+
 export function revokeCustomerSessions(customerId) {
   return request({
     url: `/api/admin/customers/${customerId}/sessions/revoke`,

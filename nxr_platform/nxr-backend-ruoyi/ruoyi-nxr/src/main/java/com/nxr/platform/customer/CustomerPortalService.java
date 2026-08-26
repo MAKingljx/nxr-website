@@ -1,5 +1,6 @@
 package com.nxr.platform.customer;
 
+import com.nxr.platform.shared.ProductTypePolicy;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
@@ -14,6 +15,7 @@ import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.core.simple.SimpleJdbcInsert;
@@ -28,22 +30,21 @@ public class CustomerPortalService {
     private static final Set<String> OWNERSHIP_VISIBILITIES = Set.of("public", "anonymous", "private");
     private static final Set<String> PAYMENT_PROVIDERS = Set.of("manual_transfer", "bank_transfer", "wechat_transfer", "alipay_transfer", "stripe");
     private static final Set<String> SHIPMENT_DIRECTIONS = Set.of("inbound", "outbound");
-    private static final Map<String, BigDecimal> SERVICE_PRICES = Map.of(
-        "standard", new BigDecimal("20.00"),
-        "express", new BigDecimal("35.00"),
-        "premium", new BigDecimal("50.00")
-    );
     private static final Map<String, Set<String>> ALLOWED_STATUS_TRANSITIONS = Map.ofEntries(
         Map.entry("awaiting_payment", Set.of("payment_review", "cancelled")),
         Map.entry("payment_review", Set.of("awaiting_inbound", "awaiting_payment", "cancelled")),
-        Map.entry("awaiting_inbound", Set.of("inbound_shipped", "received", "cancelled")),
-        Map.entry("inbound_shipped", Set.of("received", "cancelled")),
-        Map.entry("received", Set.of("grading", "review", "cancelled")),
+        Map.entry("awaiting_inbound", Set.of("inbound_shipped", "received", "intake_exception", "cancelled")),
+        Map.entry("inbound_shipped", Set.of("received", "intake_exception", "cancelled")),
+        Map.entry("intake_exception", Set.of("received", "cancelled")),
+        Map.entry("received", Set.of("grading", "review", "intake_exception", "cancelled")),
         Map.entry("grading", Set.of("review", "cancelled")),
-        Map.entry("review", Set.of("completed", "cancelled")),
+        Map.entry("review", Set.of("quality_check", "quality_hold", "completed", "cancelled")),
+        Map.entry("quality_check", Set.of("completed", "quality_hold", "cancelled")),
+        Map.entry("quality_hold", Set.of("quality_check", "review", "cancelled")),
         Map.entry("completed", Set.of("return_shipped")),
         Map.entry("return_shipped", Set.of("delivered")),
-        Map.entry("delivered", Set.of())
+        Map.entry("delivered", Set.of()),
+        Map.entry("cancelled", Set.of())
     );
 
     private final JdbcClient jdbcClient;
@@ -52,9 +53,20 @@ public class CustomerPortalService {
     private final SimpleJdbcInsert orderItemInsert;
     private final SimpleJdbcInsert paymentInsert;
     private final SimpleJdbcInsert shipmentInsert;
+    private final OrderFulfillmentService orderFulfillmentService;
 
     public CustomerPortalService(JdbcClient jdbcClient, JdbcTemplate jdbcTemplate) {
+        this(jdbcClient, jdbcTemplate, null);
+    }
+
+    @Autowired
+    public CustomerPortalService(
+        JdbcClient jdbcClient,
+        JdbcTemplate jdbcTemplate,
+        OrderFulfillmentService orderFulfillmentService
+    ) {
         this.jdbcClient = jdbcClient;
+        this.orderFulfillmentService = orderFulfillmentService;
         this.ownershipInsert = new SimpleJdbcInsert(jdbcTemplate)
             .withTableName("certificate_ownership")
             .usingColumns("cert_id", "active_cert_id", "customer_id", "ownership_status_code", "visibility_code", "note")
@@ -63,6 +75,7 @@ public class CustomerPortalService {
             .withTableName("grading_order")
             .usingColumns(
                 "order_no", "customer_id", "status_code", "service_level_code", "total_card_count",
+                "return_shipping_option_code", "return_shipping_option_name",
                 "service_fee", "return_shipping_fee", "total_amount", "currency_code", "contact_name",
                 "contact_phone", "return_address_line1", "return_address_line2", "return_city", "return_region",
                 "return_postal_code", "return_country", "customer_note"
@@ -76,11 +89,17 @@ public class CustomerPortalService {
             );
         this.paymentInsert = new SimpleJdbcInsert(jdbcTemplate)
             .withTableName("payment_record")
-            .usingColumns("order_id", "direction_code", "payment_type_code", "provider_code", "status_code", "amount", "currency_code")
+            .usingColumns(
+                "order_id", "direction_code", "payment_type_code", "payment_no", "provider_code", "status_code",
+                "amount", "currency_code", "payment_url", "qr_payload"
+            )
             .usingGeneratedKeyColumns("id");
         this.shipmentInsert = new SimpleJdbcInsert(jdbcTemplate)
             .withTableName("order_shipment")
-            .usingColumns("order_id", "direction_code", "carrier_name", "tracking_number", "status_code", "shipped_by_user_id", "note")
+            .usingColumns(
+                "order_id", "direction_code", "shipping_option_code", "shipping_option_name",
+                "carrier_name", "tracking_number", "status_code", "shipped_by_user_id", "note"
+            )
             .usingGeneratedKeyColumns("id");
     }
 
@@ -96,13 +115,16 @@ public class CustomerPortalService {
         return jdbcClient.sql(
                 """
                 SELECT o.cert_id, o.visibility_code, o.note, o.bound_at,
+                       COALESCE(NULLIF(s.product_type_code, ''), 'graded_card') AS product_type_code,
+                       s.vintage_classification_code,
+                       s.merch_description,
                        s.card_name, s.brand_name, s.year_label, s.set_name, s.card_number,
                        gs.final_grade_value, gs.final_grade_label,
                        front_media.public_url AS front_image_url
                 FROM certificate_ownership o
                 JOIN published_certificate pc ON UPPER(pc.cert_id) = UPPER(o.cert_id)
                 JOIN grading_submission s ON s.id = pc.submission_id
-                JOIN grading_score gs ON gs.submission_id = s.id
+                LEFT JOIN grading_score gs ON gs.submission_id = s.id
                 LEFT JOIN submission_media front_media ON front_media.id = pc.published_front_media_id
                 WHERE o.customer_id = :customerId
                   AND o.ownership_status_code = 'active'
@@ -112,6 +134,9 @@ public class CustomerPortalService {
             .param("customerId", customerId)
             .query((rs, rowNum) -> new CustomerCardResponse(
                 rs.getString("cert_id"),
+                ProductTypePolicy.normalizeStored(rs.getString("product_type_code")),
+                rs.getString("vintage_classification_code"),
+                rs.getString("merch_description"),
                 rs.getString("card_name"),
                 rs.getString("brand_name"),
                 rs.getString("year_label"),
@@ -202,19 +227,52 @@ public class CustomerPortalService {
 
     @Transactional
     public OrderDetailResponse createOrder(long customerId, CreateOrderRequest request) {
-        List<OrderItemRequest> requestedItems = request.items() == null ? List.of() : request.items();
+        if (request == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Grading order details are required");
+        }
+        OrderFulfillmentService fulfillment = requireFulfillmentService();
+        List<OrderItemRequest> requestedItems = resolveOrderItems(request);
         if (requestedItems.isEmpty() || requestedItems.size() > 30) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "An order must include between 1 and 30 cards");
         }
-        String serviceLevel = normalizeServiceLevel(request.serviceLevel());
-        String contactName = requireText(request.contactName(), "Contact name", 128);
-        String contactPhone = requireText(request.contactPhone(), "Contact phone", 64);
-        String addressLine1 = requireText(request.returnAddressLine1(), "Return address", 255);
-        String city = requireText(request.returnCity(), "Return city", 128);
-        String postalCode = requireText(request.returnPostalCode(), "Return postal code", 64);
-        String country = requireText(request.returnCountry(), "Return country", 128);
-        BigDecimal serviceFee = SERVICE_PRICES.get(serviceLevel).multiply(BigDecimal.valueOf(requestedItems.size()));
-        BigDecimal returnShippingFee = new BigDecimal("12.00");
+        String serviceLevel = "basic_grading";
+
+        OrderFulfillmentService.CustomerAddress savedAddress = request.returnAddressId() == null
+            ? null
+            : fulfillment.requireAddress(customerId, request.returnAddressId());
+        String contactName = savedAddress == null
+            ? requireText(request.contactName(), "Contact name", 128) : savedAddress.contactName();
+        String contactPhone = savedAddress == null
+            ? requireText(request.contactPhone(), "Contact phone", 64) : savedAddress.contactPhone();
+        String addressLine1 = savedAddress == null
+            ? requireText(request.returnAddressLine1(), "Return address", 255) : savedAddress.addressLine1();
+        String addressLine2 = savedAddress == null
+            ? blankToNull(clean(request.returnAddressLine2(), 255)) : savedAddress.addressLine2();
+        String city = savedAddress == null
+            ? requireText(request.returnCity(), "Return city", 128) : savedAddress.city();
+        String region = savedAddress == null
+            ? blankToNull(clean(request.returnRegion(), 128)) : savedAddress.region();
+        String postalCode = savedAddress == null
+            ? requireText(request.returnPostalCode(), "Return postal code", 64) : savedAddress.postalCode();
+        String country = savedAddress == null
+            ? requireText(request.returnCountry(), "Return country", 128) : savedAddress.country();
+
+        if (savedAddress == null && Boolean.TRUE.equals(request.saveReturnAddress())) {
+            fulfillment.saveAddress(customerId, null, new OrderFulfillmentService.AddressRequest(
+                "Return address", contactName, contactPhone, addressLine1, addressLine2,
+                city, region, postalCode, country, fulfillment.listAddresses(customerId).isEmpty()
+            ));
+        }
+
+        OrderFulfillmentService.ShippingOption shippingOption = selectShippingOption(
+            fulfillment, request.returnShippingOptionCode(), country
+        );
+        OrderFulfillmentService.ServicePrice servicePrice = fulfillment.activeServicePrice();
+        if (!servicePrice.currencyCode().equalsIgnoreCase(shippingOption.currencyCode())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Grading and return shipping currencies do not match");
+        }
+        BigDecimal serviceFee = servicePrice.unitPrice().multiply(BigDecimal.valueOf(requestedItems.size()));
+        BigDecimal returnShippingFee = shippingOption.priceAmount();
         BigDecimal totalAmount = serviceFee.add(returnShippingFee).setScale(2, RoundingMode.HALF_UP);
         String orderNo = generateOrderNumber();
 
@@ -223,17 +281,19 @@ public class CustomerPortalService {
         values.put("customer_id", customerId);
         values.put("status_code", "awaiting_payment");
         values.put("service_level_code", serviceLevel);
+        values.put("return_shipping_option_code", shippingOption.optionCode());
+        values.put("return_shipping_option_name", shippingOption.displayName());
         values.put("total_card_count", requestedItems.size());
         values.put("service_fee", serviceFee);
         values.put("return_shipping_fee", returnShippingFee);
         values.put("total_amount", totalAmount);
-        values.put("currency_code", "USD");
+        values.put("currency_code", servicePrice.currencyCode());
         values.put("contact_name", contactName);
         values.put("contact_phone", contactPhone);
         values.put("return_address_line1", addressLine1);
-        values.put("return_address_line2", blankToNull(clean(request.returnAddressLine2(), 255)));
+        values.put("return_address_line2", addressLine2);
         values.put("return_city", city);
-        values.put("return_region", blankToNull(clean(request.returnRegion(), 128)));
+        values.put("return_region", region);
         values.put("return_postal_code", postalCode);
         values.put("return_country", country);
         values.put("customer_note", blankToNull(clean(request.customerNote(), 2000)));
@@ -260,14 +320,18 @@ public class CustomerPortalService {
             orderItemInsert.execute(itemValues);
         }
 
+        String paymentNo = "PAY-" + orderNo;
         paymentInsert.execute(Map.of(
             "order_id", orderId,
             "direction_code", "receivable",
             "payment_type_code", "grading_fee",
+            "payment_no", paymentNo,
             "provider_code", "manual_transfer",
             "status_code", "pending",
             "amount", totalAmount,
-            "currency_code", "USD"
+            "currency_code", servicePrice.currencyCode(),
+            "payment_url", "/account/orders/" + orderNo + "#payment",
+            "qr_payload", "nxr://payment/" + paymentNo
         ));
         addTimelineEvent(orderId, "order_created", "Order created", "Your grading order is ready for payment.", "awaiting_payment", true, "customer", customerId, null);
         addTimelineEvent(orderId, "payment_pending", "Awaiting payment", "Submit a transfer reference after payment so our team can confirm it.", "awaiting_payment", true, "system", null, null);
@@ -313,6 +377,38 @@ public class CustomerPortalService {
     }
 
     @Transactional
+    public PaymentSessionResponse createPaymentSession(long customerId, String orderNo, PaymentSessionRequest request) {
+        OrderDetailResponse order = requireCustomerOrder(customerId, orderNo);
+        if (!Set.of("awaiting_payment", "payment_review").contains(order.statusCode())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "This order is not waiting for payment");
+        }
+        String provider = normalizePaymentProvider(request == null ? null : request.provider());
+        PaymentRecord payment = findReceivablePayment(order.id())
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Payment record not found"));
+        String paymentNo = payment.paymentNo() == null || payment.paymentNo().isBlank()
+            ? "PAY-" + order.orderNo() : payment.paymentNo();
+        String paymentUrl = "/account/orders/" + order.orderNo() + "?provider=" + provider + "#payment";
+        String qrPayload = "nxr://payment/" + provider + "/" + paymentNo;
+        jdbcClient.sql(
+                """
+                UPDATE payment_record
+                SET payment_no = :paymentNo, provider_code = :provider, payment_url = :paymentUrl,
+                    qr_payload = :qrPayload,
+                    status_code = CASE WHEN status_code = 'rejected' THEN 'pending' ELSE status_code END,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = :paymentId
+                """
+            )
+            .param("paymentNo", paymentNo)
+            .param("provider", provider)
+            .param("paymentUrl", paymentUrl)
+            .param("qrPayload", qrPayload)
+            .param("paymentId", payment.id())
+            .update();
+        return new PaymentSessionResponse(payment.id(), paymentNo, provider, paymentUrl, qrPayload, payment.amount(), payment.currencyCode());
+    }
+
+    @Transactional
     public OrderDetailResponse addInboundShipment(long customerId, String orderNo, CreateShipmentRequest request) {
         OrderDetailResponse order = requireCustomerOrder(customerId, orderNo);
         if (!Set.of("awaiting_inbound", "inbound_shipped").contains(order.statusCode())) {
@@ -323,6 +419,8 @@ public class CustomerPortalService {
         Map<String, Object> shipmentValues = new LinkedHashMap<>();
         shipmentValues.put("order_id", order.id());
         shipmentValues.put("direction_code", "inbound");
+        shipmentValues.put("shipping_option_code", null);
+        shipmentValues.put("shipping_option_name", null);
         shipmentValues.put("carrier_name", carrier);
         shipmentValues.put("tracking_number", tracking);
         shipmentValues.put("status_code", "shipped");
@@ -366,6 +464,7 @@ public class CustomerPortalService {
             .param("paymentId", paymentId)
             .update();
         updateOrderStatus(order.id(), "awaiting_inbound", "Payment confirmed", "Payment has been confirmed. Please send your cards to NXR and add inbound tracking.", true, "admin", null, adminUserId, false);
+        requireFulfillmentService().ensureIntakeCodes(order.id());
         return requireAdminOrder(orderId);
     }
 
@@ -411,6 +510,7 @@ public class CustomerPortalService {
         String targetStatus;
         String title;
         String detail;
+        OrderFulfillmentService.EffectiveShippingOption outboundOption = null;
         if (direction.equals("inbound")) {
             if (!Set.of("awaiting_inbound", "inbound_shipped").contains(order.statusCode())) {
                 throw new ResponseStatusException(HttpStatus.CONFLICT, "Inbound cards can only be received after payment confirmation");
@@ -419,9 +519,7 @@ public class CustomerPortalService {
             title = "Cards received";
             detail = "NXR received the inbound shipment from " + carrier + ".";
         } else {
-            if (!order.statusCode().equals("completed")) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "Return shipment can be created after grading is completed");
-            }
+            outboundOption = requireFulfillmentService().assertOutboundReady(order.id());
             targetStatus = "return_shipped";
             title = "Return shipment sent";
             detail = carrier + " tracking: " + tracking;
@@ -462,6 +560,8 @@ public class CustomerPortalService {
             Map<String, Object> shipmentValues = new LinkedHashMap<>();
             shipmentValues.put("order_id", order.id());
             shipmentValues.put("direction_code", direction);
+            shipmentValues.put("shipping_option_code", outboundOption == null ? null : outboundOption.optionCode());
+            shipmentValues.put("shipping_option_name", outboundOption == null ? null : outboundOption.displayName());
             shipmentValues.put("carrier_name", carrier);
             shipmentValues.put("tracking_number", tracking);
             shipmentValues.put("status_code", direction.equals("inbound") ? "received" : "shipped");
@@ -477,6 +577,7 @@ public class CustomerPortalService {
             jdbcClient.sql("UPDATE grading_order_item SET status_code = 'return_shipped', updated_at = CURRENT_TIMESTAMP WHERE order_id = :orderId")
                 .param("orderId", order.id())
                 .update();
+            requireFulfillmentService().markShippingLabelCreated(order.id());
         }
         updateOrderStatus(order.id(), targetStatus, title, detail, true, "admin", null, adminUserId, true);
         addTimelineEvent(order.id(), "shipment_created", direction.equals("inbound") ? "Inbound shipment received" : "Shipment recorded", "Shipment #" + shipmentId + " was recorded.", targetStatus, false, "admin", null, adminUserId);
@@ -536,6 +637,7 @@ public class CustomerPortalService {
         } else {
             addTimelineEvent(order.id(), "grading_submission_linked", "Grading work linked", "A grading work record has been linked to an order item.", "grading", true, "admin", null, adminUserId);
         }
+        requireFulfillmentService().ensureReviewAndEncapsulationTasks(order.id(), itemId);
         return requireAdminOrder(orderId);
     }
 
@@ -544,20 +646,30 @@ public class CustomerPortalService {
         String normalizedProvider = normalizePaymentProvider(provider);
         String eventId = requireText(request.providerEventId(), "Provider event id", 255);
         String transactionId = requireText(request.providerTransactionId(), "Provider transaction id", 255);
+        String paymentNo = clean(request.paymentNo(), 48).toUpperCase(Locale.ROOT);
         PaymentRecord payment = jdbcClient.sql(
                 """
-                SELECT id, order_id, direction_code, payment_type_code, provider_code, method_label, status_code,
-                       amount, currency_code, payer_reference, proof_reference, provider_transaction_id,
+                SELECT id, order_id, direction_code, payment_type_code, payment_no, provider_code, method_label, status_code,
+                       amount, currency_code, payer_reference, proof_reference, payment_url, qr_payload, provider_transaction_id,
                        confirmed_by_user_id, submitted_at, confirmed_at, callback_received_at, note, created_at
                 FROM payment_record
-                WHERE provider_code = :provider AND provider_transaction_id = :transactionId
+                WHERE provider_code = :provider
+                  AND ((:paymentNo <> '' AND UPPER(payment_no) = :paymentNo)
+                       OR (:paymentNo = '' AND provider_transaction_id = :transactionId))
                 """
             )
             .param("provider", normalizedProvider)
+            .param("paymentNo", paymentNo)
             .param("transactionId", transactionId)
             .query((rs, rowNum) -> mapPayment(rs))
             .optional()
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Payment transaction not found"));
+        if (request.amount() == null || payment.amount().compareTo(request.amount().setScale(2, RoundingMode.HALF_UP)) != 0) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Payment callback amount does not match");
+        }
+        if (!payment.currencyCode().equalsIgnoreCase(clean(request.currencyCode(), 8))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Payment callback currency does not match");
+        }
         try {
             jdbcClient.sql(
                     """
@@ -580,16 +692,19 @@ public class CustomerPortalService {
                     """
                     UPDATE payment_record
                     SET status_code = 'confirmed', callback_received_at = CURRENT_TIMESTAMP,
-                        callback_payload = :payload, confirmed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                        callback_payload = :payload, provider_transaction_id = :transactionId,
+                        confirmed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
                     WHERE id = :paymentId
                     """
                 )
                 .param("payload", clean(request.rawPayload(), 20000))
+                .param("transactionId", transactionId)
                 .param("paymentId", payment.id())
                 .update();
             OrderDetailResponse order = requireAdminOrder(payment.orderId());
             if (Set.of("awaiting_payment", "payment_review").contains(order.statusCode())) {
                 updateOrderStatus(order.id(), "awaiting_inbound", "Payment confirmed", "A verified payment callback was received.", true, "payment_callback", null, null, false);
+                requireFulfillmentService().ensureIntakeCodes(order.id());
             }
         } else {
             jdbcClient.sql(
@@ -636,7 +751,8 @@ public class CustomerPortalService {
             .single();
         List<OrderListItem> items = jdbcClient.sql(
                 """
-                SELECT o.id, o.order_no, o.status_code, o.service_level_code, o.total_card_count,
+                SELECT o.id, o.order_no, o.status_code, o.service_level_code,
+                       o.return_shipping_option_code, o.return_shipping_option_name, o.total_card_count,
                        o.total_amount, o.currency_code, o.created_at, o.updated_at,
                        c.id AS customer_id, c.email AS customer_email, c.display_name AS customer_display_name
                 FROM grading_order o
@@ -673,10 +789,12 @@ public class CustomerPortalService {
         return jdbcClient.sql(
                 """
                 SELECT o.id, o.order_no, o.status_code, o.service_level_code, o.total_card_count,
+                       o.return_shipping_option_code, o.return_shipping_option_name,
                        o.service_fee, o.return_shipping_fee, o.total_amount, o.currency_code,
                        o.contact_name, o.contact_phone, o.return_address_line1, o.return_address_line2,
                        o.return_city, o.return_region, o.return_postal_code, o.return_country,
-                       o.customer_note, o.internal_note, o.created_at, o.updated_at,
+                       o.customer_note, o.internal_note, o.intake_code, o.packing_slip_code,
+                       o.shipping_label_created_at, o.created_at, o.updated_at,
                        c.id AS customer_id, c.email AS customer_email, c.display_name AS customer_display_name
                 FROM grading_order o
                 JOIN customer_account c ON c.id = o.customer_id
@@ -688,6 +806,8 @@ public class CustomerPortalService {
                 rs.getString("order_no"),
                 rs.getString("status_code"),
                 rs.getString("service_level_code"),
+                rs.getString("return_shipping_option_code"),
+                rs.getString("return_shipping_option_name"),
                 rs.getInt("total_card_count"),
                 rs.getBigDecimal("service_fee"),
                 rs.getBigDecimal("return_shipping_fee"),
@@ -703,6 +823,9 @@ public class CustomerPortalService {
                 rs.getString("return_country"),
                 rs.getString("customer_note"),
                 rs.getString("internal_note"),
+                rs.getString("intake_code"),
+                rs.getString("packing_slip_code"),
+                rs.getObject("shipping_label_created_at", LocalDateTime.class),
                 new CustomerReference(rs.getLong("customer_id"), rs.getString("customer_email"), rs.getString("customer_display_name")),
                 rs.getObject("created_at", LocalDateTime.class),
                 rs.getObject("updated_at", LocalDateTime.class),
@@ -714,11 +837,13 @@ public class CustomerPortalService {
 
     private OrderDetailResponse withOrderRelations(OrderDetailResponse base) {
         return new OrderDetailResponse(
-            base.id(), base.orderNo(), base.statusCode(), base.serviceLevelCode(), base.totalCardCount(),
+            base.id(), base.orderNo(), base.statusCode(), base.serviceLevelCode(),
+            base.returnShippingOptionCode(), base.returnShippingOptionName(), base.totalCardCount(),
             base.serviceFee(), base.returnShippingFee(), base.totalAmount(), base.currencyCode(),
             base.contactName(), base.contactPhone(), base.returnAddressLine1(), base.returnAddressLine2(),
             base.returnCity(), base.returnRegion(), base.returnPostalCode(), base.returnCountry(),
-            base.customerNote(), base.internalNote(), base.customer(), base.createdAt(), base.updatedAt(),
+            base.customerNote(), base.internalNote(), base.intakeCode(), base.packingSlipCode(), base.shippingLabelCreatedAt(),
+            base.customer(), base.createdAt(), base.updatedAt(),
             listOrderItems(base.id()), listPayments(base.id()), listShipments(base.id()), listTimeline(base.id())
         );
     }
@@ -748,8 +873,8 @@ public class CustomerPortalService {
     private List<PaymentRecord> listPayments(long orderId) {
         return jdbcClient.sql(
                 """
-                SELECT id, order_id, direction_code, payment_type_code, provider_code, method_label, status_code,
-                       amount, currency_code, payer_reference, proof_reference, provider_transaction_id,
+                SELECT id, order_id, direction_code, payment_type_code, payment_no, provider_code, method_label, status_code,
+                       amount, currency_code, payer_reference, proof_reference, payment_url, qr_payload, provider_transaction_id,
                        confirmed_by_user_id, submitted_at, confirmed_at, callback_received_at, note, created_at
                 FROM payment_record
                 WHERE order_id = :orderId
@@ -764,7 +889,8 @@ public class CustomerPortalService {
     private List<ShipmentRecord> listShipments(long orderId) {
         return jdbcClient.sql(
                 """
-                SELECT id, order_id, direction_code, carrier_name, tracking_number, status_code,
+                SELECT id, order_id, direction_code, shipping_option_code, shipping_option_name,
+                       carrier_name, tracking_number, status_code,
                        shipped_by_user_id, shipped_at, delivered_at, note
                 FROM order_shipment
                 WHERE order_id = :orderId
@@ -773,7 +899,8 @@ public class CustomerPortalService {
             )
             .param("orderId", orderId)
             .query((rs, rowNum) -> new ShipmentRecord(
-                rs.getLong("id"), rs.getLong("order_id"), rs.getString("direction_code"), rs.getString("carrier_name"),
+                rs.getLong("id"), rs.getLong("order_id"), rs.getString("direction_code"),
+                rs.getString("shipping_option_code"), rs.getString("shipping_option_name"), rs.getString("carrier_name"),
                 rs.getString("tracking_number"), rs.getString("status_code"), rs.getObject("shipped_by_user_id", Long.class),
                 rs.getObject("shipped_at", LocalDateTime.class), rs.getObject("delivered_at", LocalDateTime.class), rs.getString("note")
             ))
@@ -801,8 +928,8 @@ public class CustomerPortalService {
     private Optional<PaymentRecord> findReceivablePayment(long orderId) {
         return jdbcClient.sql(
                 """
-                SELECT id, order_id, direction_code, payment_type_code, provider_code, method_label, status_code,
-                       amount, currency_code, payer_reference, proof_reference, provider_transaction_id,
+                SELECT id, order_id, direction_code, payment_type_code, payment_no, provider_code, method_label, status_code,
+                       amount, currency_code, payer_reference, proof_reference, payment_url, qr_payload, provider_transaction_id,
                        confirmed_by_user_id, submitted_at, confirmed_at, callback_received_at, note, created_at
                 FROM payment_record
                 WHERE order_id = :orderId AND direction_code = 'receivable'
@@ -817,8 +944,8 @@ public class CustomerPortalService {
     private PaymentRecord requireOrderPayment(long orderId, long paymentId) {
         return jdbcClient.sql(
                 """
-                SELECT id, order_id, direction_code, payment_type_code, provider_code, method_label, status_code,
-                       amount, currency_code, payer_reference, proof_reference, provider_transaction_id,
+                SELECT id, order_id, direction_code, payment_type_code, payment_no, provider_code, method_label, status_code,
+                       amount, currency_code, payer_reference, proof_reference, payment_url, qr_payload, provider_transaction_id,
                        confirmed_by_user_id, submitted_at, confirmed_at, callback_received_at, note, created_at
                 FROM payment_record WHERE id = :paymentId AND order_id = :orderId
                 """
@@ -833,7 +960,8 @@ public class CustomerPortalService {
     private ShipmentRecord requireOrderShipment(long orderId, long shipmentId) {
         return jdbcClient.sql(
                 """
-                SELECT id, order_id, direction_code, carrier_name, tracking_number, status_code,
+                SELECT id, order_id, direction_code, shipping_option_code, shipping_option_name,
+                       carrier_name, tracking_number, status_code,
                        shipped_by_user_id, shipped_at, delivered_at, note
                 FROM order_shipment WHERE id = :shipmentId AND order_id = :orderId
                 """
@@ -841,7 +969,8 @@ public class CustomerPortalService {
             .param("shipmentId", shipmentId)
             .param("orderId", orderId)
             .query((rs, rowNum) -> new ShipmentRecord(
-                rs.getLong("id"), rs.getLong("order_id"), rs.getString("direction_code"), rs.getString("carrier_name"),
+                rs.getLong("id"), rs.getLong("order_id"), rs.getString("direction_code"),
+                rs.getString("shipping_option_code"), rs.getString("shipping_option_name"), rs.getString("carrier_name"),
                 rs.getString("tracking_number"), rs.getString("status_code"), rs.getObject("shipped_by_user_id", Long.class),
                 rs.getObject("shipped_at", LocalDateTime.class), rs.getObject("delivered_at", LocalDateTime.class), rs.getString("note")
             ))
@@ -852,8 +981,8 @@ public class CustomerPortalService {
     private static PaymentRecord mapPayment(java.sql.ResultSet rs) throws java.sql.SQLException {
         return new PaymentRecord(
             rs.getLong("id"), rs.getLong("order_id"), rs.getString("direction_code"), rs.getString("payment_type_code"),
-            rs.getString("provider_code"), rs.getString("method_label"), rs.getString("status_code"), rs.getBigDecimal("amount"),
-            rs.getString("currency_code"), rs.getString("payer_reference"), rs.getString("proof_reference"),
+            rs.getString("payment_no"), rs.getString("provider_code"), rs.getString("method_label"), rs.getString("status_code"), rs.getBigDecimal("amount"),
+            rs.getString("currency_code"), rs.getString("payer_reference"), rs.getString("proof_reference"), rs.getString("payment_url"), rs.getString("qr_payload"),
             rs.getString("provider_transaction_id"), rs.getObject("confirmed_by_user_id", Long.class),
             rs.getObject("submitted_at", LocalDateTime.class), rs.getObject("confirmed_at", LocalDateTime.class),
             rs.getObject("callback_received_at", LocalDateTime.class), rs.getString("note"), rs.getObject("created_at", LocalDateTime.class)
@@ -1032,9 +1161,47 @@ public class CustomerPortalService {
         return OWNERSHIP_VISIBILITIES.contains(visibility) ? visibility : "public";
     }
 
-    private static String normalizeServiceLevel(String value) {
-        String serviceLevel = clean(value, 32).toLowerCase(Locale.ROOT);
-        return SERVICE_PRICES.containsKey(serviceLevel) ? serviceLevel : "standard";
+    private static List<OrderItemRequest> resolveOrderItems(CreateOrderRequest request) {
+        List<LanguageGroupRequest> groups = request.languageGroups() == null ? List.of() : request.languageGroups();
+        if (!groups.isEmpty()) {
+            List<OrderItemRequest> items = new ArrayList<>();
+            for (LanguageGroupRequest group : groups) {
+                String languageCode = requireText(group.languageCode(), "Card language", 32).toUpperCase(Locale.ROOT);
+                int quantity = group.quantity() == null ? 0 : group.quantity();
+                if (quantity < 1 || quantity > 30) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Each language quantity must be between 1 and 30");
+                }
+                for (int index = 0; index < quantity; index += 1) {
+                    if (items.size() >= 30) {
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "An order cannot include more than 30 cards");
+                    }
+                    items.add(new OrderItemRequest(
+                        languageCode + " card " + (index + 1), null, null, null, languageCode, null, null
+                    ));
+                }
+            }
+            return items;
+        }
+        return request.items() == null ? List.of() : request.items();
+    }
+
+    private static OrderFulfillmentService.ShippingOption selectShippingOption(
+        OrderFulfillmentService fulfillment,
+        String requestedCode,
+        String country
+    ) {
+        if (requestedCode != null && !requestedCode.isBlank()) {
+            return fulfillment.requireShippingOption(requestedCode, country);
+        }
+        return fulfillment.listShippingOptions(country, false).stream().findFirst()
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "No return shipping option is available for this address"));
+    }
+
+    private OrderFulfillmentService requireFulfillmentService() {
+        if (orderFulfillmentService == null) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Order fulfillment service is unavailable");
+        }
+        return orderFulfillmentService;
     }
 
     private static String normalizePaymentProvider(String value) {
@@ -1108,8 +1275,11 @@ public class CustomerPortalService {
             case "awaiting_inbound" -> "Awaiting inbound shipment";
             case "inbound_shipped" -> "Cards shipped to NXR";
             case "received" -> "Cards received";
+            case "intake_exception" -> "Warehouse intake needs review";
             case "grading" -> "Grading in progress";
             case "review" -> "Final review";
+            case "quality_check" -> "Final quality check";
+            case "quality_hold" -> "Quality rework required";
             case "completed" -> "Grading completed";
             case "return_shipped" -> "Return shipment sent";
             case "delivered" -> "Order delivered";
@@ -1153,6 +1323,9 @@ public class CustomerPortalService {
 
     public record CustomerCardResponse(
         String certId,
+        String productType,
+        String vintageClassification,
+        String merchDescription,
         String cardName,
         String brandName,
         String yearLabel,
@@ -1169,6 +1342,9 @@ public class CustomerPortalService {
 
     public record CreateOrderRequest(
         String serviceLevel,
+        Long returnAddressId,
+        Boolean saveReturnAddress,
+        String returnShippingOptionCode,
         String contactName,
         String contactPhone,
         String returnAddressLine1,
@@ -1178,8 +1354,12 @@ public class CustomerPortalService {
         String returnPostalCode,
         String returnCountry,
         String customerNote,
+        List<LanguageGroupRequest> languageGroups,
         List<OrderItemRequest> items
     ) {
+    }
+
+    public record LanguageGroupRequest(String languageCode, Integer quantity) {
     }
 
     public record OrderItemRequest(
@@ -1196,6 +1376,20 @@ public class CustomerPortalService {
     public record SubmitPaymentProofRequest(String provider, String payerReference, String proofReference) {
     }
 
+    public record PaymentSessionRequest(String provider) {
+    }
+
+    public record PaymentSessionResponse(
+        long paymentId,
+        String paymentNo,
+        String provider,
+        String paymentUrl,
+        String qrPayload,
+        BigDecimal amount,
+        String currencyCode
+    ) {
+    }
+
     public record ConfirmPaymentRequest(String providerTransactionId, String note) {
     }
 
@@ -1210,7 +1404,10 @@ public class CustomerPortalService {
 
     public record PaymentCallbackRequest(
         String providerEventId,
+        String paymentNo,
         String providerTransactionId,
+        BigDecimal amount,
+        String currencyCode,
         String status,
         String rawPayload
     ) {
@@ -1241,6 +1438,8 @@ public class CustomerPortalService {
         String orderNo,
         String statusCode,
         String serviceLevelCode,
+        String returnShippingOptionCode,
+        String returnShippingOptionName,
         int totalCardCount,
         BigDecimal serviceFee,
         BigDecimal returnShippingFee,
@@ -1256,6 +1455,9 @@ public class CustomerPortalService {
         String returnCountry,
         String customerNote,
         String internalNote,
+        String intakeCode,
+        String packingSlipCode,
+        LocalDateTime shippingLabelCreatedAt,
         CustomerReference customer,
         LocalDateTime createdAt,
         LocalDateTime updatedAt,
@@ -1291,6 +1493,7 @@ public class CustomerPortalService {
         long orderId,
         String directionCode,
         String paymentTypeCode,
+        String paymentNo,
         String providerCode,
         String methodLabel,
         String statusCode,
@@ -1298,6 +1501,8 @@ public class CustomerPortalService {
         String currencyCode,
         String payerReference,
         String proofReference,
+        String paymentUrl,
+        String qrPayload,
         String providerTransactionId,
         Long confirmedByUserId,
         LocalDateTime submittedAt,
@@ -1312,6 +1517,8 @@ public class CustomerPortalService {
         long id,
         long orderId,
         String directionCode,
+        String shippingOptionCode,
+        String shippingOptionName,
         String carrierName,
         String trackingNumber,
         String statusCode,

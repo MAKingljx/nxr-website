@@ -1,0 +1,222 @@
+.psdw-workbench {
+  --psdw-color-surface: #ffffff;
+  --psdw-color-subtle: #f6f8fb;
+  --psdw-color-text: #17202a;
+  --psdw-color-muted: #667085;
+  --psdw-color-border: #dde3eb;
+  --psdw-color-primary: #2855d9;
+  --psdw-color-primary-soft: #eef2ff;
+  --psdw-color-danger: #b42332;
+  --psdw-color-danger-soft: #fff1f2;
+  --psdw-radius: 10px;
+  --psdw-font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--psdw-color-text);
+  font-family: var(--psdw-font-family);
+  background: var(--psdw-color-surface);
+  border: 1px solid var(--psdw-color-border);
+  border-radius: calc(var(--psdw-radius) + 2px);
+}
+
+.psdw-workbench *,
+.psdw-workbench *::before,
+.psdw-workbench *::after {
+  box-sizing: border-box;
+}
+
+.psdw-workbench :is(button, input, select) {
+  font: inherit;
+}
+
+.psdw-workbench :is(button, input, select):focus-visible {
+  outline: 3px solid rgb(40 85 217 / 24%);
+  outline-offset: 2px;
+}
+
+.psdw-filters {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  padding: 16px;
+  background: var(--psdw-color-subtle);
+  border-bottom: 1px solid var(--psdw-color-border);
+}
+
+.psdw-filter-fields {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+}
+
+.psdw-filter-actions,
+.psdw-toolbar,
+.psdw-pagination,
+.psdw-page-size {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.psdw-filter-actions {
+  flex: 0 0 auto;
+}
+
+.psdw-button,
+.psdw-page-button,
+.psdw-page-size select {
+  min-height: 38px;
+  border: 1px solid var(--psdw-color-border);
+  border-radius: var(--psdw-radius);
+}
+
+.psdw-button,
+.psdw-page-button {
+  padding: 0 14px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.psdw-button:disabled,
+.psdw-page-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.psdw-button-primary {
+  color: #ffffff;
+  background: var(--psdw-color-primary);
+  border-color: var(--psdw-color-primary);
+}
+
+.psdw-button-secondary,
+.psdw-page-button {
+  color: var(--psdw-color-primary);
+  background: var(--psdw-color-primary-soft);
+}
+
+.psdw-toolbar {
+  justify-content: flex-end;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--psdw-color-border);
+}
+
+.psdw-content {
+  min-height: 180px;
+  padding: 16px;
+}
+
+.psdw-state {
+  display: flex;
+  min-height: 148px;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  color: var(--psdw-color-muted);
+  text-align: center;
+  background: var(--psdw-color-subtle);
+  border: 1px dashed var(--psdw-color-border);
+  border-radius: var(--psdw-radius);
+}
+
+.psdw-state h2 {
+  margin: 0;
+  color: var(--psdw-color-text);
+  font-size: 17px;
+}
+
+.psdw-state p {
+  margin: 5px 0 0;
+  font-size: 14px;
+}
+
+.psdw-state-error {
+  color: var(--psdw-color-danger);
+  background: var(--psdw-color-danger-soft);
+  border-color: rgb(180 35 50 / 25%);
+}
+
+.psdw-spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid var(--psdw-color-border);
+  border-top-color: var(--psdw-color-primary);
+  border-radius: 50%;
+  animation: psdw-spin 700ms linear infinite;
+}
+
+.psdw-pagination-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+  color: var(--psdw-color-muted);
+  font-size: 13px;
+  border-top: 1px solid var(--psdw-color-border);
+}
+
+.psdw-page-size label {
+  white-space: nowrap;
+}
+
+.psdw-page-size select {
+  min-width: 74px;
+  padding: 0 28px 0 10px;
+  color: var(--psdw-color-text);
+  background: var(--psdw-color-surface);
+}
+
+.psdw-page-button {
+  min-width: 38px;
+  padding: 0 10px;
+}
+
+.psdw-current-page {
+  min-width: 76px;
+  color: var(--psdw-color-text);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.psdw-footer {
+  padding: 12px 16px;
+  border-top: 1px solid var(--psdw-color-border);
+}
+
+@keyframes psdw-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .psdw-spinner { animation: none; }
+}
+
+@media (max-width: 680px) {
+  .psdw-filters {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .psdw-filter-actions > * {
+    flex: 1 1 0;
+  }
+
+  .psdw-pagination-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .psdw-pagination-summary,
+  .psdw-page-size,
+  .psdw-pagination {
+    justify-content: center;
+    text-align: center;
+  }
+}

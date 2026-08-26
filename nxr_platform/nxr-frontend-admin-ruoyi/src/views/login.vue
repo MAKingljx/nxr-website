@@ -1,66 +1,105 @@
 <template>
-  <div class="login">
-    <el-form ref="loginRef" :model="loginForm" :rules="loginRules" class="login-form">
-      <h3 class="title">{{ title }}</h3>
-      <el-form-item prop="username">
-        <el-input
-          v-model="loginForm.username"
-          type="text"
-          size="large"
-          auto-complete="off"
-          placeholder="账号"
-        >
-          <template #prefix><svg-icon icon-class="user" class="el-input__icon input-icon" /></template>
-        </el-input>
-      </el-form-item>
-      <el-form-item prop="password">
-        <el-input
-          v-model="loginForm.password"
-          type="password"
-          size="large"
-          auto-complete="off"
-          placeholder="密码"
-          @keyup.enter="handleLogin"
-        >
-          <template #prefix><svg-icon icon-class="password" class="el-input__icon input-icon" /></template>
-        </el-input>
-      </el-form-item>
-      <el-form-item prop="code" v-if="captchaEnabled">
-        <el-input
-          v-model="loginForm.code"
-          size="large"
-          auto-complete="off"
-          placeholder="验证码"
-          style="width: 63%"
-          @keyup.enter="handleLogin"
-        >
-          <template #prefix><svg-icon icon-class="validCode" class="el-input__icon input-icon" /></template>
-        </el-input>
-        <div class="login-code">
-          <img :src="codeUrl" @click="getCode" class="login-code-img"/>
+  <div class="login-page">
+    <div class="login-shell">
+      <section class="brand-stage" aria-label="NXR Grading">
+        <div class="brand-lockup">
+          <img :src="nxrLogo" alt="NXR" class="brand-logo" />
+          <div>
+            <strong>NXR GRADING</strong>
+          </div>
         </div>
-      </el-form-item>
-      <el-checkbox v-model="loginForm.rememberMe" style="margin:0px 0px 25px 0px;">记住密码</el-checkbox>
-      <el-form-item style="width:100%;">
-        <el-button
-          :loading="loading"
-          size="large"
-          type="primary"
-          style="width:100%;"
-          @click.prevent="handleLogin"
-        >
-          <span v-if="!loading">登 录</span>
-          <span v-else>登 录 中...</span>
-        </el-button>
-        <div style="float: right;" v-if="register">
-          <router-link class="link-type" :to="'/register'">立即注册</router-link>
-        </div>
-      </el-form-item>
-    </el-form>
-    <!--  底部  -->
-    <div class="el-login-footer">
-      <span>{{ footerContent }}</span>
+      </section>
+
+      <section class="login-panel" aria-labelledby="login-title">
+        <header class="login-heading">
+          <h2 id="login-title">管理员登录</h2>
+        </header>
+
+        <el-form ref="loginRef" :model="loginForm" :rules="loginRules" class="login-form">
+          <div class="field-group">
+            <label class="field-label" for="login-username">账号</label>
+            <el-form-item prop="username">
+              <el-input
+                id="login-username"
+                v-model="loginForm.username"
+                type="text"
+                size="large"
+                autocomplete="username"
+                placeholder="请输入账号"
+                clearable
+              >
+                <template #prefix>
+                  <svg-icon icon-class="user" class="input-icon" />
+                </template>
+              </el-input>
+            </el-form-item>
+          </div>
+
+          <div class="field-group">
+            <label class="field-label" for="login-password">密码</label>
+            <el-form-item prop="password">
+              <el-input
+                id="login-password"
+                v-model="loginForm.password"
+                type="password"
+                size="large"
+                autocomplete="current-password"
+                placeholder="请输入密码"
+                show-password
+                @keyup.enter="handleLogin"
+              >
+                <template #prefix>
+                  <svg-icon icon-class="password" class="input-icon" />
+                </template>
+              </el-input>
+            </el-form-item>
+          </div>
+
+          <div v-if="captchaEnabled" class="field-group">
+            <label class="field-label" for="login-code">验证码</label>
+            <el-form-item prop="code">
+              <div class="captcha-row">
+                <el-input
+                  id="login-code"
+                  v-model="loginForm.code"
+                  size="large"
+                  autocomplete="off"
+                  placeholder="请输入验证码"
+                  @keyup.enter="handleLogin"
+                >
+                  <template #prefix>
+                    <svg-icon icon-class="validCode" class="input-icon" />
+                  </template>
+                </el-input>
+                <button class="captcha-button" type="button" aria-label="刷新验证码" @click="getCode">
+                  <img :src="codeUrl" alt="验证码" />
+                </button>
+              </div>
+            </el-form-item>
+          </div>
+
+          <div class="form-options">
+            <el-checkbox v-model="loginForm.rememberMe">记住密码</el-checkbox>
+            <router-link v-if="register" class="register-link" :to="'/register'">立即注册</router-link>
+          </div>
+
+          <el-form-item class="submit-item">
+            <el-button
+              :loading="loading"
+              size="large"
+              type="primary"
+              class="login-button"
+              @click.prevent="handleLogin"
+            >
+              <span>{{ loading ? "登录中..." : "登录" }}</span>
+              <el-icon v-if="!loading"><ArrowRight /></el-icon>
+            </el-button>
+          </el-form-item>
+        </el-form>
+      </section>
     </div>
+
+    <footer class="login-footer">{{ footerContent }}</footer>
   </div>
 </template>
 
@@ -70,8 +109,9 @@ import Cookies from "js-cookie"
 import { encrypt, decrypt } from "@/utils/jsencrypt"
 import useUserStore from '@/store/modules/user'
 import defaultSettings from '@/settings'
+import { ArrowRight } from '@element-plus/icons-vue'
+import nxrLogo from '@/assets/logo/nxr-logo-circle.png'
 
-const title = import.meta.env.VITE_APP_TITLE
 const footerContent = defaultSettings.footerContent
 const userStore = useUserStore()
 const route = useRoute()
@@ -165,75 +205,370 @@ getCode()
 getCookie()
 </script>
 
-<style lang='scss' scoped>
-.login {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 100%;
-  background-image: url("../assets/images/login-background.jpg");
+<style lang="scss" scoped>
+.login-page {
+  --auth-panel: rgba(249, 250, 252, 0.96);
+  --auth-panel-border: rgba(255, 255, 255, 0.52);
+  --auth-text: #171b22;
+  --auth-muted: #68707d;
+  --auth-border: #d9dee6;
+  --auth-field: #ffffff;
+  --auth-field-hover: #c3cad5;
+  position: relative;
+  min-height: 100dvh;
+  overflow: hidden;
+  background-color: #0b0e14;
+  background-image: url("../assets/images/login-background-nxr.webp");
+  background-repeat: no-repeat;
+  background-position: center;
   background-size: cover;
+  color: #ffffff;
 }
-.title {
-  margin: 0px auto 30px auto;
-  text-align: center;
-  color: #707070;
+
+.login-page::before {
+  position: absolute;
+  inset: 0;
+  background: rgba(5, 8, 13, 0.14);
+  content: "";
+}
+
+.login-shell {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(300px, 1fr) minmax(360px, 424px);
+  align-items: center;
+  gap: clamp(48px, 8vw, 128px);
+  width: min(1320px, calc(100% - 96px));
+  min-height: calc(100dvh - 76px);
+  margin: 0 auto;
+  padding: 44px 0 28px;
+}
+
+.brand-stage {
+  align-self: stretch;
+  min-width: 0;
+  padding: 10px 0;
+}
+
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.brand-logo {
+  width: 54px;
+  height: 54px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 50%;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
+}
+
+.brand-lockup div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.brand-lockup strong {
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.login-panel {
+  width: 100%;
+  padding: 38px 38px 28px;
+  border: 1px solid var(--auth-panel-border);
+  border-radius: 8px;
+  background: var(--auth-panel);
+  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.34);
+  color: var(--auth-text);
+  backdrop-filter: blur(18px);
+}
+
+.login-heading {
+  margin-bottom: 30px;
+}
+
+.login-heading h2 {
+  margin: 0;
+  color: var(--auth-text);
+  font-size: 27px;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: 0;
 }
 
 .login-form {
-  border-radius: 6px;
-  background: #ffffff;
-  width: 400px;
-  padding: 25px 25px 5px 25px;
-  z-index: 1;
-  .el-input {
-    height: 40px;
-    input {
-      height: 40px;
-    }
-  }
-  .input-icon {
-    height: 39px;
-    width: 14px;
-    margin-left: 0px;
-  }
-}
-.login-tip {
-  font-size: 13px;
-  text-align: center;
-  color: #bfbfbf;
-}
-.login-code {
-  width: 33%;
-  height: 40px;
-  float: right;
-  img {
-    cursor: pointer;
-    vertical-align: middle;
-  }
-}
-.el-login-footer {
-  height: 40px;
-  line-height: 40px;
-  position: fixed;
-  bottom: 0;
   width: 100%;
-  text-align: center;
-  color: #fff;
-  font-family: Arial;
-  font-size: 12px;
-  letter-spacing: 1px;
-}
-.login-code-img {
-  height: 40px;
-  padding-left: 12px;
 }
 
-html.dark .login {
-  background-image: linear-gradient(rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0.55)), url("../assets/images/login-background.jpg");
-  .login-form {
-    background: var(--el-bg-color-overlay) !important;
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+.field-group {
+  margin-bottom: 19px;
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--auth-text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  letter-spacing: 0;
+}
+
+.field-group :deep(.el-form-item) {
+  margin-bottom: 0;
+}
+
+.field-group :deep(.el-form-item__error) {
+  padding-top: 5px;
+}
+
+.field-group :deep(.el-input__wrapper) {
+  min-height: 46px;
+  padding: 0 13px;
+  border: 1px solid var(--auth-border);
+  border-radius: 6px;
+  background: var(--auth-field);
+  box-shadow: none;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.field-group :deep(.el-input__wrapper:hover) {
+  border-color: var(--auth-field-hover);
+}
+
+.field-group :deep(.el-input__wrapper.is-focus) {
+  border-color: #2f7db8;
+  box-shadow: 0 0 0 3px rgba(47, 125, 184, 0.13);
+}
+
+.field-group :deep(.el-input__inner) {
+  color: var(--auth-text);
+  font-size: 14px;
+  letter-spacing: 0;
+}
+
+.field-group :deep(.el-input__inner::placeholder) {
+  color: #9299a4;
+}
+
+.field-group :deep(.el-input__icon) {
+  color: #737c89;
+}
+
+.input-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.captcha-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px;
+  gap: 10px;
+  width: 100%;
+}
+
+.captcha-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 112px;
+  height: 46px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--auth-border);
+  border-radius: 6px;
+  background: #ffffff;
+  cursor: pointer;
+}
+
+.captcha-button:focus-visible {
+  outline: 3px solid rgba(47, 125, 184, 0.24);
+  outline-offset: 2px;
+}
+
+.captcha-button img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.form-options {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 24px;
+  margin: 4px 0 24px;
+}
+
+.form-options :deep(.el-checkbox__label) {
+  color: var(--auth-muted);
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.register-link {
+  color: #2f6f9f;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.submit-item {
+  margin-bottom: 0;
+}
+
+.login-button {
+  width: 100%;
+  min-height: 46px;
+  border-radius: 6px;
+  background: #2f6f9f;
+  font-weight: 650;
+  letter-spacing: 0;
+  box-shadow: 0 10px 22px rgba(47, 111, 159, 0.23);
+}
+
+.login-button:hover,
+.login-button:focus {
+  background: #275f89;
+}
+
+.login-button :deep(.el-icon) {
+  margin-left: 8px;
+}
+
+.login-footer {
+  position: absolute;
+  z-index: 1;
+  right: 0;
+  bottom: 20px;
+  left: 0;
+  padding: 0 24px;
+  color: rgba(255, 255, 255, 0.52);
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: center;
+  letter-spacing: 0;
+}
+
+html.dark .login-page {
+  --auth-panel: rgba(23, 25, 30, 0.96);
+  --auth-panel-border: rgba(255, 255, 255, 0.11);
+  --auth-text: #f3f5f8;
+  --auth-muted: #a3a9b3;
+  --auth-border: #3b4049;
+  --auth-field: #1c1f25;
+  --auth-field-hover: #515864;
+}
+
+html.dark .field-group :deep(.el-input__inner::placeholder) {
+  color: #767e8a;
+}
+
+html.dark .captcha-button {
+  background: #ffffff;
+}
+
+@media (max-width: 900px) {
+  .login-page {
+    overflow-y: auto;
+    background-position: 35% center;
+  }
+
+  .login-page::before {
+    background: rgba(5, 8, 13, 0.5);
+  }
+
+  .login-shell {
+    grid-template-columns: 1fr;
+    gap: 32px;
+    width: min(520px, calc(100% - 32px));
+    min-height: auto;
+    padding: 28px 0 88px;
+  }
+
+  .brand-stage {
+    padding: 0;
+  }
+
+  .login-footer {
+    bottom: 16px;
+  }
+}
+
+@media (max-width: 520px) {
+  .login-page {
+    background-position: 28% center;
+  }
+
+  .login-page::before {
+    background: rgba(5, 8, 13, 0.66);
+  }
+
+  .login-shell {
+    gap: 24px;
+    width: calc(100% - 24px);
+    padding-top: 18px;
+  }
+
+  .brand-stage {
+    padding: 0;
+  }
+
+  .brand-logo {
+    width: 46px;
+    height: 46px;
+  }
+
+  .login-panel {
+    padding: 28px 22px 23px;
+  }
+
+  .login-heading {
+    margin-bottom: 24px;
+  }
+
+  .login-heading h2 {
+    font-size: 24px;
+  }
+
+  .captcha-row {
+    grid-template-columns: minmax(0, 1fr) 100px;
+    gap: 8px;
+  }
+
+  .captcha-button {
+    width: 100px;
+  }
+}
+
+@media (max-height: 720px) and (min-width: 901px) {
+  .login-shell {
+    min-height: calc(100dvh - 52px);
+    padding-top: 24px;
+  }
+
+  .login-panel {
+    padding-top: 30px;
+    padding-bottom: 24px;
+  }
+
+  .login-heading {
+    margin-bottom: 22px;
+  }
+
+  .field-group {
+    margin-bottom: 14px;
+  }
+
+  .form-options {
+    margin-bottom: 18px;
   }
 }
 </style>

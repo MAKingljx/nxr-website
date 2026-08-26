@@ -1,0 +1,1150 @@
+{
+  "requests": [
+    {
+      "acceptanceCriteria": [
+        "账号切换产生新 scope token 并使旧 token 立即失效",
+        "旧账号异步结果不得写入当前账号快照",
+        "快照不包含口令、令牌、Cookie 或其他凭据",
+        "控制器不使用网络、存储、定时器或平台生命周期 API"
+      ],
+      "capabilities": [
+        "account-scope-isolation",
+        "credential-free-account-snapshot",
+        "scope-token",
+        "stale-async-response-rejection"
+      ],
+      "category": "common",
+      "createdAt": "2026-08-11",
+      "id": "REQ-20260811-DALANSHU-ACCOUNT",
+      "kind": "sdk",
+      "priority": "P0",
+      "requestedBy": "user",
+      "reuseCandidates": [],
+      "scenario": "大蓝书个人资产、创作者、举报和通知页面在登录账号切换后必须隔离缓存与在途响应，且不能把会话凭据放入通用状态。",
+      "stack": "agnostic",
+      "status": "done",
+      "targetComponentId": "common.agnostic.account-scope-guard",
+      "title": "账号范围隔离与旧响应防护",
+      "updatedAt": "2026-08-11"
+    },
+    {
+      "acceptanceCriteria": [
+        "复用现有高级表格、筛选、批量操作、审核队列、审计时间线和详情抽屉",
+        "按后台基础、内容审核、审计、直播和页面框架拆成可单独拉取的包",
+        "大蓝书后台不得复制同名组件形成第二套接口",
+        "拆包后原有展厅、测试和消费者构建继续通过"
+      ],
+      "capabilities": [
+        "admin-workspace",
+        "audit",
+        "content-moderation",
+        "resource-management"
+      ],
+      "category": "frontend",
+      "createdAt": "2026-08-11",
+      "id": "REQ-20260811-DALANSHU-ADMIN",
+      "kind": "ui",
+      "priority": "P1",
+      "requestedBy": "user",
+      "reuseCandidates": [
+        "frontend.vue3.component-gallery"
+      ],
+      "scenario": "大蓝书运营后台需要审核、审计、用户和内容管理，但 Phoenix Vue 3 展厅已经存在多数能力，后续应拆包复用而非重做。",
+      "stack": "vue3",
+      "status": "accepted",
+      "targetComponentId": null,
+      "title": "大蓝书 Vue 3 运营后台组件拆包",
+      "updatedAt": "2026-08-11"
+    },
+    {
+      "acceptanceCriteria": [
+        "请求切换后旧响应不得覆盖当前状态",
+        "首次加载和游标加载更多使用同一状态模型",
+        "相邻分页按稳定键去重且不发送网络请求",
+        "具备失效、重置、空状态、错误和不可变快照测试"
+      ],
+      "capabilities": [
+        "async-request-control",
+        "cursor-pagination",
+        "stale-response-protection"
+      ],
+      "category": "common",
+      "createdAt": "2026-08-11",
+      "id": "REQ-20260811-DALANSHU-ASYNC",
+      "kind": "sdk",
+      "priority": "P0",
+      "requestedBy": "user",
+      "reuseCandidates": [],
+      "scenario": "大蓝书信息流、搜索、通知、资产等页面反复维护 requestEpoch、首次加载、加载更多、错误和分页去重，需要框架无关的统一控制器。",
+      "stack": "agnostic",
+      "status": "done",
+      "targetComponentId": "common.agnostic.async-collection-controller",
+      "title": "异步集合与游标分页控制器",
+      "updatedAt": "2026-08-11"
+    },
+    {
+      "acceptanceCriteria": [
+        "提供稳定游标、幂等命令、CAS 状态机、事务 outbox 和审计事件模块",
+        "领域逻辑不依赖 JSON、SQLite 或特定云数据库",
+        "覆盖重复执行、响应丢失、重试、重启和并发冲突",
+        "packages/shared 继续作为跨端契约单一事实来源"
+      ],
+      "capabilities": [
+        "audit",
+        "cursor-pagination",
+        "idempotency",
+        "state-machine",
+        "transactional-outbox"
+      ],
+      "category": "common",
+      "createdAt": "2026-08-11",
+      "id": "REQ-20260811-DALANSHU-BACKEND",
+      "kind": "domain",
+      "priority": "P1",
+      "requestedBy": "user",
+      "reuseCandidates": [
+        "common.agnostic.capability-contract"
+      ],
+      "scenario": "大蓝书 API 中社区、直播和持久化服务体积较大，需要将稳定游标、审核、通知、媒体、举报申诉和第三方副作用提取为数据库无关模块。",
+      "stack": "agnostic",
+      "status": "proposed",
+      "targetComponentId": null,
+      "title": "大蓝书后端状态与可靠性模块",
+      "updatedAt": "2026-08-11"
+    },
+    {
+      "acceptanceCriteria": [
+        "商品、库存、订单、支付、退款、履约和售后分别保持职责边界",
+        "支付仅在真实沙箱回调验签、幂等、退款和对账闭环后提升状态",
+        "组件和示例不得保存商户密钥、证书或客户数据",
+        "Gate 未通过时保持入口关闭且不得描述为生产可用"
+      ],
+      "capabilities": [
+        "commerce",
+        "inventory",
+        "order-management",
+        "payment",
+        "refund"
+      ],
+      "category": "frontend",
+      "createdAt": "2026-08-11",
+      "id": "REQ-20260811-DALANSHU-COMMERCE",
+      "kind": "ui",
+      "priority": "P2",
+      "requestedBy": "user",
+      "reuseCandidates": [
+        "frontend.vue3.component-gallery"
+      ],
+      "scenario": "大蓝书未来商户和交易能力需要复用商城组件，但当前真实支付、退款、结算和对账尚未闭环，只登记条件需求。",
+      "stack": "uni-app-x",
+      "status": "proposed",
+      "targetComponentId": null,
+      "title": "大蓝书商城与交易多端组件",
+      "updatedAt": "2026-08-11"
+    },
+    {
+      "acceptanceCriteria": [
+        "发布器拆分正文、媒体、话题、标签、校验、草稿恢复和发布进度",
+        "上传失败支持重试、删除和恢复，页面不直接维护任务队列",
+        "重复发布使用幂等命令且响应丢失后可查询结果",
+        "组件库示例必须组合全部发布器组件并通过 HBuilderX Web 编译"
+      ],
+      "capabilities": [
+        "draft-recovery",
+        "media-upload",
+        "post-composer",
+        "publish-validation"
+      ],
+      "category": "frontend",
+      "createdAt": "2026-08-11",
+      "id": "REQ-20260811-DALANSHU-COMPOSER",
+      "kind": "ui",
+      "priority": "P0",
+      "requestedBy": "user",
+      "reuseCandidates": [
+        "common.agnostic.async-collection-controller",
+        "frontend.uni-app-x.community-primitives"
+      ],
+      "scenario": "大蓝书发布页超过 1700 行，媒体、草稿、话题、标签、校验和提交状态混在页面中，需要可测试的发布器组件组。",
+      "stack": "uni-app-x",
+      "status": "done",
+      "targetComponentId": "frontend.uni-app-x.post-composer",
+      "title": "大蓝书发布器与草稿恢复组件",
+      "updatedAt": "2026-08-12"
+    },
+    {
+      "acceptanceCriteria": [
+        "状态、搜索、导航、反馈、媒体和社区操作组件使用 .uvue 与 UTS",
+        "组件只通过 props 和 events 交互，不请求接口或读写存储",
+        "默认中文且不包含大蓝书品牌素材和业务常量",
+        "Web 源码编译通过且不推断 iOS、微信或抖音兼容"
+      ],
+      "capabilities": [
+        "async-feedback",
+        "community-navigation",
+        "responsive-surface",
+        "safe-media",
+        "search-input"
+      ],
+      "category": "frontend",
+      "createdAt": "2026-08-11",
+      "id": "REQ-20260811-DALANSHU-CORE",
+      "kind": "ui",
+      "priority": "P0",
+      "requestedBy": "user",
+      "reuseCandidates": [],
+      "scenario": "大蓝书 27 个社区页面需要统一加载状态、移动标题、标签、搜索、作者、互动、通知、评论和安全媒体等高频基础界面。",
+      "stack": "uni-app-x",
+      "status": "done",
+      "targetComponentId": "frontend.uni-app-x.community-primitives",
+      "title": "大蓝书 uni-app x 社区基础组件",
+      "updatedAt": "2026-08-11"
+    },
+    {
+      "acceptanceCriteria": [
+        "个人资产、创作者指标、内容状态和重新提交使用统一组件",
+        "举报、处理结果、历史和申诉形成完整展示闭环",
+        "账号切换后旧数据和在途响应不得进入当前账号",
+        "组件库示例必须覆盖资产、创作者状态和举报结果并通过 HBuilderX Web 编译"
+      ],
+      "capabilities": [
+        "creator-dashboard",
+        "personal-assets",
+        "report-appeal",
+        "status-timeline"
+      ],
+      "category": "frontend",
+      "createdAt": "2026-08-11",
+      "id": "REQ-20260811-DALANSHU-CREATOR",
+      "kind": "ui",
+      "priority": "P1",
+      "requestedBy": "user",
+      "reuseCandidates": [
+        "common.agnostic.async-collection-controller",
+        "frontend.uni-app-x.community-primitives"
+      ],
+      "scenario": "大蓝书个人资产、创作者中心、举报结果和申诉页面存在相同的状态行、指标、列表和账号隔离要求。",
+      "stack": "uni-app-x",
+      "status": "done",
+      "targetComponentId": "frontend.uni-app-x.creator-assets",
+      "title": "个人资产、创作者与举报申诉组件",
+      "updatedAt": "2026-08-12"
+    },
+    {
+      "acceptanceCriteria": [
+        "草稿 revision、脏字段和 autosave epoch 使用同一状态机",
+        "旧保存响应不得覆盖新编辑或新远端版本",
+        "本地与远端冲突必须显式选择保留本地、采用远端或合并",
+        "控制器不使用存储、网络、定时器或平台生命周期 API"
+      ],
+      "capabilities": [
+        "autosave-stale-response-protection",
+        "dirty-field-tracking",
+        "draft-recovery",
+        "local-remote-conflict-resolution"
+      ],
+      "category": "common",
+      "createdAt": "2026-08-11",
+      "id": "REQ-20260811-DALANSHU-DRAFT",
+      "kind": "sdk",
+      "priority": "P0",
+      "requestedBy": "user",
+      "reuseCandidates": [],
+      "scenario": "大蓝书发布页需要从巨型页面中提取草稿版本、自动保存、旧响应隔离和本地远端冲突处理，且由宿主自行选择存储和请求实现。",
+      "stack": "agnostic",
+      "status": "done",
+      "targetComponentId": "common.agnostic.draft-recovery-controller",
+      "title": "草稿恢复与自动保存冲突控制器",
+      "updatedAt": "2026-08-11"
+    },
+    {
+      "acceptanceCriteria": [
+        "信息流卡片、媒体网格、内容详情、评论树和关系操作均为受控组件",
+        "图片失败、长标题、空内容和禁用互动有稳定表现",
+        "UI 不直接请求接口或修改输入对象",
+        "组件库示例必须组合信息流和详情组件并通过 HBuilderX Web 编译"
+      ],
+      "capabilities": [
+        "comment-thread",
+        "content-feed",
+        "content-interaction",
+        "post-detail"
+      ],
+      "category": "frontend",
+      "createdAt": "2026-08-11",
+      "id": "REQ-20260811-DALANSHU-FEED",
+      "kind": "ui",
+      "priority": "P0",
+      "requestedBy": "user",
+      "reuseCandidates": [
+        "common.agnostic.async-collection-controller",
+        "frontend.uni-app-x.community-primitives"
+      ],
+      "scenario": "大蓝书信息流、内容详情、作者页和话题页需要统一卡片、媒体、评论、互动和关系组件，减少页面重复布局。",
+      "stack": "uni-app-x",
+      "status": "done",
+      "targetComponentId": "frontend.uni-app-x.community-feed",
+      "title": "大蓝书信息流与内容详情组件",
+      "updatedAt": "2026-08-11"
+    },
+    {
+      "acceptanceCriteria": [
+        "举报、审核、申诉、可见性和通知使用同一状态词表与错误码",
+        "审核决定和申诉复核有 CAS、幂等和审计记录",
+        "用户端、后台和 API 契约均从共享模型生成或直接复用",
+        "禁止复制状态枚举形成多套事实来源"
+      ],
+      "capabilities": [
+        "content-moderation",
+        "content-visibility",
+        "notification-aggregation",
+        "report-appeal"
+      ],
+      "category": "common",
+      "createdAt": "2026-08-11",
+      "id": "REQ-20260811-DALANSHU-GOVERNANCE",
+      "kind": "contract",
+      "priority": "P1",
+      "requestedBy": "user",
+      "reuseCandidates": [
+        "common.agnostic.capability-contract"
+      ],
+      "scenario": "大蓝书内容审核、举报结果、申诉和通知跨用户端、运营后台与 API，需要共享状态与可见性契约。",
+      "stack": "agnostic",
+      "status": "in_progress",
+      "targetComponentId": "common.agnostic.content-visibility-contract",
+      "title": "内容治理、可见性与通知共享契约",
+      "updatedAt": "2026-08-12"
+    },
+    {
+      "acceptanceCriteria": [
+        "命令键由宿主确定性提供，控制器不得随机生成",
+        "重复提交合并，响应丢失进入 unknown 并要求显式 reconcile",
+        "旧提交和旧核对响应不得覆盖当前命令状态",
+        "控制器不使用网络、存储、定时器或平台 API"
+      ],
+      "capabilities": [
+        "deterministic-command-key",
+        "duplicate-submit-coalescing",
+        "idempotent-command-state",
+        "unknown-result-reconciliation"
+      ],
+      "category": "common",
+      "createdAt": "2026-08-11",
+      "id": "REQ-20260811-DALANSHU-IDEMPOTENT",
+      "kind": "sdk",
+      "priority": "P0",
+      "requestedBy": "user",
+      "reuseCandidates": [],
+      "scenario": "大蓝书发布、评论、关注、收藏、举报和审核操作需要统一处理重复点击、响应丢失、结果核对与过期响应。",
+      "stack": "agnostic",
+      "status": "done",
+      "targetComponentId": "common.agnostic.idempotent-command-controller",
+      "title": "幂等命令与未知结果核对控制器",
+      "updatedAt": "2026-08-11"
+    },
+    {
+      "acceptanceCriteria": [
+        "直播房间、播放、聊天、回放、审核和指标保持独立组件边界",
+        "公开播放只接受允许主机的外部 HTTPS provider",
+        "禁播或隐藏先关闭公开访问再执行幂等 provider 副作用",
+        "未取得真实 provider 和目标端证据前保持内部测试状态"
+      ],
+      "capabilities": [
+        "live-chat",
+        "live-moderation",
+        "live-playback",
+        "live-room"
+      ],
+      "category": "frontend",
+      "createdAt": "2026-08-11",
+      "id": "REQ-20260811-DALANSHU-LIVE",
+      "kind": "ui",
+      "priority": "P2",
+      "requestedBy": "user",
+      "reuseCandidates": [
+        "frontend.vue3.component-gallery"
+      ],
+      "scenario": "大蓝书已有内部直播切片，但真实 provider、公开发现和四端证据未完成，先登记可组合组件与严格放行条件。",
+      "stack": "uni-app-x",
+      "status": "proposed",
+      "targetComponentId": null,
+      "title": "大蓝书直播多端组件",
+      "updatedAt": "2026-08-11"
+    },
+    {
+      "acceptanceCriteria": [
+        "搜索结果统一承载内容、话题和作者三类数据",
+        "搜索历史、筛选、通知分组和全部已读均为受控组件",
+        "切换关键词或过滤条件后旧响应不得覆盖当前结果",
+        "组件库示例必须组合搜索和通知组件并通过 HBuilderX Web 编译"
+      ],
+      "capabilities": [
+        "notification-center",
+        "search-filter",
+        "search-history",
+        "search-results"
+      ],
+      "category": "frontend",
+      "createdAt": "2026-08-11",
+      "id": "REQ-20260811-DALANSHU-SEARCH",
+      "kind": "ui",
+      "priority": "P0",
+      "requestedBy": "user",
+      "reuseCandidates": [
+        "common.agnostic.async-collection-controller",
+        "frontend.uni-app-x.community-primitives"
+      ],
+      "scenario": "大蓝书搜索和通知页面超过千行，范围标签、结果卡、历史、筛选、分组、未读和分页状态需要拆为通用组件。",
+      "stack": "uni-app-x",
+      "status": "done",
+      "targetComponentId": "frontend.uni-app-x.search-notification",
+      "title": "大蓝书搜索与通知组件",
+      "updatedAt": "2026-08-11"
+    },
+    {
+      "acceptanceCriteria": [
+        "页面使用中文并单独出现在一级导航中",
+        "展示名称、类型、阶段、版本、技术栈、能力、源码路径和更新时间",
+        "支持关键词、类型和阶段筛选，危险链接不得渲染",
+        "初始数据只收录仓库内可以核验的试用成品，不得宣称生产就绪"
+      ],
+      "capabilities": [
+        "product-catalog",
+        "product-discovery",
+        "product-filter"
+      ],
+      "category": "frontend",
+      "createdAt": "2026-08-11",
+      "id": "REQ-20260811-PRODUCT-SHOWCASE",
+      "kind": "ui",
+      "priority": "P1",
+      "requestedBy": "user",
+      "reuseCandidates": [
+        "frontend.vue3.component-gallery"
+      ],
+      "scenario": "集中展示已经可以运行的成品系统和软件，明确区分组件、模板与成品，并为后续销售和交付提供可检索的软件信息入口。",
+      "stack": "vue3",
+      "status": "done",
+      "targetComponentId": "frontend.vue3.component-gallery",
+      "title": "成品系统与软件展示",
+      "updatedAt": "2026-08-11"
+    },
+    {
+      "acceptanceCriteria": [
+        "add/update --dry-run --json 不修改目录、锁、mtime、备份或互斥文件",
+        "计划包含精确版本、标签、提交、目标目录、依赖、漂移和备份动作",
+        "批量 update 先校验全部组件，任一失败时所有目录和锁保持原字节且无 staging"
+      ],
+      "capabilities": [
+        "atomic-batch-update",
+        "drift-protection",
+        "dry-run-plan"
+      ],
+      "category": "common",
+      "createdAt": "2026-08-12",
+      "id": "REQ-20260812-CONSUMER-ATOMIC",
+      "kind": "sdk",
+      "priority": "P0",
+      "requestedBy": "api:req_M9UBwVxFIg5eYeeF",
+      "reuseCandidates": [
+        "common.agnostic.cas-state-machine"
+      ],
+      "scenario": "来源需求 req_M9UBwVxFIg5eYeeF：AI 更新消费项目组件前需要完整预演，并保证多组件批次要么全部应用、要么完全不变。",
+      "stack": "agnostic",
+      "status": "done",
+      "targetComponentId": null,
+      "title": "消费端预演与多组件原子更新",
+      "updatedAt": "2026-08-13"
+    },
+    {
+      "acceptanceCriteria": [
+        "事件由宿主显式提供 ID、时间、请求、操作者、动作和目标",
+        "before 与 after 深度克隆冻结并生成确定性差异摘要",
+        "敏感键、过深结构、过长文本和重复事件 ID 默认拒绝",
+        "不读取环境或当前时间且明确签名、可信时间和持久化由宿主实现"
+      ],
+      "capabilities": [
+        "bounded-audit-payload",
+        "deterministic-audit-diff",
+        "immutable-audit-event",
+        "sensitive-key-policy"
+      ],
+      "category": "common",
+      "createdAt": "2026-08-12",
+      "id": "REQ-20260812-DALANSHU-AUDIT",
+      "kind": "domain",
+      "priority": "P1",
+      "requestedBy": "user",
+      "reuseCandidates": [],
+      "scenario": "大蓝书内容、审核、直播和交易操作需要统一审计事件字段、差异摘要和脱敏边界，但可信存储和签名必须由具体后端负责。",
+      "stack": "agnostic",
+      "status": "done",
+      "targetComponentId": "common.agnostic.audit-event-core",
+      "title": "不可变审计事件、差异与敏感字段策略",
+      "updatedAt": "2026-08-12"
+    },
+    {
+      "acceptanceCriteria": [
+        "状态与允许转换由宿主显式声明且非法或终态转换默认拒绝",
+        "每次命令校验 expectedRevision 并保持 revision 单调递增",
+        "transitionId 幂等且旧命令、异常 guard 不得修改当前状态",
+        "恢复时严格校验事件链连续、状态一致和重复 ID"
+      ],
+      "capabilities": [
+        "cas-transition",
+        "deterministic-state-machine",
+        "idempotent-transition",
+        "strict-event-replay"
+      ],
+      "category": "common",
+      "createdAt": "2026-08-12",
+      "id": "REQ-20260812-DALANSHU-CAS",
+      "kind": "domain",
+      "priority": "P1",
+      "requestedBy": "user",
+      "reuseCandidates": [
+        "common.agnostic.idempotent-command-controller"
+      ],
+      "scenario": "大蓝书审核、举报、直播和商户流程都需要相同的版本冲突与幂等转换机制，但专题状态必须留在各自领域而不是写入通用组件。",
+      "stack": "agnostic",
+      "status": "done",
+      "targetComponentId": "common.agnostic.cas-state-machine",
+      "title": "通用 CAS 幂等状态机与严格重放",
+      "updatedAt": "2026-08-12"
+    },
+    {
+      "acceptanceCriteria": [
+        "游标携带版本、方向、稳定排序键、唯一 ID、页大小和查询摘要",
+        "查询条件规范化与摘要必须跨运行确定一致",
+        "游标过期、查询不匹配、重复项和无效分页边界默认拒绝",
+        "不绑定数据库、网络、存储或随机数且明确摘要不是安全签名"
+      ],
+      "capabilities": [
+        "cursor-expiration",
+        "deterministic-filter-digest",
+        "query-bound-cursor",
+        "stable-cursor-pagination"
+      ],
+      "category": "common",
+      "createdAt": "2026-08-12",
+      "id": "REQ-20260812-DALANSHU-CURSOR",
+      "kind": "domain",
+      "priority": "P1",
+      "requestedBy": "user",
+      "reuseCandidates": [
+        "common.agnostic.async-collection-controller"
+      ],
+      "scenario": "大蓝书信息流、搜索、通知和资产列表需要后端无关的稳定游标、查询绑定和过期检测，与前端集合状态形成统一分页边界。",
+      "stack": "agnostic",
+      "status": "done",
+      "targetComponentId": "common.agnostic.cursor-pagination",
+      "title": "稳定游标、查询摘要与失效检测",
+      "updatedAt": "2026-08-12"
+    },
+    {
+      "acceptanceCriteria": [
+        "图片、视频和文件共享有界元数据与六状态生命周期",
+        "状态转换使用 expectedRevision CAS 且非法转换默认拒绝",
+        "所有者快照与仅 ready 的公开投影严格分离",
+        "不读取文件、不上传转码、不请求网络且不接受凭据或 provider 内部 ID"
+      ],
+      "capabilities": [
+        "media-asset-lifecycle",
+        "media-owner-projection",
+        "ready-only-public-media",
+        "revision-cas-transition",
+        "safe-media-target"
+      ],
+      "category": "common",
+      "createdAt": "2026-08-12",
+      "id": "REQ-20260812-DALANSHU-MEDIA-ASSET",
+      "kind": "domain",
+      "priority": "P1",
+      "requestedBy": "user",
+      "reuseCandidates": [
+        "common.agnostic.safe-target-resolver",
+        "common.agnostic.upload-task-controller"
+      ],
+      "scenario": "大蓝书图片、视频和附件需要统一资产状态、所有权、公开投影与安全地址，同时将上传、转码和供应商实现留给宿主。",
+      "stack": "agnostic",
+      "status": "done",
+      "targetComponentId": "common.agnostic.media-asset-core",
+      "title": "媒体资产生命周期、所有权与公开投影",
+      "updatedAt": "2026-08-12"
+    },
+    {
+      "acceptanceCriteria": [
+        "审核目标按 scope 隔离并支持提交、领取、通过、拒绝、隐藏和恢复",
+        "expectedRevision、decisionId 幂等和旧 claim 失效默认失败关闭",
+        "理由代码来自宿主白名单且公开理由与内部备注严格分离",
+        "不实现自动审核、不调用 provider、不请求网络或写存储"
+      ],
+      "capabilities": [
+        "moderation-claim",
+        "moderation-decision-cas",
+        "moderation-public-projection",
+        "scoped-moderation-queue"
+      ],
+      "category": "common",
+      "createdAt": "2026-08-12",
+      "id": "REQ-20260812-DALANSHU-MODERATION",
+      "kind": "domain",
+      "priority": "P1",
+      "requestedBy": "user",
+      "reuseCandidates": [
+        "common.agnostic.cas-state-machine",
+        "common.agnostic.content-visibility-contract"
+      ],
+      "scenario": "大蓝书内容与直播审核需要统一领取、决定、隐藏恢复、版本冲突和公开理由边界，同时不把具体审核供应商耦合进领域模块。",
+      "stack": "agnostic",
+      "status": "done",
+      "targetComponentId": "common.agnostic.moderation-core",
+      "title": "内容审核领取、决定与公开投影内核",
+      "updatedAt": "2026-08-12"
+    },
+    {
+      "acceptanceCriteria": [
+        "通知事件按稳定 ID 去重并按账号 scope 严格隔离",
+        "聚合键和有界时间桶由确定性输入计算且排序稳定",
+        "支持单条已读、全部已读、未读投影和 scope 绑定游标",
+        "不接受凭据字段且不请求网络、不写存储、不创建定时器"
+      ],
+      "capabilities": [
+        "account-scoped-notification",
+        "deterministic-notification-aggregation",
+        "notification-event-deduplication",
+        "read-state-projection"
+      ],
+      "category": "common",
+      "createdAt": "2026-08-12",
+      "id": "REQ-20260812-DALANSHU-NOTIFICATION",
+      "kind": "domain",
+      "priority": "P1",
+      "requestedBy": "user",
+      "reuseCandidates": [
+        "common.agnostic.account-scope-guard"
+      ],
+      "scenario": "大蓝书互动、系统和审核通知需要稳定去重、聚合、未读状态、分页和账号隔离，避免用户端与后台各自复制逻辑。",
+      "stack": "agnostic",
+      "status": "done",
+      "targetComponentId": "common.agnostic.notification-aggregation",
+      "title": "通知去重、聚合与已读状态领域模块",
+      "updatedAt": "2026-08-12"
+    },
+    {
+      "acceptanceCriteria": [
+        "事件状态覆盖待发布、已领取、已发布、失败和死信",
+        "领取租约、expectedRevision 和旧 claim 结算默认失败关闭",
+        "payload 深度、数量、文本和字节数有界并递归拒绝凭据键",
+        "组件不访问数据库且明确业务写入与 outbox 原子性由宿主事务实现"
+      ],
+      "capabilities": [
+        "outbox-claim-lease",
+        "outbox-retry-dead-letter",
+        "outbox-state-machine",
+        "strict-outbox-hydration"
+      ],
+      "category": "common",
+      "createdAt": "2026-08-12",
+      "id": "REQ-20260812-DALANSHU-OUTBOX",
+      "kind": "domain",
+      "priority": "P1",
+      "requestedBy": "user",
+      "reuseCandidates": [
+        "common.agnostic.audit-event-core",
+        "common.agnostic.pending-retry-queue"
+      ],
+      "scenario": "大蓝书业务写入与通知、审核和第三方事件发布需要 outbox 状态与重试边界，同时避免通用组件伪装成数据库事务实现。",
+      "stack": "agnostic",
+      "status": "done",
+      "targetComponentId": "common.agnostic.transactional-outbox",
+      "title": "事务发件箱状态、领取租约与死信管理",
+      "updatedAt": "2026-08-12"
+    },
+    {
+      "acceptanceCriteria": [
+        "举报、申诉、反馈和证据附件分别保持受控组件边界",
+        "所有内容只由 props 输入并通过 events 上抛，不请求接口或写存储",
+        "附件只接受安全相对路径或 HTTPS 地址且组件不自行打开",
+        "组件库示例组合四个组件并通过 HBuilderX Web 编译"
+      ],
+      "capabilities": [
+        "appeal-panel",
+        "evidence-attachment-projection",
+        "feedback-form",
+        "report-form"
+      ],
+      "category": "frontend",
+      "createdAt": "2026-08-12",
+      "id": "REQ-20260812-DALANSHU-REPORT",
+      "kind": "ui",
+      "priority": "P1",
+      "requestedBy": "user",
+      "reuseCandidates": [
+        "common.agnostic.account-scope-guard",
+        "frontend.uni-app-x.community-primitives"
+      ],
+      "scenario": "大蓝书举报、申诉和意见反馈页面需要统一表单、状态和证据附件展示，并保持账号隔离与安全地址边界。",
+      "stack": "uni-app-x",
+      "status": "done",
+      "targetComponentId": "frontend.uni-app-x.report-appeal",
+      "title": "举报、申诉、反馈与证据附件组件",
+      "updatedAt": "2026-08-12"
+    },
+    {
+      "acceptanceCriteria": [
+        "举报与申诉分别使用固定状态图和 expectedRevision CAS",
+        "commandId 全局幂等且同一已处置举报只允许一个活动申诉",
+        "公开回执与内部记录隔离，证据只保存有界公共引用",
+        "不接收文件、URL 或凭据且不实现审核决定、通知发送、网络或存储"
+      ],
+      "capabilities": [
+        "appeal-review-workflow",
+        "public-report-receipt",
+        "report-appeal-cas",
+        "report-triage-workflow"
+      ],
+      "category": "common",
+      "createdAt": "2026-08-12",
+      "id": "REQ-20260812-DALANSHU-REPORT-WORKFLOW",
+      "kind": "domain",
+      "priority": "P1",
+      "requestedBy": "user",
+      "reuseCandidates": [
+        "common.agnostic.cas-state-machine",
+        "common.agnostic.moderation-core"
+      ],
+      "scenario": "大蓝书举报、处置回执和申诉复核需要同一状态与幂等边界，同时避免把内部记录、通知实现和证据文件耦合进通用工作流。",
+      "stack": "agnostic",
+      "status": "done",
+      "targetComponentId": "common.agnostic.report-appeal-workflow",
+      "title": "举报受理、处置回执与申诉复核工作流",
+      "updatedAt": "2026-08-12"
+    },
+    {
+      "acceptanceCriteria": [
+        "任务使用稳定 ID 且重复任务默认拒绝",
+        "指数退避由宿主时间驱动并具有明确上限",
+        "旧 claim token 不得完成或失败当前任务",
+        "队列不发送请求、不读写存储、不创建定时器"
+      ],
+      "capabilities": [
+        "capped-exponential-backoff",
+        "explicit-task-claim",
+        "restart-hydration",
+        "stale-claim-protection"
+      ],
+      "category": "common",
+      "createdAt": "2026-08-12",
+      "id": "REQ-20260812-DALANSHU-RETRY",
+      "kind": "sdk",
+      "priority": "P1",
+      "requestedBy": "user",
+      "reuseCandidates": [],
+      "scenario": "大蓝书上传、通知和第三方副作用需要可恢复的待重试任务状态，但调度、持久化和网络必须由宿主负责。",
+      "stack": "agnostic",
+      "status": "done",
+      "targetComponentId": "common.agnostic.pending-retry-queue",
+      "title": "持久待办与指数退避队列状态",
+      "updatedAt": "2026-08-12"
+    },
+    {
+      "acceptanceCriteria": [
+        "按账号范围和路由键保存不可变恢复快照",
+        "筛选、游标、可见项和滚动偏移能够独立恢复",
+        "旧账号 scope token 不能读写当前快照",
+        "有界 LRU 不使用 DOM、路由器、网络、存储或定时器"
+      ],
+      "capabilities": [
+        "account-scoped-route-snapshot",
+        "bounded-lru-retention",
+        "immutable-restoration-state",
+        "stale-scope-token-rejection"
+      ],
+      "category": "common",
+      "createdAt": "2026-08-12",
+      "id": "REQ-20260812-DALANSHU-ROUTE",
+      "kind": "sdk",
+      "priority": "P1",
+      "requestedBy": "user",
+      "reuseCandidates": [
+        "common.agnostic.account-scope-guard"
+      ],
+      "scenario": "大蓝书从详情返回信息流、搜索、通知和资产页时需要恢复筛选、分页和滚动状态，并严格隔离登录账号。",
+      "stack": "agnostic",
+      "status": "done",
+      "targetComponentId": "common.agnostic.route-restore-controller",
+      "title": "账号范围路由状态恢复控制器",
+      "updatedAt": "2026-08-12"
+    },
+    {
+      "acceptanceCriteria": [
+        "站内路由、资源地址和外部链接使用彼此独立的显式白名单",
+        "只接受允许的根相对路由与 HTTPS 主机和路径前缀",
+        "拒绝协议相对地址、凭据、路径穿越、双重编码和控制字符",
+        "只返回惰性冻结结构，不导航、不请求网络、不读写存储"
+      ],
+      "capabilities": [
+        "https-host-allowlist",
+        "lazy-safe-target",
+        "path-prefix-policy",
+        "route-query-canonicalization"
+      ],
+      "category": "common",
+      "createdAt": "2026-08-12",
+      "id": "REQ-20260812-DALANSHU-SAFE-TARGET",
+      "kind": "sdk",
+      "priority": "P0",
+      "requestedBy": "user",
+      "reuseCandidates": [],
+      "scenario": "大蓝书页面跳转、媒体资源与外链需要统一的默认拒绝解析，防止危险协议、越权主机和路径编码绕过。",
+      "stack": "agnostic",
+      "status": "done",
+      "targetComponentId": "common.agnostic.safe-target-resolver",
+      "title": "站内路由、资源与外链安全解析器",
+      "updatedAt": "2026-08-12"
+    },
+    {
+      "acceptanceCriteria": [
+        "任务使用稳定 ID、并发槽位和独立 claim token",
+        "进度单调收敛且旧 claim 不能更新新任务状态",
+        "支持暂停、取消、显式重试、重排与重启恢复",
+        "控制器不读取文件、不请求网络、不写存储且不创建定时器"
+      ],
+      "capabilities": [
+        "claim-concurrency-limit",
+        "restart-hydration",
+        "stale-progress-protection",
+        "upload-retry-control",
+        "upload-task-state"
+      ],
+      "category": "common",
+      "createdAt": "2026-08-12",
+      "id": "REQ-20260812-DALANSHU-UPLOAD",
+      "kind": "sdk",
+      "priority": "P0",
+      "requestedBy": "user",
+      "reuseCandidates": [
+        "common.agnostic.pending-retry-queue"
+      ],
+      "scenario": "大蓝书发布器和媒体业务需要统一上传任务、并发、进度、重试和重启恢复，但文件读取、传输与持久化必须由宿主负责。",
+      "stack": "agnostic",
+      "status": "done",
+      "targetComponentId": "common.agnostic.upload-task-controller",
+      "title": "上传任务与并发进度控制器",
+      "updatedAt": "2026-08-12"
+    },
+    {
+      "acceptanceCriteria": [
+        "内容状态固定为草稿、待审核、已发布、未通过、隐藏和已删除",
+        "匿名、作者和审核员的查看能力由确定性策略统一计算",
+        "未知状态、viewer 或审核可见性必须默认拒绝",
+        "契约不依赖品牌、网络、存储、定时器或随机数"
+      ],
+      "capabilities": [
+        "content-state-policy",
+        "moderation-visibility",
+        "viewer-capability-decision"
+      ],
+      "category": "common",
+      "createdAt": "2026-08-12",
+      "id": "REQ-20260812-DALANSHU-VISIBILITY",
+      "kind": "contract",
+      "priority": "P1",
+      "requestedBy": "user",
+      "reuseCandidates": [
+        "common.agnostic.capability-contract"
+      ],
+      "scenario": "大蓝书用户端、运营后台和 API 需要共享内容状态与查看能力规则，避免各端复制枚举后出现审核和公开范围不一致。",
+      "stack": "agnostic",
+      "status": "done",
+      "targetComponentId": "common.agnostic.content-visibility-contract",
+      "title": "内容状态与审核可见性契约",
+      "updatedAt": "2026-08-12"
+    },
+    {
+      "acceptanceCriteria": [
+        "HTTPS /api/readyz 与机器契约正常；无需登录创建并用一次性编辑凭证修改；SQLite 重启后持久化；迁移前后备份均验证可恢复；Nginx 与服务日志无错误。"
+      ],
+      "capabilities": [
+        "feedback-deployment-verification"
+      ],
+      "category": "service",
+      "createdAt": "2026-08-13",
+      "id": "REQ-20260812-FEEDBACK-DEPLOYMENT",
+      "kind": "api",
+      "priority": "P1",
+      "requestedBy": "feedback:fb_6Rm51hBlUYKg5Y4M",
+      "reuseCandidates": [
+        "service.python.component-feedback-api"
+      ],
+      "scenario": "其他 AI 和使用者通过公开 HTTPS API 提交通用组件需求和使用反馈，需要匿名创建、凭证修改、服务重启、公开回读、备份验证与回滚均可复验。",
+      "stack": "python",
+      "status": "done",
+      "targetComponentId": "service.python.component-feedback-api",
+      "title": "匿名反馈入口部署验收",
+      "updatedAt": "2026-08-13"
+    },
+    {
+      "acceptanceCriteria": [
+        "同一幂等键和客户端编辑秘密重试只产生一条记录且仍可 PATCH",
+        "编辑秘密仅保存哈希，官方客户端不在 stdout、数据库或日志输出秘密",
+        "维护者审核采用 expected-status CAS，重复采纳返回同一受控需求 ID",
+        "匿名 HTTP 始终不能修改审核状态，采纳失败不留下半状态"
+      ],
+      "capabilities": [
+        "idempotent-adoption",
+        "maintainer-inbox",
+        "recoverable-anonymous-submit"
+      ],
+      "category": "service",
+      "createdAt": "2026-08-12",
+      "id": "REQ-20260812-FEEDBACK-RECOVERY",
+      "kind": "api",
+      "priority": "P0",
+      "requestedBy": "feedback:fb_NALEfdLfUUp1V54P",
+      "reuseCandidates": [
+        "service.python.component-feedback-api"
+      ],
+      "scenario": "来源反馈 fb_NALEfdLfUUp1V54P：AI 在弱网提交后响应可能丢失，需要恢复编辑能力，并由维护者将匿名收件箱内容安全、幂等地审核采纳为受控开发项。",
+      "stack": "python",
+      "status": "done",
+      "targetComponentId": "service.python.component-feedback-api",
+      "title": "匿名反馈恢复与审核采纳闭环",
+      "updatedAt": "2026-08-13"
+    },
+    {
+      "acceptanceCriteria": [
+        "需求与反馈列表支持参数化组合筛选、稳定分页和正确 total；机器契约明确先搜索后提交；中文、大小写、旧记录、未知参数和注入输入均有测试；搜索不读取凭证、审计或内部拒绝信息，也不产生数据库写入。"
+      ],
+      "capabilities": [
+        "feedback-search",
+        "submission-deduplication"
+      ],
+      "category": "service",
+      "createdAt": "2026-08-12",
+      "id": "REQ-20260812-FEEDBACK-SEARCH",
+      "kind": "api",
+      "priority": "P0",
+      "requestedBy": "user",
+      "reuseCandidates": [
+        "service.python.component-feedback-api"
+      ],
+      "scenario": "AI 在提交组件需求或使用反馈前，需要按关键词、组件、版本、状态和更新时间搜索已有记录，避免重复提交同一问题。",
+      "stack": "python",
+      "status": "done",
+      "targetComponentId": "service.python.component-feedback-api",
+      "title": "反馈和需求服务端搜索与提交前去重",
+      "updatedAt": "2026-08-13"
+    },
+    {
+      "acceptanceCriteria": [
+        "未知组件 ID 或版本错配在数据库、审计和幂等写入前返回 400",
+        "正确 ID 与版本创建成功，公开回读包含 componentVersion 与 catalogRevision",
+        "目录快照校验和不一致时服务拒绝启动，历史无版本记录明确标记 legacy"
+      ],
+      "capabilities": [
+        "catalog-integrity",
+        "component-version-binding",
+        "reproducible-feedback"
+      ],
+      "category": "service",
+      "createdAt": "2026-08-12",
+      "id": "REQ-20260812-FEEDBACK-VERSION",
+      "kind": "api",
+      "priority": "P0",
+      "requestedBy": "feedback:fb_hhvqZCL9qJ7yRgya",
+      "reuseCandidates": [
+        "service.python.component-feedback-api"
+      ],
+      "scenario": "来源反馈 fb_hhvqZCL9qJ7yRgya：AI 对组件提交问题时必须绑定准确组件 ID 与版本，维护者才能稳定复现和验证修复。",
+      "stack": "python",
+      "status": "done",
+      "targetComponentId": "service.python.component-feedback-api",
+      "title": "反馈绑定组件版本与发布目录",
+      "updatedAt": "2026-08-13"
+    },
+    {
+      "acceptanceCriteria": [
+        "list/show 显示 exactTag、exists、annotated、installable 与不可安装原因",
+        "支持 --installable/--released 过滤，未发布组件在 add 前即可识别",
+        "show JSON 包含 entrypoints、releaseEvidence 摘要和确定性包内组件名索引"
+      ],
+      "capabilities": [
+        "installability-filter",
+        "package-member-search",
+        "release-discovery"
+      ],
+      "category": "common",
+      "createdAt": "2026-08-12",
+      "id": "REQ-20260812-RELEASE-DISCOVERY",
+      "kind": "sdk",
+      "priority": "P0",
+      "requestedBy": "api:req_G9FuSgSeGGuGiipT",
+      "reuseCandidates": [
+        "templates.agnostic.component-template"
+      ],
+      "scenario": "来源需求 req_G9FuSgSeGGuGiipT：AI 通过 CLI 选组件时，需要在写入消费项目之前判断所属包、发布标签和可安装状态。",
+      "stack": "agnostic",
+      "status": "done",
+      "targetComponentId": null,
+      "title": "组件发布可安装性与包内组件检索",
+      "updatedAt": "2026-08-13"
+    },
+    {
+      "acceptanceCriteria": [
+        "支持 title、message、actionLabel、pending、disabled 和 request-action 事件",
+        "pending、disabled 与无动作状态均阻止重复或无效触发",
+        "提供中文默认文案、长文案换行、键盘激活与 ARIA disabled 语义",
+        "无 auth import、路由、网络、存储副作用；Web 编译通过且不声明未验证原生平台"
+      ],
+      "capabilities": [
+        "capability-prompt",
+        "controlled-action",
+        "keyboard-accessibility"
+      ],
+      "category": "frontend",
+      "createdAt": "2026-08-13",
+      "id": "REQ-20260813-AI-AUTH-CAPABILITY-PROMPT",
+      "kind": "ui",
+      "priority": "P1",
+      "requestedBy": "feedback:req_MYscpXr9A-PhDN4Y",
+      "reuseCandidates": [
+        "frontend.uni-app-x.community-primitives"
+      ],
+      "scenario": "页面在能力暂不可用时展示领域无关的标题、说明和唯一恢复动作，实际鉴权和恢复流程继续由消费项目控制器负责。",
+      "stack": "uni-app-x",
+      "status": "done",
+      "targetComponentId": "frontend.uni-app-x.community-primitives",
+      "title": "uni-app x 身份与能力门禁提示面板",
+      "updatedAt": "2026-08-13"
+    },
+    {
+      "acceptanceCriteria": [
+        "预演一次列全缺失标签且零写入；全部标签存在时预演与真实 compose 解析一致；根门禁识别 preset 指向未发布版本。"
+      ],
+      "capabilities": [
+        "compose-release-closure"
+      ],
+      "category": "common",
+      "createdAt": "2026-08-13",
+      "id": "REQ-20260813-AI-COMPOSE-RELEASE-CLOSURE",
+      "kind": "sdk",
+      "priority": "P0",
+      "requestedBy": "feedback:fb_TTfZ_pkt6v-64HEx",
+      "reuseCandidates": [
+        "templates.agnostic.project-template"
+      ],
+      "scenario": "来源反馈 fb_TTfZ_pkt6v-64HEx：AI 生成成品项目前需一次看清全部依赖 exact tag 和可安装状态，避免预演成功后真实生成才失败。",
+      "stack": "agnostic",
+      "status": "done",
+      "targetComponentId": null,
+      "title": "Compose 预演校验完整发布闭包",
+      "updatedAt": "2026-08-13"
+    },
+    {
+      "acceptanceCriteria": [
+        "提供 leading、center、trailing 插槽且不硬编码品牌、图片、搜索路由或文案",
+        "适配顶部安全区、359px 以下压缩，并可在 1024px 以上隐藏",
+        "仅提供布局插槽，不执行路由、网络、存储或鉴权副作用",
+        "源码契约、39 项组件测试和 HBuilderX 5.23 Web 编译通过，不声明未验证原生平台"
+      ],
+      "capabilities": [
+        "mobile-global-topbar",
+        "responsive-navigation",
+        "safe-area-layout"
+      ],
+      "category": "frontend",
+      "createdAt": "2026-08-13",
+      "id": "REQ-20260813-AI-MOBILE-GLOBAL-TOPBAR",
+      "kind": "ui",
+      "priority": "P1",
+      "requestedBy": "feedback:req_kZpRwFDeSgsRD7Vp",
+      "reuseCandidates": [
+        "frontend.uni-app-x.community-primitives"
+      ],
+      "scenario": "跨主题应用的首页、工作区和内容页共享 leading、居中内容与 trailing 工具区；详情页返回标题继续使用现有 mobile-page-header。",
+      "stack": "uni-app-x",
+      "status": "done",
+      "targetComponentId": "frontend.uni-app-x.community-primitives",
+      "title": "uni-app x 移动端全局导航与搜索工具栏",
+      "updatedAt": "2026-08-13"
+    },
+    {
+      "acceptanceCriteria": [
+        "从精确标签安装到空 consumer；仅凭组件目录和锁定依赖 npm ci/typecheck/test/build 通过；源码与构建配置不解析兄弟源码；CI 覆盖隔离安装。"
+      ],
+      "capabilities": [
+        "isolated-project-template"
+      ],
+      "category": "frontend",
+      "createdAt": "2026-08-13",
+      "id": "REQ-20260813-AI-RESOURCE-APP-ISOLATION",
+      "kind": "project-template",
+      "priority": "P0",
+      "requestedBy": "feedback:fb_CuOsLqn8ZLmJO8Zm",
+      "reuseCandidates": [
+        "frontend.vue3.resource-admin-app"
+      ],
+      "scenario": "来源反馈 fb_CuOsLqn8ZLmJO8Zm：资源后台成品包必须在脱离源仓库兄弟目录后仍能安装、类型检查、测试和构建。",
+      "stack": "vue3",
+      "status": "done",
+      "targetComponentId": "frontend.vue3.resource-admin-app",
+      "title": "Resource Admin App 独立安装发布闭包",
+      "updatedAt": "2026-08-13"
+    },
+    {
+      "acceptanceCriteria": [
+        "提供 sidebar、header、search、actions 和内容插槽，断点、侧栏宽度与头部高度可配置",
+        "窄屏隐藏侧栏、工具区换行且内容无横向溢出",
+        "无路由、网络、存储、鉴权副作用，默认中文并提供 ARIA 区域语义",
+        "源码契约、39 项组件测试和 HBuilderX 5.23 Web 编译通过，不声明未验证原生平台"
+      ],
+      "capabilities": [
+        "responsive-layout",
+        "responsive-page-shell",
+        "scroll-ownership"
+      ],
+      "category": "frontend",
+      "createdAt": "2026-08-13",
+      "id": "REQ-20260813-AI-RESPONSIVE-PAGE-SHELL",
+      "kind": "ui",
+      "priority": "P0",
+      "requestedBy": "feedback:req_Y9AkLCteK6SzhuSF",
+      "reuseCandidates": [
+        "frontend.uni-app-x.community-primitives"
+      ],
+      "scenario": "跨主题 uni-app x 页面复用桌面侧栏、全局工具区与内容视口，同时在移动宽度安全降级；组件保持纯展示，滚动所有权由消费端显式选择。",
+      "stack": "uni-app-x",
+      "status": "done",
+      "targetComponentId": "frontend.uni-app-x.community-primitives",
+      "title": "uni-app x 响应式页面壳与全局工具区",
+      "updatedAt": "2026-08-13"
+    },
+    {
+      "acceptanceCriteria": [
+        "外部 A 到 B 替换后 reset 返回 B；组件自身 v-model 回声不更新基线；显式基线可控；错误清空且无重复更新循环；独立 lint/typecheck/test/build 通过。"
+      ],
+      "capabilities": [
+        "controlled-reset-baseline"
+      ],
+      "category": "frontend",
+      "createdAt": "2026-08-13",
+      "id": "REQ-20260813-AI-SCHEMA-RESET-BASELINE",
+      "kind": "ui",
+      "priority": "P0",
+      "requestedBy": "feedback:fb_MiYh-GLeCR8J-NA0",
+      "reuseCandidates": [
+        "frontend.vue3.schema-form"
+      ],
+      "scenario": "来源反馈 fb_MiYh-GLeCR8J-NA0：同一 SchemaForm 从记录 A 切换到记录 B 后，重置必须恢复 B，不能带回挂载时旧值。",
+      "stack": "vue3",
+      "status": "done",
+      "targetComponentId": "frontend.vue3.schema-form",
+      "title": "SchemaForm 外部模型切换后的重置基线",
+      "updatedAt": "2026-08-13"
+    }
+  ],
+  "schemaVersion": 1
+}

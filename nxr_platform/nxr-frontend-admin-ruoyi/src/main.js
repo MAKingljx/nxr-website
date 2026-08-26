@@ -8,6 +8,10 @@ import 'element-plus/theme-chalk/dark/css-vars.css'
 import locale from 'element-plus/es/locale/lang/zh-cn'
 
 import '@/assets/styles/index.scss' // global css
+// Phoenix Component Library：仅加载当前实际复用组件对应的样式，避免引入整套展厅 CSS。
+import '@phoenix-gallery/primitives.css'
+import '@phoenix-gallery/platform-primitives.css'
+import '@phoenix-gallery/analytics-primitives.css'
 
 import App from './App'
 import store from './store'

@@ -2,7 +2,7 @@
   <main class="nxr-workspace customer-workspace">
     <nxr-page-header
       kicker="COLLECTOR ACCOUNTS"
-      title="用户管理"
+      title="客户管理"
       :summary="`共 ${formatNumber(total)} 位用户`"
     >
       <template #actions>
@@ -12,38 +12,48 @@
       </template>
     </nxr-page-header>
 
-    <section class="directory-toolbar" aria-label="用户筛选">
-      <el-segmented v-model="queryParams.status" :options="statusOptions" @change="loadCustomers(true)" />
-      <div class="directory-search">
-        <el-input
-          v-model="queryParams.query"
-          :prefix-icon="Search"
-          clearable
-          placeholder="搜索昵称、邮箱或手机"
-          @keyup.enter="loadCustomers(true)"
-          @clear="loadCustomers(true)"
-        />
-        <el-button type="primary" :icon="Search" @click="loadCustomers(true)">搜索</el-button>
-        <el-button v-if="hasQuery" :icon="RefreshLeft" @click="resetQuery">重置</el-button>
-      </div>
-    </section>
-
-    <customer-directory
-      :rows="rows"
+    <nxr-server-data-workbench
       :loading="loading"
-      :can-manage="canManage"
-      :status-changing-id="statusChangingId"
-      @open-detail="openDetail"
-      @toggle-status="confirmStatus"
-    />
-
-    <pagination
-      v-show="total > 0"
+      :error="loadError"
+      :empty="!loading && !loadError && rows.length === 0"
       :total="total"
-      v-model:page="queryParams.page"
-      v-model:limit="queryParams.pageSize"
-      @pagination="loadCustomers"
-    />
+      :page="queryParams.page"
+      :page-size="queryParams.pageSize"
+      :show-reset="hasQuery"
+      empty-title="没有找到用户"
+      empty-description="请调整状态或搜索条件后重试。"
+      aria-label="用户数据列表"
+      @query="loadCustomers(true)"
+      @reset="resetQuery"
+      @retry="loadCustomers"
+      @page-change="handleCustomerPageChange"
+    >
+      <template #filters>
+        <el-segmented v-model="queryParams.status" :options="statusOptions" @change="loadCustomers(true)" />
+        <div class="directory-search">
+          <el-input
+            v-model="queryParams.query"
+            :prefix-icon="Search"
+            clearable
+            placeholder="搜索昵称、邮箱或手机"
+            aria-label="搜索昵称、邮箱或手机"
+            @clear="loadCustomers(true)"
+          />
+        </div>
+      </template>
+      <template #filter-actions>
+        <el-button type="primary" :icon="Search" :loading="loading" native-type="submit">搜索</el-button>
+        <el-button v-if="hasQuery" :icon="RefreshLeft" :disabled="loading" @click="resetQuery">重置</el-button>
+      </template>
+
+      <customer-directory
+        :rows="rows"
+        :can-manage="canManage"
+        :status-changing-id="statusChangingId"
+        @open-detail="openDetail"
+        @toggle-status="confirmStatus"
+      />
+    </nxr-server-data-workbench>
 
     <customer-detail-drawer
       v-model="detailOpen"
@@ -54,6 +64,7 @@
       :revoking-sessions="revokingSessions"
       @toggle-status="confirmStatus"
       @revoke-sessions="confirmRevokeSessions"
+      @change-type="changeCustomerType"
     />
   </main>
 </template>
@@ -62,7 +73,8 @@
 import { Refresh, RefreshLeft, Search } from '@element-plus/icons-vue'
 import auth from '@/plugins/auth'
 import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
-import { getCustomer, listCustomers, revokeCustomerSessions, updateCustomerStatus } from '@/api/nxr/customers'
+import NxrServerDataWorkbench from '@/components/NxrWorkspace/ServerDataWorkbench.vue'
+import { getCustomer, listCustomers, revokeCustomerSessions, updateCustomerStatus, updateCustomerType } from '@/api/nxr/customers'
 import CustomerDetailDrawer from './components/CustomerDetailDrawer.vue'
 import CustomerDirectory from './components/CustomerDirectory.vue'
 
@@ -70,6 +82,7 @@ const { proxy } = getCurrentInstance()
 const rows = ref([])
 const total = ref(0)
 const loading = ref(false)
+const loadError = ref('')
 const detailOpen = ref(false)
 const detailLoading = ref(false)
 const detail = ref(null)
@@ -88,15 +101,24 @@ const hasQuery = computed(() => Boolean(queryParams.status || queryParams.query)
 async function loadCustomers(resetPage = false) {
   if (resetPage) queryParams.page = 1
   loading.value = true
+  loadError.value = ''
   try {
     const response = await listCustomers(queryParams)
     rows.value = response.data.items
     total.value = response.data.total
     queryParams.page = response.data.page
     queryParams.pageSize = response.data.pageSize
+  } catch {
+    loadError.value = '暂时无法读取用户数据，请稍后重试。'
   } finally {
     loading.value = false
   }
+}
+
+function handleCustomerPageChange(page, pageSize) {
+  queryParams.page = page
+  queryParams.pageSize = pageSize
+  loadCustomers()
 }
 
 function resetQuery() {
@@ -147,6 +169,19 @@ function confirmRevokeSessions() {
   })
 }
 
+async function changeCustomerType(customer, accountTypeCode) {
+  if (!customer || customer.accountTypeCode === accountTypeCode) return
+  const label = accountTypeCode === 'merchant' ? '商户' : '普通客户'
+  try {
+    const response = await updateCustomerType(customer.id, accountTypeCode)
+    if (detail.value?.customer.id === customer.id) detail.value = response.data
+    proxy.$modal.msgSuccess(`账号类型已改为${label}`)
+    await loadCustomers()
+  } catch {
+    proxy.$modal.msgError('账号类型更新失败')
+  }
+}
+
 function formatNumber(value) {
   return new Intl.NumberFormat('zh-CN').format(value || 0)
 }
@@ -159,29 +194,12 @@ loadCustomers()
   overflow-x: hidden;
 }
 
-.directory-toolbar {
-  display: flex;
-  min-height: 70px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 14px 16px;
-  border: 1px solid var(--nxr-border);
-  border-bottom: 0;
-  border-radius: 8px 8px 0 0;
-  background: var(--nxr-surface);
-}
-
 .directory-search {
-  display: flex;
-  width: min(100%, 560px);
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
+  width: min(100%, 330px);
 }
 
 .directory-search .el-input {
-  width: min(100%, 330px);
+  width: 100%;
 }
 
 :deep(.el-segmented) {
@@ -190,20 +208,14 @@ loadCustomers()
   --el-segmented-bg-color: var(--nxr-surface-muted);
 }
 
-:deep(.pagination-container) {
-  margin-top: 14px;
-  background: transparent;
+:deep(.nxr-server-data-workbench .directory-table) {
+  border: 0;
+  border-radius: 0;
 }
 
 @media (max-width: 900px) {
-  .directory-toolbar {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
   .directory-search {
     width: 100%;
-    justify-content: flex-start;
   }
 
   .directory-search .el-input {
@@ -211,14 +223,4 @@ loadCustomers()
   }
 }
 
-@media (max-width: 560px) {
-  .directory-search {
-    align-items: stretch;
-    flex-wrap: wrap;
-  }
-
-  .directory-search .el-input {
-    flex-basis: 100%;
-  }
-}
 </style>

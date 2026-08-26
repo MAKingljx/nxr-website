@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "id": "frontend.vue3.server-data-workbench",
+  "name": "server-data-workbench",
+  "version": "0.1.0",
+  "category": "frontend",
+  "stack": "vue3",
+  "status": "experimental",
+  "kind": "ui",
+  "capabilities": [
+    "server-data-query",
+    "server-pagination",
+    "state-feedback"
+  ],
+  "owner": "phoenix",
+  "keywords": [
+    "server data",
+    "controlled pagination",
+    "query form",
+    "vue 3"
+  ],
+  "summary": "Domain-neutral Vue 3 workbench for host-owned server queries, pagination, content, and row actions.",
+  "entrypoints": [
+    "src/index.ts"
+  ],
+  "compatibility": {
+    "node": "25.8.1",
+    "vue": "3.5.41",
+    "typescript": "6.0.3",
+    "vite": "8.2.1",
+    "vitest": "4.1.10"
+  },
+  "dependencies": {
+    "runtime": [],
+    "peer": [
+      "vue"
+    ]
+  },
+  "releaseEvidence": {
+    "schemaVersion": 1,
+    "documentation": "evidence/VERIFICATION.md",
+    "examples": [
+      "example/App.vue"
+    ],
+    "tests": [
+      "tests/server-data-workbench.test.ts"
+    ],
+    "compatibility": {
+      "node": [
+        "tests/server-data-workbench.test.ts"
+      ],
+      "vue": [
+        "tests/server-data-workbench.test.ts"
+      ],
+      "typescript": [
+        "tests/server-data-workbench.test.ts"
+      ],
+      "vite": [
+        "tests/server-data-workbench.test.ts"
+      ],
+      "vitest": [
+        "tests/server-data-workbench.test.ts"
+      ]
+    },
+    "build": "evidence/build.json",
+    "test": "evidence/test.json",
+    "dependencies": {
+      "mode": "locked",
+      "path": "package-lock.json"
+    }
+  }
+}

@@ -109,7 +109,8 @@ public class CustomerAuthService {
         String tokenHash = hashToken(rawToken.trim());
         Optional<CustomerAccount> account = jdbcClient.sql(
                 """
-                SELECT c.id, c.email, c.password_hash, c.display_name, c.mobile, c.is_active, c.created_at, c.last_login_at
+                SELECT c.id, c.email, c.password_hash, c.display_name, c.mobile, c.account_type_code,
+                       c.is_active, c.created_at, c.last_login_at
                 FROM customer_session s
                 JOIN customer_account c ON c.id = s.customer_id
                 WHERE s.token_hash = :tokenHash
@@ -128,13 +129,16 @@ public class CustomerAuthService {
     }
 
     public CustomerProfile profile(CustomerAccount account) {
-        return new CustomerProfile(account.id(), account.email(), account.displayName(), account.mobile(), account.createdAt(), account.lastLoginAt());
+        return new CustomerProfile(
+            account.id(), account.email(), account.displayName(), account.mobile(), account.accountTypeCode(),
+            account.createdAt(), account.lastLoginAt()
+        );
     }
 
     public Optional<CustomerAccount> findCustomerById(long customerId) {
         return jdbcClient.sql(
                 """
-                SELECT id, email, password_hash, display_name, mobile, is_active, created_at, last_login_at
+                SELECT id, email, password_hash, display_name, mobile, account_type_code, is_active, created_at, last_login_at
                 FROM customer_account
                 WHERE id = :customerId
                 """
@@ -151,7 +155,7 @@ public class CustomerAuthService {
         }
         return jdbcClient.sql(
                 """
-                SELECT id, email, password_hash, display_name, mobile, is_active, created_at, last_login_at
+                SELECT id, email, password_hash, display_name, mobile, account_type_code, is_active, created_at, last_login_at
                 FROM customer_account
                 WHERE email = :email
                 """
@@ -188,6 +192,7 @@ public class CustomerAuthService {
             rs.getString("password_hash"),
             rs.getString("display_name"),
             rs.getString("mobile"),
+            rs.getString("account_type_code"),
             rs.getBoolean("is_active"),
             rs.getObject("created_at", LocalDateTime.class),
             rs.getObject("last_login_at", LocalDateTime.class)
@@ -241,6 +246,7 @@ public class CustomerAuthService {
         String passwordHash,
         String displayName,
         String mobile,
+        String accountTypeCode,
         boolean active,
         LocalDateTime createdAt,
         LocalDateTime lastLoginAt
@@ -252,6 +258,7 @@ public class CustomerAuthService {
         String email,
         String displayName,
         String mobile,
+        String accountTypeCode,
         LocalDateTime createdAt,
         LocalDateTime lastLoginAt
     ) {

@@ -185,7 +185,10 @@ async function toggleTheme(event) {
   }
 
   .breadcrumb-container {
-    flex-shrink: 0;
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    white-space: nowrap;
   }
 
   .topmenu-container {
@@ -203,6 +206,7 @@ async function toggleTheme(event) {
   }
 
   .right-menu {
+    flex: 0 0 auto;
     height: 100%;
     line-height: 50px;
     display: flex;
@@ -278,6 +282,24 @@ async function toggleTheme(event) {
         }
       }
     }
+  }
+}
+
+@media (max-width: 600px) {
+  .navbar .right-menu .avatar-container {
+    padding-left: 4px;
+  }
+
+  .navbar .right-menu .avatar-container .avatar-wrapper {
+    right: 0;
+  }
+
+  .navbar .right-menu .avatar-container .avatar-wrapper .user-avatar {
+    margin-right: 4px;
+  }
+
+  .navbar .right-menu .avatar-container .avatar-wrapper .user-nickname {
+    display: none;
   }
 }
 </style>

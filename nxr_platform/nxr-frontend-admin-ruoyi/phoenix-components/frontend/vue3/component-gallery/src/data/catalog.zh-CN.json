@@ -1,0 +1,178 @@
+{
+  "backend.fastapi.business-core": {
+    "name": "FastAPI 业务内核",
+    "summary": "可复用的 FastAPI 业务内核，覆盖资源目录、权限、预约、订单、服务接口、通知与审计。"
+  },
+  "backend.fastapi.component-template": {
+    "name": "FastAPI 组件模板",
+    "summary": "用于创建 FastAPI 路由包的复制模板，晋级前需要补齐并验证依赖基线。"
+  },
+  "backend.flask.component-template": {
+    "name": "Flask 组件模板",
+    "summary": "用于创建 Flask 蓝图包的复制模板，晋级前需要补齐并验证依赖基线。"
+  },
+  "backend.flask.base-project": {
+    "name": "Flask SQLite 基础项目",
+    "summary": "可直接启动的 Flask 与 SQLite 基础项目，包含账户安全、认证权限、分层 CRUD、事务内审计和版本化 SQL 迁移。"
+  },
+  "backend.spring-boot.component-template": {
+    "name": "Spring Boot 组件模板",
+    "summary": "用于创建 Spring Boot 自动配置组件的复制模板，晋级前需要验证 Java 与 Spring Boot 基线。"
+  },
+  "backend.spring-boot.base-project": {
+    "name": "Spring Boot SQLite 基础项目",
+    "summary": "可直接启动的 Spring Boot 与 SQLite 基础项目，包含账户安全、认证权限、分层 CRUD、事务内审计和版本化 SQL 迁移。"
+  },
+  "common.agnostic.capability-contract": {
+    "name": "通用能力组合契约",
+    "summary": "用于将通用业务能力组合成不同应用的技术栈无关契约。"
+  },
+  "common.agnostic.account-scope-guard": {
+    "name": "账号范围隔离控制器",
+    "summary": "在账号切换后隔离缓存、快照和在途响应，不保存任何会话凭据。"
+  },
+  "common.agnostic.async-collection-controller": {
+    "name": "异步集合控制器",
+    "summary": "统一首次加载、游标加载更多、稳定去重、失效重置和旧响应隔离。"
+  },
+  "common.agnostic.audit-event-core": {
+    "name": "审计事件内核",
+    "summary": "提供有界不可变审计事件、确定性差异摘要和敏感字段策略。"
+  },
+  "common.agnostic.cas-state-machine": {
+    "name": "CAS 状态机",
+    "summary": "提供版本校验、幂等转换、旧命令隔离和严格恢复校验的通用状态机。"
+  },
+  "common.agnostic.component-template": {
+    "name": "通用组件模板",
+    "summary": "不预设产物格式的技术栈无关组件模板。"
+  },
+  "common.agnostic.content-visibility-contract": {
+    "name": "内容可见性契约",
+    "summary": "统一内容状态、审核可见性和匿名用户、作者、审核员的查看能力。"
+  },
+  "common.agnostic.cursor-pagination": {
+    "name": "稳定游标分页",
+    "summary": "提供查询绑定、过滤摘要、过期检测和前后方向的确定性游标分页契约。"
+  },
+  "common.agnostic.draft-recovery-controller": {
+    "name": "草稿恢复控制器",
+    "summary": "管理草稿修订、脏字段、旧保存响应和本地远端冲突处理。"
+  },
+  "common.agnostic.idempotent-command-controller": {
+    "name": "幂等命令控制器",
+    "summary": "合并重复提交，并在响应丢失时进入显式结果核对流程。"
+  },
+  "common.agnostic.media-asset-core": {
+    "name": "媒体资产内核",
+    "summary": "统一图片、视频和文件的生命周期、所有权、公开投影与安全地址。"
+  },
+  "common.agnostic.moderation-core": {
+    "name": "内容审核内核",
+    "summary": "提供审核领取、决定、隐藏恢复、版本冲突和公开理由边界。"
+  },
+  "common.agnostic.notification-aggregation": {
+    "name": "通知聚合模块",
+    "summary": "按账号隔离通知，提供事件去重、稳定聚合、已读状态和游标投影。"
+  },
+  "common.agnostic.pending-retry-queue": {
+    "name": "待重试任务队列",
+    "summary": "管理可恢复待办、指数退避、任务领取、旧领取隔离和人工取消。"
+  },
+  "common.agnostic.route-restore-controller": {
+    "name": "路由状态恢复控制器",
+    "summary": "按账号和路由保存筛选、分页、可见项与滚动位置的有界快照。"
+  },
+  "common.agnostic.report-appeal-workflow": {
+    "name": "举报申诉工作流",
+    "summary": "统一举报受理、处置回执、申诉复核和公开信息边界。"
+  },
+  "common.agnostic.safe-target-resolver": {
+    "name": "安全目标解析器",
+    "summary": "用独立白名单解析站内路由、资源地址和外链，并默认拒绝危险目标。"
+  },
+  "common.agnostic.transactional-outbox": {
+    "name": "事务发件箱状态模块",
+    "summary": "管理待发布事件、领取租约、重试和死信状态，原子写入由宿主事务保证。"
+  },
+  "common.agnostic.upload-task-controller": {
+    "name": "上传任务控制器",
+    "summary": "管理上传并发、单调进度、暂停取消、显式重试和重启恢复。"
+  },
+  "desktop.tauri.component-template": {
+    "name": "Tauri 组件模板",
+    "summary": "用于创建 Tauri 命令与权限能力的复制模板，暂不声明具体操作系统兼容性。"
+  },
+  "frontend.uni-app.component-template": {
+    "name": "uni-app 组件模板",
+    "summary": "用于创建普通 uni-app 组件的复制模板，暂不声明 uni-app x 或具体目标平台兼容性。"
+  },
+  "frontend.uni-app-x.component-template": {
+    "name": "uni-app x 组件模板",
+    "summary": "使用 .uvue 与 UTS 创建 uni-app x 组件，不由 Web 证据推断其他目标端兼容。"
+  },
+  "frontend.uni-app-x.community-feed": {
+    "name": "社区信息流与详情组件",
+    "summary": "提供信息流卡片、媒体网格、内容详情、评论树、回复和关系操作。"
+  },
+  "frontend.uni-app-x.community-primitives": {
+    "name": "社区基础组件",
+    "summary": "提供移动标题、搜索、状态、作者、互动、通知、评论和安全媒体等高频组件。"
+  },
+  "frontend.uni-app-x.creator-assets": {
+    "name": "创作者与个人资产组件",
+    "summary": "提供资产列表、创作者指标、内容状态、重新提交、举报记录和关系列表。"
+  },
+  "frontend.uni-app-x.post-composer": {
+    "name": "内容发布器组件",
+    "summary": "提供正文、媒体、话题、标签、发布校验、草稿恢复和结果核对组件。"
+  },
+  "frontend.uni-app-x.report-appeal": {
+    "name": "举报与申诉组件",
+    "summary": "提供举报、申诉、意见反馈和安全证据附件展示组件。"
+  },
+  "frontend.uni-app-x.search-notification": {
+    "name": "搜索与通知组件",
+    "summary": "提供搜索结果、历史、筛选、通知分组、通知过滤和全部已读操作。"
+  },
+  "frontend.vue2.component-template": {
+    "name": "Vue 2 组件模板",
+    "summary": "用于创建 Vue 2 组件的复制模板，晋级前需要选择并验证依赖。"
+  },
+  "frontend.vue3.api-client": {
+    "name": "Vue 3 通用接口客户端",
+    "summary": "统一登录、设备会话、修改密码、资源读写、审计查询、错误和超时处理，不绑定浏览器存储。"
+  },
+  "frontend.vue3.resource-admin-app": {
+    "name": "Vue 3 资源后台应用",
+    "summary": "可直接启动的资源管理后台装配入口，包含登录、资源工作台、账户安全与退出。"
+  },
+  "frontend.vue3.business-workbench": {
+    "name": "Vue 3 业务工作台",
+    "summary": "用于业务资源统计、搜索、筛选、查看和操作的响应式工作台。"
+  },
+  "frontend.vue3.component-gallery": {
+    "name": "Vue 3 组件展厅",
+    "summary": "提供 163 个现代化 Vue 3 通用组件与页面框架，并提供成品系统目录和组件需求清单。"
+  },
+  "frontend.vue3.component-template": {
+    "name": "Vue 3 组件模板",
+    "summary": "用于创建 Vue 3 组件的复制模板，晋级前需要选择并验证依赖。"
+  },
+  "frontend.vue3.schema-form": {
+    "name": "Vue 3 配置表单",
+    "summary": "支持响应式布局、前端校验和扩展插槽的无障碍配置驱动表单。"
+  },
+  "templates.agnostic.component-template": {
+    "name": "通用组件工程模板",
+    "summary": "复制后替换占位内容，用于创建新的自包含组件。"
+  },
+  "service.python.component-feedback-api": {
+    "name": "匿名需求与反馈 API",
+    "summary": "公开接收通用组件需求与使用反馈，并由一次性凭证保护原提交者后续修改。"
+  },
+  "templates.agnostic.project-template": {
+    "name": "完整项目模板",
+    "summary": "用于创建完整项目的复制模板，复制后需要选择并验证目标技术栈。"
+  }
+}

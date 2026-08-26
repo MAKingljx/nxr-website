@@ -1,0 +1,1560 @@
+[
+  {
+    "id": "backend.fastapi.business-core",
+    "name": "FastAPI 业务内核",
+    "version": "0.1.1",
+    "category": "backend",
+    "stack": "fastapi",
+    "status": "experimental",
+    "kind": "domain",
+    "capabilities": [
+      "authorization",
+      "resource-catalog",
+      "inventory",
+      "order",
+      "idempotency",
+      "notification",
+      "audit",
+      "payment-provider",
+      "recommendation-provider",
+      "live-provider"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "business-core",
+      "fastapi",
+      "rbac",
+      "reservation",
+      "state-machine",
+      "provider-ports"
+    ],
+    "summary": "可复用的 FastAPI 业务内核，覆盖资源目录、权限、预约、订单、服务接口、通知与审计。",
+    "path": "backend/fastapi/business-core",
+    "compatibility": {
+      "asgi-test-client": "httpx 0.28.1",
+      "fastapi": "0.115.14",
+      "pydantic": "2.11.7",
+      "python": "3.12.10"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": [
+        "fastapi",
+        "pydantic"
+      ]
+    }
+  },
+  {
+    "id": "backend.fastapi.component-template",
+    "name": "FastAPI 组件模板",
+    "version": "0.0.0",
+    "category": "backend",
+    "stack": "fastapi",
+    "status": "template",
+    "kind": "template",
+    "capabilities": [],
+    "owner": "",
+    "keywords": [],
+    "summary": "用于创建 FastAPI 路由包的复制模板，晋级前需要补齐并验证依赖基线。",
+    "path": "backend/fastapi/component-template",
+    "compatibility": {},
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "backend.flask.base-project",
+    "name": "Flask SQLite 基础项目",
+    "version": "0.4.0",
+    "category": "backend",
+    "stack": "flask",
+    "status": "experimental",
+    "kind": "project-template",
+    "capabilities": [
+      "app-factory",
+      "health-check",
+      "authentication",
+      "authorization",
+      "rbac",
+      "bearer-sessions",
+      "session-management",
+      "password-change",
+      "resource-management",
+      "sqlite-persistence",
+      "sql-migrations",
+      "audit"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "flask",
+      "sqlite",
+      "crud",
+      "auth",
+      "rbac",
+      "migration",
+      "audit",
+      "project template"
+    ],
+    "summary": "可直接启动的 Flask 与 SQLite 基础项目，包含账户安全、认证权限、分层 CRUD、事务内审计和版本化 SQL 迁移。",
+    "path": "backend/flask/base-project",
+    "compatibility": {
+      "flask": "3.1.3",
+      "pytest": "9.0.3",
+      "python": "3.12.10",
+      "sqlite": ">=3.35.0"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": [
+        "flask",
+        "werkzeug"
+      ]
+    }
+  },
+  {
+    "id": "backend.flask.component-template",
+    "name": "Flask 组件模板",
+    "version": "0.0.0",
+    "category": "backend",
+    "stack": "flask",
+    "status": "template",
+    "kind": "template",
+    "capabilities": [],
+    "owner": "",
+    "keywords": [],
+    "summary": "用于创建 Flask 蓝图包的复制模板，晋级前需要补齐并验证依赖基线。",
+    "path": "backend/flask/component-template",
+    "compatibility": {},
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "backend.spring-boot.base-project",
+    "name": "Spring Boot SQLite 基础项目",
+    "version": "0.4.0",
+    "category": "backend",
+    "stack": "spring-boot",
+    "status": "experimental",
+    "kind": "project-template",
+    "capabilities": [
+      "sqlite-persistence",
+      "sql-migrations",
+      "health-check",
+      "resource-management",
+      "layered-architecture",
+      "api-error-contract",
+      "password-hashing",
+      "authentication",
+      "authorization",
+      "bearer-sessions",
+      "session-management",
+      "password-change",
+      "rbac",
+      "admin-bootstrap",
+      "audit"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "spring boot",
+      "sqlite",
+      "sql migration",
+      "project starter",
+      "authentication",
+      "rbac",
+      "audit"
+    ],
+    "summary": "可直接启动的 Spring Boot 与 SQLite 基础项目，包含账户安全、认证权限、分层 CRUD、事务内审计和版本化 SQL 迁移。",
+    "path": "backend/spring-boot/base-project",
+    "compatibility": {
+      "java": "17+",
+      "maven": "3.9.10",
+      "spring-boot": "4.1.0",
+      "sqlite-jdbc": "3.53.1.0"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": [
+        "spring-boot-starter-webmvc",
+        "spring-boot-starter-jdbc",
+        "spring-boot-starter-validation",
+        "sqlite-jdbc"
+      ]
+    }
+  },
+  {
+    "id": "backend.spring-boot.component-template",
+    "name": "Spring Boot 组件模板",
+    "version": "0.0.0",
+    "category": "backend",
+    "stack": "spring-boot",
+    "status": "template",
+    "kind": "template",
+    "capabilities": [],
+    "owner": "",
+    "keywords": [],
+    "summary": "用于创建 Spring Boot 自动配置组件的复制模板，晋级前需要验证 Java 与 Spring Boot 基线。",
+    "path": "backend/spring-boot/component-template",
+    "compatibility": {},
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "common.agnostic.cas-state-machine",
+    "name": "CAS 状态机",
+    "version": "0.1.0",
+    "category": "common",
+    "stack": "agnostic",
+    "status": "experimental",
+    "kind": "sdk",
+    "capabilities": [
+      "finite-state-transition-policy",
+      "compare-and-set-revision",
+      "idempotent-transition-record",
+      "strict-replay-hydration"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "cas",
+      "state machine",
+      "optimistic concurrency",
+      "idempotency",
+      "event replay"
+    ],
+    "summary": "提供版本校验、幂等转换、旧命令隔离和严格恢复校验的通用状态机。",
+    "path": "common/agnostic/cas-state-machine",
+    "compatibility": {
+      "node": "25.2.1",
+      "typescript": "6.0.3"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "common.agnostic.upload-task-controller",
+    "name": "上传任务控制器",
+    "version": "0.1.0",
+    "category": "common",
+    "stack": "agnostic",
+    "status": "experimental",
+    "kind": "sdk",
+    "capabilities": [
+      "upload-task-state",
+      "progress-convergence",
+      "claim-concurrency-limit",
+      "upload-retry-control",
+      "restart-hydration",
+      "stale-progress-protection"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "upload",
+      "progress",
+      "concurrency",
+      "retry",
+      "claim token"
+    ],
+    "summary": "管理上传并发、单调进度、暂停取消、显式重试和重启恢复。",
+    "path": "common/agnostic/upload-task-controller",
+    "compatibility": {
+      "node": "25.2.1",
+      "typescript": "6.0.3"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "common.agnostic.report-appeal-workflow",
+    "name": "举报申诉工作流",
+    "version": "0.1.0",
+    "category": "common",
+    "stack": "agnostic",
+    "status": "experimental",
+    "kind": "sdk",
+    "capabilities": [
+      "report-appeal-state-chain",
+      "cas-command-idempotency",
+      "public-internal-data-separation",
+      "strict-event-replay"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "report",
+      "appeal",
+      "cas",
+      "public receipt",
+      "event replay"
+    ],
+    "summary": "统一举报受理、处置回执、申诉复核和公开信息边界。",
+    "path": "common/agnostic/report-appeal-workflow",
+    "compatibility": {
+      "node": "25.2.1",
+      "typescript": "6.0.3"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "common.agnostic.transactional-outbox",
+    "name": "事务发件箱状态模块",
+    "version": "0.1.0",
+    "category": "common",
+    "stack": "agnostic",
+    "status": "experimental",
+    "kind": "sdk",
+    "capabilities": [
+      "outbox-domain-state",
+      "revision-cas",
+      "claim-lease-control",
+      "stable-batch-selection",
+      "dead-letter-transition",
+      "strict-state-hydration"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "outbox",
+      "cas",
+      "lease",
+      "event",
+      "dead letter"
+    ],
+    "summary": "管理待发布事件、领取租约、重试和死信状态，原子写入由宿主事务保证。",
+    "path": "common/agnostic/transactional-outbox",
+    "compatibility": {
+      "node": "25.2.1",
+      "typescript": "6.0.3"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "common.agnostic.content-visibility-contract",
+    "name": "内容可见性契约",
+    "version": "0.1.0",
+    "category": "common",
+    "stack": "agnostic",
+    "status": "experimental",
+    "kind": "contract",
+    "capabilities": [
+      "content-state-policy",
+      "moderation-visibility",
+      "viewer-capability-decision"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "content policy",
+      "deterministic",
+      "fail closed",
+      "moderation",
+      "visibility"
+    ],
+    "summary": "统一内容状态、审核可见性和匿名用户、作者、审核员的查看能力。",
+    "path": "common/agnostic/content-visibility-contract",
+    "compatibility": {
+      "node": "25.2.1",
+      "typescript": "6.0.3"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "common.agnostic.moderation-core",
+    "name": "内容审核内核",
+    "version": "0.1.0",
+    "category": "common",
+    "stack": "agnostic",
+    "status": "experimental",
+    "kind": "sdk",
+    "capabilities": [
+      "scoped-moderation-state",
+      "reviewer-claim-cas",
+      "idempotent-decisions",
+      "stable-moderation-queue",
+      "safe-public-reasons"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "cas",
+      "domain model",
+      "moderation",
+      "review queue",
+      "scope isolation"
+    ],
+    "summary": "提供审核领取、决定、隐藏恢复、版本冲突和公开理由边界。",
+    "path": "common/agnostic/moderation-core",
+    "compatibility": {
+      "node": "25.2.1",
+      "typescript": "6.0.3"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "common.agnostic.media-asset-core",
+    "name": "媒体资产内核",
+    "version": "0.1.0",
+    "category": "common",
+    "stack": "agnostic",
+    "status": "experimental",
+    "kind": "sdk",
+    "capabilities": [
+      "immutable-media-assets",
+      "media-asset-cas",
+      "media-lifecycle",
+      "owner-scoped-assets",
+      "safe-public-media-projection"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "cas",
+      "domain model",
+      "media assets",
+      "ownership",
+      "safe target"
+    ],
+    "summary": "统一图片、视频和文件的生命周期、所有权、公开投影与安全地址。",
+    "path": "common/agnostic/media-asset-core",
+    "compatibility": {
+      "node": "25.2.1",
+      "typescript": "6.0.3"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "common.agnostic.safe-target-resolver",
+    "name": "安全目标解析器",
+    "version": "0.1.0",
+    "category": "common",
+    "stack": "agnostic",
+    "status": "experimental",
+    "kind": "sdk",
+    "capabilities": [
+      "lazy-safe-target",
+      "route-query-canonicalization",
+      "https-host-allowlist",
+      "path-prefix-policy"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "safe target",
+      "route",
+      "https",
+      "allowlist",
+      "path traversal"
+    ],
+    "summary": "用独立白名单解析站内路由、资源地址和外链，并默认拒绝危险目标。",
+    "path": "common/agnostic/safe-target-resolver",
+    "compatibility": {
+      "node": "25.2.1",
+      "typescript": "6.0.3"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "common.agnostic.audit-event-core",
+    "name": "审计事件内核",
+    "version": "0.1.0",
+    "category": "common",
+    "stack": "agnostic",
+    "status": "experimental",
+    "kind": "sdk",
+    "capabilities": [
+      "audit-event-model",
+      "bounded-snapshot-clone",
+      "sensitive-key-policy",
+      "deterministic-difference-summary",
+      "stable-event-batch"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "audit",
+      "event",
+      "redaction",
+      "difference",
+      "batch"
+    ],
+    "summary": "提供有界不可变审计事件、确定性差异摘要和敏感字段策略。",
+    "path": "common/agnostic/audit-event-core",
+    "compatibility": {
+      "node": "25.2.1",
+      "typescript": "6.0.3"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "common.agnostic.idempotent-command-controller",
+    "name": "幂等命令控制器",
+    "version": "0.1.0",
+    "category": "common",
+    "stack": "agnostic",
+    "status": "experimental",
+    "kind": "sdk",
+    "capabilities": [
+      "deterministic-command-key",
+      "idempotent-command-state",
+      "duplicate-submit-coalescing",
+      "unknown-result-reconciliation",
+      "stale-response-protection"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "command",
+      "idempotency",
+      "reconcile",
+      "retry",
+      "request epoch"
+    ],
+    "summary": "合并重复提交，并在响应丢失时进入显式结果核对流程。",
+    "path": "common/agnostic/idempotent-command-controller",
+    "compatibility": {
+      "node": "25.2.1",
+      "typescript": "6.0.3"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "common.agnostic.async-collection-controller",
+    "name": "异步集合控制器",
+    "version": "0.1.0",
+    "category": "common",
+    "stack": "agnostic",
+    "status": "experimental",
+    "kind": "sdk",
+    "capabilities": [
+      "async-request-control",
+      "cursor-pagination",
+      "stale-response-protection"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "async state",
+      "cursor",
+      "pagination",
+      "request epoch"
+    ],
+    "summary": "统一首次加载、游标加载更多、稳定去重、失效重置和旧响应隔离。",
+    "path": "common/agnostic/async-collection-controller",
+    "compatibility": {
+      "node": "25.2.1",
+      "typescript": "6.0.3"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "common.agnostic.pending-retry-queue",
+    "name": "待重试任务队列",
+    "version": "0.1.0",
+    "category": "common",
+    "stack": "agnostic",
+    "status": "experimental",
+    "kind": "sdk",
+    "capabilities": [
+      "persistent-pending-queue-state",
+      "explicit-task-claim",
+      "capped-exponential-backoff",
+      "restart-hydration",
+      "stale-claim-protection"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "queue",
+      "retry",
+      "backoff",
+      "claim token",
+      "pending task"
+    ],
+    "summary": "管理可恢复待办、指数退避、任务领取、旧领取隔离和人工取消。",
+    "path": "common/agnostic/pending-retry-queue",
+    "compatibility": {
+      "node": "25.2.1",
+      "typescript": "6.0.3"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "common.agnostic.cursor-pagination",
+    "name": "稳定游标分页",
+    "version": "0.1.0",
+    "category": "common",
+    "stack": "agnostic",
+    "status": "experimental",
+    "kind": "sdk",
+    "capabilities": [
+      "versioned-stable-cursor",
+      "deterministic-filter-fingerprint",
+      "bounded-page-size",
+      "duplicate-item-detection"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "cursor pagination",
+      "stable sort",
+      "query fingerprint",
+      "expiry",
+      "duplicate detection"
+    ],
+    "summary": "提供查询绑定、过滤摘要、过期检测和前后方向的确定性游标分页契约。",
+    "path": "common/agnostic/cursor-pagination",
+    "compatibility": {
+      "node": "25.2.1",
+      "typescript": "6.0.3"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "common.agnostic.draft-recovery-controller",
+    "name": "草稿恢复控制器",
+    "version": "0.1.0",
+    "category": "common",
+    "stack": "agnostic",
+    "status": "experimental",
+    "kind": "sdk",
+    "capabilities": [
+      "draft-recovery",
+      "dirty-field-tracking",
+      "autosave-stale-response-protection",
+      "local-remote-conflict-resolution"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "draft",
+      "autosave",
+      "conflict",
+      "revision",
+      "request epoch"
+    ],
+    "summary": "管理草稿修订、脏字段、旧保存响应和本地远端冲突处理。",
+    "path": "common/agnostic/draft-recovery-controller",
+    "compatibility": {
+      "node": "25.2.1",
+      "typescript": "6.0.3"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "common.agnostic.account-scope-guard",
+    "name": "账号范围隔离控制器",
+    "version": "0.1.0",
+    "category": "common",
+    "stack": "agnostic",
+    "status": "experimental",
+    "kind": "sdk",
+    "capabilities": [
+      "account-scope-isolation",
+      "scope-token",
+      "stale-async-response-rejection",
+      "credential-free-account-snapshot"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "account",
+      "scope",
+      "epoch",
+      "stale response",
+      "session isolation"
+    ],
+    "summary": "在账号切换后隔离缓存、快照和在途响应，不保存任何会话凭据。",
+    "path": "common/agnostic/account-scope-guard",
+    "compatibility": {
+      "node": "25.2.1",
+      "typescript": "6.0.3"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "common.agnostic.route-restore-controller",
+    "name": "路由状态恢复控制器",
+    "version": "0.1.0",
+    "category": "common",
+    "stack": "agnostic",
+    "status": "experimental",
+    "kind": "sdk",
+    "capabilities": [
+      "account-scoped-route-snapshot",
+      "immutable-restoration-state",
+      "bounded-lru-retention",
+      "stale-scope-token-rejection"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "route restore",
+      "account scope",
+      "filter cursor",
+      "scroll offset",
+      "lru"
+    ],
+    "summary": "按账号和路由保存筛选、分页、可见项与滚动位置的有界快照。",
+    "path": "common/agnostic/route-restore-controller",
+    "compatibility": {
+      "node": "25.2.1",
+      "typescript": "6.0.3"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "common.agnostic.component-template",
+    "name": "通用组件模板",
+    "version": "0.0.0",
+    "category": "common",
+    "stack": "agnostic",
+    "status": "template",
+    "kind": "template",
+    "capabilities": [],
+    "owner": "",
+    "keywords": [],
+    "summary": "不预设产物格式的技术栈无关组件模板。",
+    "path": "common/agnostic/component-template",
+    "compatibility": {},
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "common.agnostic.capability-contract",
+    "name": "通用能力组合契约",
+    "version": "0.3.0",
+    "category": "common",
+    "stack": "agnostic",
+    "status": "experimental",
+    "kind": "contract",
+    "capabilities": [
+      "application-blueprint",
+      "capability-composition",
+      "provider-boundary"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "business capability",
+      "composition",
+      "domain neutral",
+      "json schema"
+    ],
+    "summary": "用于将通用业务能力组合成不同应用的技术栈无关契约。",
+    "path": "common/agnostic/capability-contract",
+    "compatibility": {
+      "json-schema": "Draft 2020-12",
+      "python-validator": "3.12.10"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "common.agnostic.notification-aggregation",
+    "name": "通知聚合模块",
+    "version": "0.1.0",
+    "category": "common",
+    "stack": "agnostic",
+    "status": "experimental",
+    "kind": "sdk",
+    "capabilities": [
+      "account-scoped-notifications",
+      "cursor-pagination",
+      "event-deduplication",
+      "notification-aggregation",
+      "read-state-projection"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "aggregation",
+      "cursor",
+      "deterministic",
+      "notifications",
+      "scope isolation"
+    ],
+    "summary": "按账号隔离通知，提供事件去重、稳定聚合、已读状态和游标投影。",
+    "path": "common/agnostic/notification-aggregation",
+    "compatibility": {
+      "node": "25.2.1",
+      "typescript": "6.0.3"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "desktop.tauri.component-template",
+    "name": "Tauri 组件模板",
+    "version": "0.0.0",
+    "category": "desktop",
+    "stack": "tauri",
+    "status": "template",
+    "kind": "template",
+    "capabilities": [],
+    "owner": "",
+    "keywords": [],
+    "summary": "用于创建 Tauri 命令与权限能力的复制模板，暂不声明具体操作系统兼容性。",
+    "path": "desktop/tauri/component-template",
+    "compatibility": {},
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "frontend.uni-app-x.component-template",
+    "name": "uni-app x 组件模板",
+    "version": "0.0.0",
+    "category": "frontend",
+    "stack": "uni-app-x",
+    "status": "template",
+    "kind": "template",
+    "capabilities": [],
+    "owner": "",
+    "keywords": [],
+    "summary": "使用 .uvue 与 UTS 创建 uni-app x 组件，不由 Web 证据推断其他目标端兼容。",
+    "path": "frontend/uni-app-x/component-template",
+    "compatibility": {},
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "frontend.uni-app-x.report-appeal",
+    "name": "举报与申诉组件",
+    "version": "0.1.0",
+    "category": "frontend",
+    "stack": "uni-app-x",
+    "status": "experimental",
+    "kind": "ui",
+    "capabilities": [
+      "appeal-workflow",
+      "evidence-attachment-projection",
+      "feedback-form",
+      "report-form"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "appeal",
+      "feedback",
+      "report",
+      "uni-app x",
+      "uts",
+      "uvue"
+    ],
+    "summary": "提供举报、申诉、意见反馈和安全证据附件展示组件。",
+    "path": "frontend/uni-app-x/report-appeal",
+    "compatibility": {
+      "source-contract": "uni-app x .uvue and UTS source contract",
+      "web": "HBuilderX 5.23 Web source compile"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "frontend.uni-app-x.post-composer",
+    "name": "内容发布器组件",
+    "version": "0.2.0",
+    "category": "frontend",
+    "stack": "uni-app-x",
+    "status": "experimental",
+    "kind": "ui",
+    "capabilities": [
+      "controlled-composer",
+      "draft-recovery-presentation",
+      "media-safety",
+      "publish-progress",
+      "publish-validation",
+      "topic-and-tag-editing",
+      "upload-presentation"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "composer",
+      "draft",
+      "media",
+      "uni-app x",
+      "uts",
+      "uvue"
+    ],
+    "summary": "提供正文、媒体、话题、标签、发布校验、草稿恢复和结果核对组件。",
+    "path": "frontend/uni-app-x/post-composer",
+    "compatibility": {
+      "source-contract": "uni-app x .uvue and UTS",
+      "web": "HBuilderX 5.23 Web source compile"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "frontend.uni-app-x.creator-assets",
+    "name": "创作者与个人资产组件",
+    "version": "0.2.0",
+    "category": "frontend",
+    "stack": "uni-app-x",
+    "status": "experimental",
+    "kind": "ui",
+    "capabilities": [
+      "creator-dashboard",
+      "creator-metrics",
+      "creator-resubmission",
+      "personal-assets",
+      "report-receipts",
+      "relationship-list"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "assets",
+      "creator",
+      "reports",
+      "uni-app x",
+      "uts",
+      "uvue"
+    ],
+    "summary": "提供资产列表、创作者指标、内容状态、重新提交、举报记录和关系列表。",
+    "path": "frontend/uni-app-x/creator-assets",
+    "compatibility": {
+      "source-contract": "uni-app x .uvue and UTS source contract",
+      "web": "HBuilderX 5.23 Web source compile"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "frontend.uni-app-x.search-notification",
+    "name": "搜索与通知组件",
+    "version": "0.1.0",
+    "category": "frontend",
+    "stack": "uni-app-x",
+    "status": "experimental",
+    "kind": "ui",
+    "capabilities": [
+      "controlled-filtering",
+      "notification-presentation",
+      "safe-search-results",
+      "search-history"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "notification",
+      "search",
+      "uni-app x",
+      "uts",
+      "uvue"
+    ],
+    "summary": "提供搜索结果、历史、筛选、通知分组、通知过滤和全部已读操作。",
+    "path": "frontend/uni-app-x/search-notification",
+    "compatibility": {
+      "source-contract": "uni-app x .uvue and UTS",
+      "web": "HBuilderX 5.23 Web source compile"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "frontend.uni-app-x.community-feed",
+    "name": "社区信息流与详情组件",
+    "version": "0.1.0",
+    "category": "frontend",
+    "stack": "uni-app-x",
+    "status": "experimental",
+    "kind": "ui",
+    "capabilities": [
+      "community-comments",
+      "community-feed",
+      "community-post-detail",
+      "community-relationships",
+      "safe-media"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "community",
+      "feed",
+      "mobile",
+      "uni-app x",
+      "uts",
+      "uvue"
+    ],
+    "summary": "提供信息流卡片、媒体网格、内容详情、评论树、回复和关系操作。",
+    "path": "frontend/uni-app-x/community-feed",
+    "compatibility": {
+      "source-contract": "uni-app x .uvue and UTS source contract",
+      "web": "HBuilderX 5.23 Web source compile"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "frontend.uni-app-x.community-primitives",
+    "name": "社区基础组件",
+    "version": "0.2.0",
+    "category": "frontend",
+    "stack": "uni-app-x",
+    "status": "experimental",
+    "kind": "ui",
+    "capabilities": [
+      "async-feedback",
+      "community-navigation",
+      "responsive-surface",
+      "responsive-page-shell",
+      "mobile-global-topbar",
+      "capability-prompt",
+      "keyboard-accessible-action",
+      "safe-media",
+      "search-input"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "community",
+      "mobile",
+      "uni-app x",
+      "uts",
+      "uvue"
+    ],
+    "summary": "提供移动标题、搜索、状态、作者、互动、通知、评论和安全媒体等高频组件。",
+    "path": "frontend/uni-app-x/community-primitives",
+    "compatibility": {
+      "source-contract": "uni-app x .uvue and UTS",
+      "web": "HBuilderX 5.23 Web source compile"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "frontend.uni-app.component-template",
+    "name": "uni-app 组件模板",
+    "version": "0.0.0",
+    "category": "frontend",
+    "stack": "uni-app",
+    "status": "template",
+    "kind": "template",
+    "capabilities": [],
+    "owner": "",
+    "keywords": [],
+    "summary": "用于创建普通 uni-app 组件的复制模板，暂不声明 uni-app x 或具体目标平台兼容性。",
+    "path": "frontend/uni-app/component-template",
+    "compatibility": {},
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "frontend.vue2.component-template",
+    "name": "Vue 2 组件模板",
+    "version": "0.0.0",
+    "category": "frontend",
+    "stack": "vue2",
+    "status": "template",
+    "kind": "template",
+    "capabilities": [],
+    "owner": "",
+    "keywords": [],
+    "summary": "用于创建 Vue 2 组件的复制模板，晋级前需要选择并验证依赖。",
+    "path": "frontend/vue2/component-template",
+    "compatibility": {},
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "frontend.vue3.business-workbench",
+    "name": "Vue 3 业务工作台",
+    "version": "0.1.0",
+    "category": "frontend",
+    "stack": "vue3",
+    "status": "experimental",
+    "kind": "ui",
+    "capabilities": [
+      "dashboard",
+      "resource-management",
+      "responsive-list",
+      "search-filter"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "business workbench",
+      "data table",
+      "responsive cards",
+      "vue 3"
+    ],
+    "summary": "用于业务资源统计、搜索、筛选、查看和操作的响应式工作台。",
+    "path": "frontend/vue3/business-workbench",
+    "compatibility": {
+      "node": "25.2.1",
+      "typescript": "6.0.3",
+      "vite": "8.2.1",
+      "vitest": "4.1.10",
+      "vue": "3.5.41"
+    },
+    "dependencies": {
+      "peer": [
+        "vue"
+      ],
+      "runtime": []
+    }
+  },
+  {
+    "id": "frontend.vue3.component-gallery",
+    "name": "Vue 3 组件展厅",
+    "version": "0.11.1",
+    "category": "frontend",
+    "stack": "vue3",
+    "status": "experimental",
+    "kind": "ui",
+    "capabilities": [
+      "component-catalog",
+      "component-discovery",
+      "component-preview",
+      "product-showcase",
+      "component-request-registry",
+      "anonymous-component-request",
+      "anonymous-usage-feedback",
+      "theme-provider",
+      "button",
+      "navigation",
+      "search-input",
+      "divider",
+      "tabs",
+      "pagination",
+      "form-control",
+      "data-display",
+      "status-feedback",
+      "search-filter",
+      "data-table",
+      "text-input",
+      "select-control",
+      "form-item",
+      "date-picker",
+      "dialog",
+      "drawer",
+      "toast",
+      "empty-state",
+      "skeleton-loading",
+      "checkbox",
+      "radio",
+      "file-upload-control",
+      "tree",
+      "cascader",
+      "steps",
+      "descriptions",
+      "avatar",
+      "badge",
+      "tooltip",
+      "notification-ui",
+      "virtual-list",
+      "rich-text-editor",
+      "chart-container",
+      "media-player",
+      "realtime-feed",
+      "map-container",
+      "file-manager",
+      "textarea",
+      "number-input",
+      "multi-select",
+      "time-picker",
+      "date-range-picker",
+      "autocomplete",
+      "slider",
+      "rate",
+      "color-picker",
+      "transfer",
+      "segmented-control",
+      "otp-input",
+      "app-shell",
+      "side-menu",
+      "top-bar",
+      "page-header",
+      "dropdown",
+      "popover",
+      "collapse",
+      "timeline",
+      "progress",
+      "result",
+      "calendar",
+      "kanban",
+      "resource-card",
+      "price-display",
+      "quantity-stepper",
+      "cart-summary",
+      "order-timeline",
+      "payment-status",
+      "booking-summary",
+      "course-progress",
+      "chat-panel",
+      "participant-list",
+      "stream-status",
+      "recommendation-list",
+      "dashboard-page",
+      "resource-management-page",
+      "checkout-page",
+      "booking-page",
+      "learning-page",
+      "live-room-page",
+      "login-panel",
+      "user-menu",
+      "permission-guard",
+      "role-permission-matrix",
+      "lucky-draw",
+      "bargain-campaign",
+      "community-comments",
+      "product-card",
+      "advanced-table",
+      "query-panel",
+      "batch-actions",
+      "data-import-export",
+      "tree-select",
+      "organization-tree",
+      "audit-log-viewer",
+      "approval-panel",
+      "attachment-preview",
+      "user-profile",
+      "password-change",
+      "session-management",
+      "sku-editor",
+      "inventory-table",
+      "address-selector",
+      "address-form",
+      "coupon-selector",
+      "payment-method-selector",
+      "refund-panel",
+      "logistics-tracker",
+      "time-slot-picker",
+      "seat-room-selector",
+      "review-composer",
+      "rating-control",
+      "favorite-control",
+      "live-console",
+      "live-product-shelf",
+      "danmaku-layer",
+      "moderation-queue",
+      "member-management",
+      "replay-list",
+      "live-metrics",
+      "user-management-page",
+      "role-permission-page",
+      "department-management-page",
+      "dictionary-configuration-page",
+      "audit-log-page",
+      "product-management-page",
+      "order-management-page",
+      "inventory-management-page",
+      "booking-management-page",
+      "notification-center",
+      "message-inbox",
+      "announcement-banner",
+      "activity-feed",
+      "comment-composer",
+      "mention-input",
+      "media-gallery",
+      "image-preview",
+      "document-preview",
+      "file-dropzone",
+      "metric-card",
+      "trend-chart",
+      "bar-chart",
+      "line-chart",
+      "donut-chart",
+      "funnel-chart",
+      "ranking-list",
+      "data-summary",
+      "dashboard-filter",
+      "chart-legend",
+      "workspace-page-shell",
+      "workspace-home-page",
+      "message-center-page",
+      "file-center-page",
+      "profile-settings-page",
+      "system-settings-page",
+      "admin-workspace-page",
+      "analytics-dashboard-page",
+      "content-workspace-page",
+      "account-security-page"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "component gallery",
+      "design system",
+      "catalog browser",
+      "vue 3"
+    ],
+    "summary": "提供 163 个现代化 Vue 3 通用组件与页面框架，并提供成品系统目录和组件需求清单。",
+    "path": "frontend/vue3/component-gallery",
+    "compatibility": {
+      "node": "25.2.1",
+      "typescript": "6.0.3",
+      "vite": "8.2.1",
+      "vitest": "4.1.10",
+      "vue": "3.5.41"
+    },
+    "dependencies": {
+      "peer": [
+        "vue"
+      ],
+      "runtime": []
+    }
+  },
+  {
+    "id": "frontend.vue3.component-template",
+    "name": "Vue 3 组件模板",
+    "version": "0.0.0",
+    "category": "frontend",
+    "stack": "vue3",
+    "status": "template",
+    "kind": "template",
+    "capabilities": [],
+    "owner": "",
+    "keywords": [],
+    "summary": "用于创建 Vue 3 组件的复制模板，晋级前需要选择并验证依赖。",
+    "path": "frontend/vue3/component-template",
+    "compatibility": {},
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "frontend.vue3.resource-admin-app",
+    "name": "Vue 3 资源后台应用",
+    "version": "0.2.1",
+    "category": "frontend",
+    "stack": "vue3",
+    "status": "experimental",
+    "kind": "project-template",
+    "capabilities": [
+      "authorization",
+      "resource-management",
+      "responsive-list",
+      "session-management",
+      "password-change",
+      "typed-client"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "resource admin",
+      "account security",
+      "runnable app",
+      "vue 3"
+    ],
+    "summary": "可直接启动的资源管理后台装配入口，包含登录、资源工作台、账户安全与退出。",
+    "path": "frontend/vue3/resource-admin-app",
+    "compatibility": {
+      "node": "25.2.1",
+      "typescript": "6.0.3",
+      "vite": "8.2.1",
+      "vitest": "4.1.10",
+      "vue": "3.5.41"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": [
+        "@phoenix-components/vue3-api-client",
+        "@phoenix-components/vue3-business-workbench",
+        "@phoenix-components/vue3-component-gallery",
+        "@phoenix-components/vue3-schema-form",
+        "vue"
+      ]
+    }
+  },
+  {
+    "id": "frontend.vue3.api-client",
+    "name": "Vue 3 通用接口客户端",
+    "version": "0.3.0",
+    "category": "frontend",
+    "stack": "vue3",
+    "status": "experimental",
+    "kind": "sdk",
+    "capabilities": [
+      "typed-client",
+      "authorization",
+      "session-management",
+      "password-change",
+      "resource-management",
+      "audit"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "typescript",
+      "api client",
+      "authentication",
+      "crud",
+      "audit"
+    ],
+    "summary": "统一登录、设备会话、修改密码、资源读写、审计查询、错误和超时处理，不绑定浏览器存储。",
+    "path": "frontend/vue3/api-client",
+    "compatibility": {
+      "node": "25.2.1",
+      "typescript": "6.0.3",
+      "vitest": "4.1.10"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "frontend.vue3.schema-form",
+    "name": "Vue 3 配置表单",
+    "version": "0.2.0",
+    "category": "frontend",
+    "stack": "vue3",
+    "status": "experimental",
+    "kind": "ui",
+    "capabilities": [
+      "schema-form",
+      "form-validation",
+      "responsive-form"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "schema form",
+      "dynamic form",
+      "validation",
+      "vue 3"
+    ],
+    "summary": "支持响应式布局、前端校验和扩展插槽的无障碍配置驱动表单。",
+    "path": "frontend/vue3/schema-form",
+    "compatibility": {
+      "node": "25.2.1",
+      "typescript": "6.0.3",
+      "vite": "8.2.1",
+      "vitest": "4.1.10",
+      "vue": "3.5.41"
+    },
+    "dependencies": {
+      "peer": [
+        "vue"
+      ],
+      "runtime": []
+    }
+  },
+  {
+    "id": "service.python.component-feedback-api",
+    "name": "匿名需求与反馈 API",
+    "version": "0.4.1",
+    "category": "service",
+    "stack": "python",
+    "status": "experimental",
+    "kind": "api",
+    "capabilities": [
+      "anonymous-component-request",
+      "anonymous-usage-feedback",
+      "idempotent-create",
+      "recoverable-client-edit-token",
+      "token-scoped-edit",
+      "sqlite-persistence",
+      "machine-readable-api-contract",
+      "verified-component-version-binding",
+      "local-maintainer-review",
+      "public-dedup-search"
+    ],
+    "owner": "phoenix",
+    "keywords": [
+      "feedback",
+      "request",
+      "sqlite",
+      "wsgi"
+    ],
+    "summary": "公开接收通用组件需求与使用反馈，并由一次性凭证保护原提交者后续修改。",
+    "path": "service/python/component-feedback-api",
+    "compatibility": {
+      "protocol": "WSGI/HTTP JSON",
+      "python": ">=3.10"
+    },
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "templates.agnostic.project-template",
+    "name": "完整项目模板",
+    "version": "0.0.0",
+    "category": "templates",
+    "stack": "agnostic",
+    "status": "template",
+    "kind": "project-template",
+    "capabilities": [],
+    "owner": "",
+    "keywords": [],
+    "summary": "用于创建完整项目的复制模板，复制后需要选择并验证目标技术栈。",
+    "path": "templates/agnostic/project-template",
+    "compatibility": {},
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  },
+  {
+    "id": "templates.agnostic.component-template",
+    "name": "通用组件工程模板",
+    "version": "0.0.0",
+    "category": "templates",
+    "stack": "agnostic",
+    "status": "template",
+    "kind": "template",
+    "capabilities": [],
+    "owner": "",
+    "keywords": [],
+    "summary": "复制后替换占位内容，用于创建新的自包含组件。",
+    "path": "templates/agnostic/component-template",
+    "compatibility": {},
+    "dependencies": {
+      "peer": [],
+      "runtime": []
+    }
+  }
+]

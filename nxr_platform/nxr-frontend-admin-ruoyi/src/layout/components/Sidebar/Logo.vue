@@ -2,11 +2,11 @@
   <div class="sidebar-logo-container" :class="{ 'collapse': collapse }">
     <transition name="sidebarLogoFade">
       <router-link v-if="collapse" key="collapse" class="sidebar-logo-link" to="/">
-        <img v-if="logo" :src="logo" class="sidebar-logo" />
+        <span v-if="title" class="sidebar-logo sidebar-wordmark">{{ title }}</span>
         <h1 v-else class="sidebar-title">{{ title }}</h1>
       </router-link>
       <router-link v-else key="expand" class="sidebar-logo-link" to="/">
-        <img v-if="logo" :src="logo" class="sidebar-logo" />
+        <span class="sidebar-logo sidebar-wordmark">{{ title }}</span>
         <span class="sidebar-brand">
           <strong>NXR GRADING</strong>
           <small>Operations</small>
@@ -17,7 +17,6 @@
 </template>
 
 <script setup>
-import logo from '@/assets/logo/logo.png'
 import useSettingsStore from '@/store/modules/settings'
 import variables from '@/assets/styles/variables.module.scss'
 
@@ -124,6 +123,18 @@ const getLogoTextColor = computed(() => {
         opacity: 0.58;
         font-size: 9px;
       }
+    }
+
+    & .sidebar-wordmark {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: v-bind(getLogoTextColor);
+      font-family: Avenir, Helvetica Neue, Arial, Helvetica, sans-serif;
+      font-size: 13px;
+      font-weight: 900;
+      letter-spacing: -0.35px;
+      line-height: 1;
     }
   }
 

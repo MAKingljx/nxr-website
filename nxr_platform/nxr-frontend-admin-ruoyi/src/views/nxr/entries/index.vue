@@ -1,5 +1,23 @@
 <template>
-  <div class="app-container">
+  <main class="nxr-workspace entry-workspace">
+    <nxr-page-header
+      kicker="CERTIFICATE OPERATIONS"
+      title="录入管理"
+      :summary="entrySummary"
+    >
+      <template #actions>
+        <el-button type="primary" plain icon="Plus" v-hasPermi="['nxr:entry:add']" @click="handleAdd">新增录入</el-button>
+        <el-button
+          type="success"
+          plain
+          icon="Check"
+          :disabled="!selectedIds.length"
+          v-hasPermi="['nxr:entry:approve']"
+          @click="handleBatchApprove"
+        >批量审批 ({{ selectedIds.length }})</el-button>
+      </template>
+    </nxr-page-header>
+
     <el-form :model="queryParams" ref="queryRef" :inline="true">
       <el-form-item label="关键词" prop="query">
         <el-input
@@ -21,26 +39,13 @@
       </el-form-item>
     </el-form>
 
-    <el-row :gutter="10" class="mb8">
-      <el-col :span="1.5">
-        <el-button type="primary" plain icon="Plus" v-hasPermi="['nxr:entry:add']" @click="handleAdd">新增录入</el-button>
-      </el-col>
-      <el-col :span="1.5">
-        <el-button
-          type="success"
-          plain
-          icon="Check"
-          :disabled="!selectedIds.length"
-          v-hasPermi="['nxr:entry:approve']"
-          @click="handleBatchApprove"
-        >批量审批 ({{ selectedIds.length }})</el-button>
-      </el-col>
-    </el-row>
-
     <el-table v-loading="loading" :data="rows" @selection-change="handleSelectionChange">
       <el-table-column type="selection" width="50" align="center" :selectable="isRowSelectable" />
       <el-table-column label="证书编号" prop="certId" width="140" show-overflow-tooltip />
       <el-table-column label="卡名" prop="cardName" min-width="160" show-overflow-tooltip />
+      <el-table-column label="产品类型" width="130">
+        <template #default="scope">{{ scope.row.productTypeLabel || productTypeText(scope.row.productType) }}</template>
+      </el-table-column>
       <el-table-column label="类目" width="120">
         <template #default="scope">{{ scope.row.cardCategoryLabel || scope.row.cardCategory }}</template>
       </el-table-column>
@@ -49,11 +54,11 @@
       <el-table-column label="语言" prop="languageCode" width="80" align="center" />
       <el-table-column label="状态" width="100" align="center">
         <template #default="scope">
-          <el-tag :type="statusTagType(scope.row.statusCode)">{{ scope.row.statusCode }}</el-tag>
+          <nxr-status-tag :code="scope.row.statusCode" domain="entries" />
         </template>
       </el-table-column>
       <el-table-column label="最终评级" width="160" show-overflow-tooltip>
-        <template #default="scope">{{ scope.row.finalGradeValue }} · {{ scope.row.finalGradeLabel }}</template>
+        <template #default="scope">{{ gradeText(scope.row) }}</template>
       </el-table-column>
       <el-table-column label="操作" width="220" align="center" class-name="small-padding fixed-width">
         <template #default="scope">
@@ -85,10 +90,17 @@
         <el-descriptions :column="2" border>
           <el-descriptions-item label="证书编号">{{ detail.certId }}</el-descriptions-item>
           <el-descriptions-item label="状态">
-            <el-tag :type="statusTagType(detail.statusCode)">{{ detail.statusCode }}</el-tag>
+            <nxr-status-tag :code="detail.statusCode" domain="entries" />
+          </el-descriptions-item>
+          <el-descriptions-item label="产品类型">{{ detail.productTypeLabel || productTypeText(detail.productType) }}</el-descriptions-item>
+          <el-descriptions-item v-if="detail.productType === 'vintage_product'" label="老卡分类">
+            {{ detail.vintageClassification || '-' }}
+          </el-descriptions-item>
+          <el-descriptions-item v-if="detail.productType === 'merch_product'" label="商品描述" :span="2">
+            {{ detail.merchDescription || '-' }}
           </el-descriptions-item>
           <el-descriptions-item label="类目">{{ detail.cardCategoryLabel || detail.cardCategory }}</el-descriptions-item>
-          <el-descriptions-item label="POP">{{ detail.populationValue }}</el-descriptions-item>
+          <el-descriptions-item v-if="detail.productType === 'graded_card'" label="POP">{{ detail.populationValue }}</el-descriptions-item>
           <template v-if="detail.cardCategory === 'movie_film'">
             <el-descriptions-item label="电影名称">{{ detail.movieName || detail.cardName }}</el-descriptions-item>
             <el-descriptions-item label="上映年份">{{ detail.releaseYear || detail.yearLabel }}</el-descriptions-item>
@@ -104,13 +116,13 @@
             <el-descriptions-item v-if="detail.cardCategory === 'sports_card'" label="运动类型">{{ detail.sportsType }}</el-descriptions-item>
             <el-descriptions-item v-if="detail.cardCategory === 'celebrity_card'" label="团体名称">{{ detail.groupName }}</el-descriptions-item>
           </template>
-          <el-descriptions-item label="居中">{{ detail.centeringScore }}</el-descriptions-item>
-          <el-descriptions-item label="边缘">{{ detail.edgesScore }}</el-descriptions-item>
-          <el-descriptions-item label="边角">{{ detail.cornersScore }}</el-descriptions-item>
-          <el-descriptions-item label="表面">{{ detail.surfaceScore }}</el-descriptions-item>
-          <el-descriptions-item label="最终评级" :span="2">
-            {{ detail.finalGradeValue }} · {{ detail.finalGradeLabel }}
-          </el-descriptions-item>
+          <template v-if="detail.productType === 'graded_card'">
+            <el-descriptions-item label="居中">{{ detail.centeringScore }}</el-descriptions-item>
+            <el-descriptions-item label="边缘">{{ detail.edgesScore }}</el-descriptions-item>
+            <el-descriptions-item label="边角">{{ detail.cornersScore }}</el-descriptions-item>
+            <el-descriptions-item label="表面">{{ detail.surfaceScore }}</el-descriptions-item>
+            <el-descriptions-item label="最终评级" :span="2">{{ gradeText(detail) }}</el-descriptions-item>
+          </template>
           <el-descriptions-item label="备注" :span="2">{{ detail.entryNotes || detail.decisionNotes || '-' }}</el-descriptions-item>
         </el-descriptions>
         <div v-if="detail.media && detail.media.length" class="media-grid">
@@ -137,14 +149,9 @@
       <el-form ref="formRef" :model="form" :rules="rules" label-width="100px">
         <el-row :gutter="16">
           <el-col :span="12">
-            <el-form-item label="类目" prop="cardCategory">
-              <el-select v-model="form.cardCategory" style="width: 100%">
-                <el-option
-                  v-for="d in nxr_card_category"
-                  :key="d.value"
-                  :label="d.label"
-                  :value="d.value"
-                />
+            <el-form-item label="产品类型" prop="productType">
+              <el-select v-model="form.productType" style="width: 100%">
+                <el-option v-for="d in productTypeOptions" :key="d.value" :label="d.label" :value="d.value" />
               </el-select>
             </el-form-item>
           </el-col>
@@ -155,6 +162,38 @@
                   <el-button @click="fillGeneratedCertId">生成</el-button>
                 </template>
               </el-input>
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <el-row v-if="isMerchForm" :gutter="16">
+          <el-col :span="24">
+            <el-form-item label="商品描述">
+              <el-input
+                v-model="form.merchDescription"
+                type="textarea"
+                :rows="4"
+                maxlength="4000"
+                show-word-limit
+                placeholder="填写商品材质、版本、限量信息或其他说明"
+              />
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <el-row v-if="isGradedForm || isVintageForm" :gutter="16">
+          <el-col v-if="isGradedForm" :span="12">
+            <el-form-item label="类目" prop="cardCategory">
+              <el-select v-model="form.cardCategory" style="width: 100%">
+                <el-option v-for="d in nxr_card_category" :key="d.value" :label="d.label" :value="d.value" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col v-if="isVintageForm" :span="12">
+            <el-form-item label="老卡分类" prop="vintageClassification">
+              <el-select v-model="form.vintageClassification" placeholder="请选择分类" style="width: 100%">
+                <el-option v-for="d in nxr_vintage_classification" :key="d.value" :label="d.label" :value="d.value" />
+              </el-select>
             </el-form-item>
           </el-col>
         </el-row>
@@ -199,28 +238,30 @@
           </el-col>
         </el-row>
 
-        <el-divider content-position="left">四维度评分</el-divider>
-        <el-row :gutter="16">
-          <el-col :span="6"><el-form-item label="居中" label-width="60px"><el-input-number v-model="form.centeringScore" :min="1" :max="10" :step="0.5" controls-position="right" style="width: 100%" /></el-form-item></el-col>
-          <el-col :span="6"><el-form-item label="边缘" label-width="60px"><el-input-number v-model="form.edgesScore" :min="1" :max="10" :step="0.5" controls-position="right" style="width: 100%" /></el-form-item></el-col>
-          <el-col :span="6"><el-form-item label="边角" label-width="60px"><el-input-number v-model="form.cornersScore" :min="1" :max="10" :step="0.5" controls-position="right" style="width: 100%" /></el-form-item></el-col>
-          <el-col :span="6"><el-form-item label="表面" label-width="60px"><el-input-number v-model="form.surfaceScore" :min="1" :max="10" :step="0.5" controls-position="right" style="width: 100%" /></el-form-item></el-col>
-        </el-row>
-        <el-row :gutter="16">
-          <el-col :span="12">
-            <el-form-item label="POP">
-              <el-input v-model.number="form.populationValue" readonly>
-                <template #append>自动计算</template>
-              </el-input>
-            </el-form-item>
-          </el-col>
-        </el-row>
+        <template v-if="isGradedForm">
+          <el-divider content-position="left">四维度评分</el-divider>
+          <el-row :gutter="16">
+            <el-col :span="6"><el-form-item label="居中" label-width="60px"><el-input-number v-model="form.centeringScore" :min="1" :max="10" :step="0.5" controls-position="right" style="width: 100%" /></el-form-item></el-col>
+            <el-col :span="6"><el-form-item label="边缘" label-width="60px"><el-input-number v-model="form.edgesScore" :min="1" :max="10" :step="0.5" controls-position="right" style="width: 100%" /></el-form-item></el-col>
+            <el-col :span="6"><el-form-item label="边角" label-width="60px"><el-input-number v-model="form.cornersScore" :min="1" :max="10" :step="0.5" controls-position="right" style="width: 100%" /></el-form-item></el-col>
+            <el-col :span="6"><el-form-item label="表面" label-width="60px"><el-input-number v-model="form.surfaceScore" :min="1" :max="10" :step="0.5" controls-position="right" style="width: 100%" /></el-form-item></el-col>
+          </el-row>
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="POP">
+                <el-input v-model.number="form.populationValue" readonly>
+                  <template #append>自动计算</template>
+                </el-input>
+              </el-form-item>
+            </el-col>
+          </el-row>
+        </template>
         <el-form-item label="录入备注">
           <el-input v-model="form.entryNotes" type="textarea" :rows="3" />
         </el-form-item>
 
         <el-alert
-          v-if="gradePreview || populationLabel"
+          v-if="isGradedForm && (gradePreview || populationLabel)"
           type="info"
           :closable="false"
           class="mb8"
@@ -231,13 +272,13 @@
         </el-alert>
       </el-form>
       <template #footer>
-        <el-button :loading="calculating" @click="calculateFormPreview">计算评级/POP</el-button>
+        <el-button v-if="isGradedForm" :loading="calculating" @click="calculateFormPreview">计算评级/POP</el-button>
         <el-button v-if="!isMovieForm" :disabled="!canMatchCard" :loading="matching" @click="applyCardMatch">匹配卡牌</el-button>
         <el-button type="primary" :loading="submitting" @click="submitForm">确 定</el-button>
         <el-button @click="formOpen = false">取 消</el-button>
       </template>
     </el-dialog>
-  </div>
+  </main>
 </template>
 
 <script setup name="NxrEntries">
@@ -253,10 +294,16 @@ import {
   calculatePopulation,
   matchCard
 } from '@/api/nxr/entries'
-import { fetchBrandSettings } from '@/api/nxr/brands'
+import { fetchBrandOptions } from '@/api/nxr/brands'
+import auth from '@/plugins/auth'
+import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
+import NxrStatusTag from '@/components/NxrWorkspace/StatusTag.vue'
 
 const { proxy } = getCurrentInstance()
-const { nxr_card_category, nxr_language, nxr_sports_type } = proxy.useDict(
+const route = useRoute()
+const { nxr_product_type, nxr_vintage_classification, nxr_card_category, nxr_language, nxr_sports_type } = proxy.useDict(
+  'nxr_product_type',
+  'nxr_vintage_classification',
   'nxr_card_category',
   'nxr_language',
   'nxr_sports_type'
@@ -279,6 +326,7 @@ const gradePreview = ref(null)
 const calculationLabel = ref('')
 const populationLabel = ref('')
 const brandOptions = ref([])
+const canListEntries = auth.hasPermi('nxr:entry:list')
 
 function validateCertId(_rule, value, callback) {
   const certId = String(value || '').trim()
@@ -288,6 +336,14 @@ function validateCertId(_rule, value, callback) {
   }
   if (formMode.value === 'create' && !/^[1-9]\d{9}$/.test(certId)) {
     callback(new Error('证书编号必须为 10 位数字，且不能以 0 开头'))
+    return
+  }
+  callback()
+}
+
+function validateVintageClassification(_rule, value, callback) {
+  if (form.value.productType === 'vintage_product' && !String(value || '').trim()) {
+    callback(new Error('请选择老卡分类'))
     return
   }
   callback()
@@ -309,13 +365,23 @@ const data = reactive({
   },
   rules: {
     certId: [{ validator: validateCertId, trigger: 'blur' }],
-    cardCategory: [{ required: true, message: '请选择类目', trigger: 'change' }]
+    productType: [{ required: true, message: '请选择产品类型', trigger: 'change' }],
+    cardCategory: [{ required: true, message: '请选择类目', trigger: 'change' }],
+    vintageClassification: [{ validator: validateVintageClassification, trigger: 'change' }]
   }
 })
 
 const { form, queryParams, rules } = toRefs(data)
 
 const formTitle = computed(() => (formMode.value === 'create' ? '新增录入' : '编辑录入'))
+const entrySummary = computed(() =>
+  selectedIds.value.length
+    ? `共 ${total.value} 条录入，已选择 ${selectedIds.value.length} 条`
+    : `共 ${total.value} 条录入`
+)
+const isGradedForm = computed(() => form.value.productType === 'graded_card')
+const isMerchForm = computed(() => form.value.productType === 'merch_product')
+const isVintageForm = computed(() => form.value.productType === 'vintage_product')
 const isMovieForm = computed(() => form.value.cardCategory === 'movie_film')
 const isSportsForm = computed(() => form.value.cardCategory === 'sports_card')
 const isCelebrityForm = computed(() => form.value.cardCategory === 'celebrity_card')
@@ -326,6 +392,9 @@ const canMatchCard = computed(
 function createDefaultForm() {
   return {
     certId: '',
+    productType: 'graded_card',
+    vintageClassification: '',
+    merchDescription: '',
     cardCategory: 'trading_card',
     cardName: '',
     movieName: '',
@@ -350,10 +419,32 @@ function createDefaultForm() {
   }
 }
 
-function statusTagType(status) {
-  if (status === 'published') return 'success'
-  if (status === 'approved') return 'warning'
-  return 'info'
+function normalizeProductType(productType) {
+  if (productType === 'label_product') return 'merch_product'
+  return productType === 'merch_product' || productType === 'vintage_product' ? productType : 'graded_card'
+}
+
+const productTypeOptions = computed(() => {
+  const labels = new Map(
+    (nxr_product_type.value || []).map((item) => [normalizeProductType(item.value), item.label])
+  )
+  return [
+    { value: 'graded_card', label: labels.get('graded_card') || 'Graded Card' },
+    { value: 'merch_product', label: 'Merch Product' },
+    { value: 'vintage_product', label: labels.get('vintage_product') || 'Vintage Card' }
+  ]
+})
+
+function productTypeText(productType) {
+  const option = productTypeOptions.value.find((item) => item.value === normalizeProductType(productType))
+  return option ? option.label : 'Graded Card'
+}
+
+function gradeText(item) {
+  const parts = [item.finalGradeValue, item.finalGradeLabel].filter(
+    (value) => value !== null && value !== undefined && String(value).trim() !== ''
+  )
+  return parts.length ? parts.join(' · ') : '-'
 }
 
 function isRowSelectable(row) {
@@ -361,6 +452,12 @@ function isRowSelectable(row) {
 }
 
 function getList() {
+  if (!canListEntries) {
+    rows.value = []
+    total.value = 0
+    loading.value = false
+    return
+  }
   loading.value = true
   listSubmissions(queryParams.value).then((res) => {
     rows.value = res.data.items
@@ -376,7 +473,33 @@ function handleQuery() {
 
 function resetQuery() {
   proxy.resetForm('queryRef')
+  queryParams.value.status = menuStatus()
   handleQuery()
+}
+
+function routeQueryValue(key) {
+  const value = route.query[key]
+  return Array.isArray(value) ? value[0] : value
+}
+
+function menuStatus() {
+  const status = routeQueryValue('status')
+  return statusOptions.some((option) => option.value === status) ? status : undefined
+}
+
+function applyMenuRoute() {
+  queryParams.value.page = 1
+  queryParams.value.query = undefined
+  queryParams.value.status = menuStatus()
+  getList()
+
+  if (routeQueryValue('mode') === 'create') {
+    nextTick(() => {
+      handleAdd()
+    })
+  } else if (formMode.value === 'create') {
+    formOpen.value = false
+  }
 }
 
 function handleSelectionChange(selection) {
@@ -408,6 +531,9 @@ function handleEdit(row) {
     editingId.value = d.id
     Object.assign(form.value, {
       certId: d.certId,
+      productType: normalizeProductType(d.productType),
+      vintageClassification: d.vintageClassification || '',
+      merchDescription: d.merchDescription || '',
       cardCategory: d.cardCategory || 'trading_card',
       cardName: d.cardName || '',
       movieName: d.movieName || d.cardName || '',
@@ -462,6 +588,11 @@ function scorePayload() {
 }
 
 async function refreshCalculatedFields() {
+  if (!isGradedForm.value) {
+    clearPreview()
+    form.value.populationValue = 1
+    return null
+  }
   calculating.value = true
   try {
     const gradeRes = await calculateGrade(scorePayload())
@@ -490,6 +621,7 @@ function calculateFormPreview() {
 function applyCardMatch() {
   matching.value = true
   matchCard({
+    productType: form.value.productType,
     cardCategory: form.value.cardCategory,
     setName: form.value.setName,
     cardNumber: form.value.cardNumber
@@ -521,8 +653,8 @@ function submitForm() {
     refreshCalculatedFields()
       .then(() =>
         formMode.value === 'create'
-          ? createSubmission(form.value)
-          : updateSubmission(editingId.value, form.value)
+          ? createSubmission(submissionPayload())
+          : updateSubmission(editingId.value, submissionPayload())
       )
       .then((res) => {
         proxy.$modal.msgSuccess(
@@ -535,6 +667,21 @@ function submitForm() {
         submitting.value = false
       })
   })
+}
+
+function submissionPayload() {
+  const graded = isGradedForm.value
+  return {
+    ...form.value,
+    cardCategory: graded ? form.value.cardCategory : 'trading_card',
+    vintageClassification: isVintageForm.value ? form.value.vintageClassification : null,
+    merchDescription: isMerchForm.value ? form.value.merchDescription : null,
+    centeringScore: graded ? form.value.centeringScore : null,
+    edgesScore: graded ? form.value.edgesScore : null,
+    cornersScore: graded ? form.value.cornersScore : null,
+    surfaceScore: graded ? form.value.surfaceScore : null,
+    populationValue: graded ? form.value.populationValue : 1
+  }
 }
 
 function handleApprove(row) {
@@ -575,12 +722,42 @@ function handleBatchApprove() {
 }
 
 function loadBrands() {
-  fetchBrandSettings().then((res) => {
-    brandOptions.value = (res.data || []).filter((b) => b.isActive)
+  fetchBrandOptions().then((res) => {
+    brandOptions.value = res.data || []
   })
 }
 
-getList()
+watch(
+  () => form.value.productType,
+  (productType) => {
+    if (productType !== 'graded_card') {
+      form.value.cardCategory = 'trading_card'
+      form.value.sportsType = ''
+      form.value.groupName = ''
+      form.value.centeringScore = null
+      form.value.edgesScore = null
+      form.value.cornersScore = null
+      form.value.surfaceScore = null
+      form.value.populationValue = 1
+      clearPreview()
+    } else if (form.value.centeringScore === null) {
+      form.value.centeringScore = 9
+      form.value.edgesScore = 9
+      form.value.cornersScore = 9
+      form.value.surfaceScore = 9
+    }
+    if (productType !== 'vintage_product') {
+      form.value.vintageClassification = ''
+    }
+    if (productType !== 'merch_product') {
+      form.value.merchDescription = ''
+    }
+  }
+)
+
+watch(() => route.fullPath, applyMenuRoute)
+
+applyMenuRoute()
 loadBrands()
 </script>
 

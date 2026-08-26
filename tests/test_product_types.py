@@ -192,11 +192,11 @@ class ProductTypeTests(unittest.TestCase):
     def test_vintage_dictionary_has_default_protected_options_and_is_limited_to_four_items(self):
         self.assertEqual(
             admin_core.get_vintage_classification_options(),
-            ['Flawless', 'Patina', 'Worn', 'Historic'],
+            ['Pristine', 'Nova', 'Legacy', 'Helix'],
         )
         self.assertEqual(
             admin_core.validate_product_policy(
-                {'product_type': 'vintage_product', 'vintage_classification': 'Patina'}
+                {'product_type': 'vintage_product', 'vintage_classification': 'Nova'}
             ),
             (True, ''),
         )
@@ -220,11 +220,11 @@ class ProductTypeTests(unittest.TestCase):
         )
         self.assertEqual(
             admin_core.get_vintage_classification_options(),
-            ['Flawless', 'Patina', 'Worn', 'Historic'],
+            ['Pristine', 'Nova', 'Legacy', 'Helix'],
         )
         self.assertEqual(
             admin_core.validate_product_policy(
-                {'product_type': 'vintage_product', 'vintage_classification': 'Historic'}
+                {'product_type': 'vintage_product', 'vintage_classification': 'Helix'}
             ),
             (True, ''),
         )

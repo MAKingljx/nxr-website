@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${NXR_MYSQL_ROOT_PASSWORD:?set NXR_MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: nxr_platform
+      MYSQL_DATABASE: nxr_ruoyi
       MYSQL_USER: nxr
       MYSQL_PASSWORD: ${NXR_DB_PASSWORD:?set NXR_DB_PASSWORD}
     ports:

@@ -1,5 +1,11 @@
 <template>
-  <div class="app-container">
+  <main class="nxr-workspace nxr-upload-workspace">
+    <nxr-page-header
+      kicker="MEDIA OPERATIONS"
+      title="卡图上传与发布"
+      summary="为已审批卡牌批量导入正反面图片并检查发布状态"
+    />
+
     <el-row :gutter="16" class="mb8">
       <el-col :span="6">
         <el-card shadow="never"><el-statistic title="跟踪条目" :value="summary.trackedEntries" /></el-card>
@@ -85,8 +91,8 @@
     <el-table v-loading="loading" :data="queue">
       <el-table-column label="证书编号" prop="certId" width="140" />
       <el-table-column label="卡名" prop="cardName" min-width="160" show-overflow-tooltip />
-      <el-table-column label="评级" width="150">
-        <template #default="scope">{{ scope.row.finalGradeValue }} · {{ scope.row.finalGradeLabel }}</template>
+      <el-table-column label="结果" width="180" show-overflow-tooltip>
+        <template #default="scope">{{ queueResult(scope.row) }}</template>
       </el-table-column>
       <el-table-column label="待发布图" width="160" align="center">
         <template #default="scope">
@@ -133,10 +139,11 @@
       v-model:limit="queuePageSize"
       @pagination="loadQueue()"
     />
-  </div>
+  </main>
 </template>
 
 <script setup name="NxrUpload">
+import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
 import { fetchMediaQueue, importMediaFolder, publishSubmissionMedia } from '@/api/nxr/media'
 
 const { proxy } = getCurrentInstance()
@@ -251,6 +258,19 @@ function mediaStateLabel(item) {
   if (item.readyToPublish) return '可发布'
   if (item.hasStagedFront || item.hasStagedBack) return '缺一面'
   return '缺图'
+}
+
+function queueResult(item) {
+  if (item.productType === 'merch_product' || item.productType === 'label_product') {
+    return item.merchDescription || 'Merch Product'
+  }
+  if (item.productType === 'vintage_product') {
+    return item.vintageClassification || 'Vintage Card'
+  }
+  const values = [item.finalGradeValue, item.finalGradeLabel].filter(
+    (value) => value !== null && value !== undefined && String(value).trim() !== ''
+  )
+  return values.length ? values.join(' · ') : '-'
 }
 
 function mediaStateTag(item) {

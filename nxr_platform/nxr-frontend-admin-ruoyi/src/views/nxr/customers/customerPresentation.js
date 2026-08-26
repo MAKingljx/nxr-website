@@ -15,6 +15,8 @@ export function avatarColor(id) {
 }
 
 export function formatGrade(card) {
+  if (card.productType === 'merch_product' || card.productType === 'label_product') return 'Merch Product'
+  if (card.productType === 'vintage_product') return card.vintageClassification || 'Vintage Card'
   if (card.finalGradeValue === null || card.finalGradeValue === undefined) return '-'
   return `${Number(card.finalGradeValue).toFixed(1)} ${card.finalGradeLabel || ''}`.trim()
 }

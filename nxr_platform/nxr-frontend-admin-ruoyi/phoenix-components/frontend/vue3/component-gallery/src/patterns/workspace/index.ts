@@ -1,0 +1,7 @@
+export { default as PhoenixWorkspacePageShell } from './PhoenixWorkspacePageShell.vue'
+export type { PhoenixWorkspaceAction, PhoenixWorkspaceNavigationItem } from './PhoenixWorkspacePageShell.vue'
+export { default as PhoenixWorkspaceHomePage } from './PhoenixWorkspaceHomePage.vue'
+export { default as PhoenixMessageCenterPage } from './PhoenixMessageCenterPage.vue'
+export { default as PhoenixFileCenterPage } from './PhoenixFileCenterPage.vue'
+export { default as PhoenixProfileSettingsPage } from './PhoenixProfileSettingsPage.vue'
+export { default as PhoenixSystemSettingsPage } from './PhoenixSystemSettingsPage.vue'

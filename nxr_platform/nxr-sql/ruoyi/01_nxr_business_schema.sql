@@ -21,6 +21,9 @@ CREATE TABLE IF NOT EXISTS grading_submission (
     population_value INT NOT NULL DEFAULT 1,
     status_code VARCHAR(32) NOT NULL DEFAULT 'pending',
     grading_phase_code VARCHAR(32) NOT NULL DEFAULT 'human_review',
+    product_type_code VARCHAR(32) NOT NULL DEFAULT 'graded_card',
+    vintage_classification_code VARCHAR(64) NULL,
+    merch_description TEXT NULL,
     card_category_code VARCHAR(32) NOT NULL DEFAULT 'trading_card',
     movie_name VARCHAR(255) NULL,
     release_year VARCHAR(16) NULL,
@@ -39,6 +42,8 @@ CREATE TABLE IF NOT EXISTS grading_submission (
     UNIQUE KEY uk_grading_submission_cert_id (cert_id),
     KEY idx_grading_submission_status_created (status_code, created_at),
     KEY idx_grading_submission_identity (brand_name, set_name, card_number, language_code),
+    KEY idx_grading_submission_product_status (product_type_code, status_code, created_at),
+    KEY idx_grading_submission_vintage_classification (product_type_code, vintage_classification_code),
     KEY idx_grading_submission_category_status (card_category_code, status_code, created_at),
     KEY idx_grading_submission_trading_pop (card_category_code, card_name, set_name, card_number, language_code),
     KEY idx_grading_submission_movie_pop (card_category_code, movie_name, release_year, production_company, film_type)

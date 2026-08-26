@@ -29,6 +29,26 @@ VALUES
 (30, 'Sports Card',    'sports_card',    'nxr_card_category', '', '',        'N', '0', 'admin', sysdate(), ''),
 (40, 'Celebrity Card', 'celebrity_card', 'nxr_card_category', '', '',        'N', '0', 'admin', sysdate(), '');
 
+-- 产品类型字典（固定行为值，不与现有 card_category 混用）
+INSERT INTO sys_dict_type (dict_name, dict_type, status, create_by, create_time, remark)
+VALUES ('产品类型', 'nxr_product_type', '0', 'admin', sysdate(), '录入流程产品类型；编码由后端固定校验');
+
+INSERT INTO sys_dict_data (dict_sort, dict_label, dict_value, dict_type, css_class, list_class, is_default, status, create_by, create_time, remark)
+VALUES
+(10, 'Graded Card',    'graded_card',    'nxr_product_type', '', '', 'Y', '0', 'admin', sysdate(), ''),
+(20, 'Merch Product',  'merch_product',  'nxr_product_type', '', '', 'N', '0', 'admin', sysdate(), ''),
+(30, 'Vintage Card',   'vintage_product','nxr_product_type', '', '', 'N', '0', 'admin', sysdate(), '');
+
+INSERT INTO sys_dict_type (dict_name, dict_type, status, create_by, create_time, remark)
+VALUES ('老卡分类', 'nxr_vintage_classification', '0', 'admin', sysdate(), 'Vintage Card 的四分类');
+
+INSERT INTO sys_dict_data (dict_sort, dict_label, dict_value, dict_type, css_class, list_class, is_default, status, create_by, create_time, remark)
+VALUES
+(10, 'Pristine', 'Pristine', 'nxr_vintage_classification', '', '', 'Y', '0', 'admin', sysdate(), ''),
+(20, 'Nova',     'Nova',     'nxr_vintage_classification', '', '', 'N', '0', 'admin', sysdate(), ''),
+(30, 'Legacy',   'Legacy',   'nxr_vintage_classification', '', '', 'N', '0', 'admin', sysdate(), ''),
+(40, 'Helix',    'Helix',    'nxr_vintage_classification', '', '', 'N', '0', 'admin', sysdate(), '');
+
 -- 语言字典
 INSERT INTO sys_dict_type (dict_name, dict_type, status, create_by, create_time, remark)
 VALUES ('卡牌语言', 'nxr_language', '0', 'admin', sysdate(), '录入表单语言选项');
@@ -46,14 +66,38 @@ VALUES
 
 -- ---------------------------------------------------------------------------
 -- 2. NXR 业务菜单（menu_id 2000 起）
+--
+-- 信息架构对齐现有 Python 后台，但复用 Java 页面：录入快捷入口通过
+-- sys_menu.query 驱动同一个 entries 组件，不复制 CRUD 页面。
 -- ---------------------------------------------------------------------------
-INSERT INTO sys_menu VALUES('2000', 'NXR管理', '0', '0', 'nxr', null, '', '', 1, 0, 'M', '0', '0', '', 'component', 'admin', sysdate(), '', null, 'NXR 卡牌评级业务目录');
+INSERT INTO sys_menu VALUES('2000', 'NXR后台', '0', '0', 'nxr', null, '', '', 1, 0, 'M', '0', '0', '', 'component', 'admin', sysdate(), '', null, 'NXR 运营后台');
 
-INSERT INTO sys_menu VALUES('2001', '录入管理',   '2000', '1', 'entries',  'nxr/entries/index',  '', '', 1, 0, 'C', '0', '0', 'nxr:entry:list',    'form',      'admin', sysdate(), '', null, '卡牌录入与审批');
-INSERT INTO sys_menu VALUES('2002', '上传管理',   '2000', '2', 'upload',   'nxr/upload/index',   '', '', 1, 0, 'C', '0', '0', 'nxr:media:list',    'upload',    'admin', sysdate(), '', null, '媒体导入与发布');
-INSERT INTO sys_menu VALUES('2003', 'Excel导出',  '2000', '3', 'exports',  'nxr/exports/index',  '', '', 1, 0, 'C', '0', '0', 'nxr:export:list',   'excel',     'admin', sysdate(), '', null, '已审批数据导出');
-INSERT INTO sys_menu VALUES('2004', '品牌设置',   '2000', '4', 'brands',   'nxr/brands/index',   '', '', 1, 0, 'C', '0', '0', 'nxr:brand:list',    'edit',      'admin', sysdate(), '', null, '品牌与别名管理');
-INSERT INTO sys_menu VALUES('2005', 'Waitlist',   '2000', '5', 'waitlist', 'nxr/waitlist/index', '', '', 1, 0, 'C', '0', '0', 'nxr:waitlist:list', 'email',     'admin', sysdate(), '', null, '候补名单查看');
+-- 卡牌录入保留分组；上传、订单、客户、候补和导出按业务任务直接展示。
+INSERT INTO sys_menu VALUES('2080', '卡牌管理', '2000', '1', 'cards',    null, '', 'NxrCards',    1, 0, 'M', '0', '0', '', 'form',   'admin', sysdate(), '', null, '卡牌录入、审核与状态快捷入口');
+INSERT INTO sys_menu VALUES('2092', '系统设置', '2000', '7', 'settings', null, '', 'NxrSettings', 1, 0, 'M', '0', '0', '', 'system', 'admin', sysdate(), '', null, '管理员账号、字典与品牌设置');
+
+-- 固定首页 /index 展示运营总览；该功能权限以按钮记录授予角色。
+INSERT INTO sys_menu VALUES('2081', '运营总览查看', '2080', '1', '', '', '', '', 1, 0, 'F', '0', '0', 'nxr:dashboard:view', '#', 'admin', sysdate(), '', null, '运营总览 API 权限');
+
+-- 卡牌管理：同一录入组件的独立路由与查询参数。
+INSERT INTO sys_menu VALUES('2082', '新建卡牌', '2080', '1', 'new-entry',       'nxr/entries/index', '{"mode":"create"}',   'NxrNewEntry',      1, 1, 'C', '0', '0', 'nxr:entry:add',  'edit',      'admin', sysdate(), '', null, '打开新增卡牌对话框');
+INSERT INTO sys_menu VALUES('2001', '卡牌列表', '2080', '2', 'entries',         'nxr/entries/index', '',                    'NxrEntries',       1, 0, 'C', '0', '0', 'nxr:entry:list', 'form',      'admin', sysdate(), '', null, '全部卡牌录入与审批');
+INSERT INTO sys_menu VALUES('2083', '待审核',   '2080', '3', 'pending-review',  'nxr/entries/index', '{"status":"pending"}', 'NxrPendingReview', 1, 1, 'C', '0', '0', 'nxr:entry:list', 'time',      'admin', sysdate(), '', null, '待审核录入快捷视图');
+INSERT INTO sys_menu VALUES('2084', '已批准',   '2080', '4', 'approved-entries','nxr/entries/index', '{"status":"approved"}','NxrApproved',      1, 1, 'C', '0', '0', 'nxr:entry:list', 'validCode', 'admin', sysdate(), '', null, '已批准录入快捷视图');
+
+-- 独立任务入口：卡图发布不与订单混用，候补和导出也无需进入“工具”分组。
+INSERT INTO sys_menu VALUES('2002', '卡图上传', '2000', '2', 'upload',   'nxr/upload/index',   '', 'NxrUpload',   1, 0, 'C', '0', '0', 'nxr:media:list',    'upload', 'admin', sysdate(), '', null, '已审批卡牌的正反面图片导入与证书发布');
+INSERT INTO sys_menu VALUES('2005', '候补名单', '2000', '5', 'waitlist', 'nxr/waitlist/index', '', 'NxrWaitlist', 1, 0, 'C', '0', '0', 'nxr:waitlist:list', 'email',  'admin', sysdate(), '', null, '候补提交者名单查看');
+INSERT INTO sys_menu VALUES('2003', '数据导出', '2000', '6', 'exports',  'nxr/exports/index',  '', 'NxrExports',  1, 0, 'C', '0', '0', 'nxr:export:list',   'excel',  'admin', sysdate(), '', null, '已审批或已发布数据导出');
+
+-- Administration：品牌页与若依管理员账号/字典页统一归入系统设置。
+INSERT INTO sys_menu VALUES('2004', '品牌设置', '2092', '3', 'brands', 'nxr/brands/index', '', 'NxrBrands', 1, 0, 'C', '0', '0', 'nxr:brand:list', 'edit', 'admin', sysdate(), '', null, '品牌与别名管理');
+UPDATE sys_menu SET menu_name = '管理员用户', parent_id = 2092, order_num = 1, route_name = 'NxrAdminUsers', update_by = 'admin', update_time = sysdate() WHERE menu_id = 100;
+UPDATE sys_menu SET menu_name = '字典设置',   parent_id = 2092, order_num = 2, route_name = 'NxrDictionaries', update_by = 'admin', update_time = sysdate() WHERE menu_id = 105;
+
+-- 若已有非超级管理员角色持有若依用户/字典菜单，补齐新的父级链路。
+INSERT IGNORE INTO sys_role_menu (role_id, menu_id) SELECT DISTINCT role_id, 2000 FROM sys_role_menu WHERE menu_id IN (100, 105);
+INSERT IGNORE INTO sys_role_menu (role_id, menu_id) SELECT DISTINCT role_id, 2092 FROM sys_role_menu WHERE menu_id IN (100, 105);
 
 -- 录入管理按钮
 INSERT INTO sys_menu VALUES('2011', '录入新增', '2001', '1', '', '', '', '', 1, 0, 'F', '0', '0', 'nxr:entry:add',     '#', 'admin', sysdate(), '', null, '');
@@ -78,14 +122,16 @@ INSERT INTO sys_menu VALUES('2042', '品牌编辑', '2004', '2', '', '', '', '',
 INSERT INTO sys_role VALUES('100', 'NXR管理员', 'nxr_admin',    3, 1, 1, 1, '0', '0', 'admin', sysdate(), '', null, '对应原 Flask admin 角色：全部 NXR 业务功能');
 INSERT INTO sys_role VALUES('101', 'NXR审核员', 'nxr_reviewer', 4, 1, 1, 1, '0', '0', 'admin', sysdate(), '', null, '对应原 Flask reviewer 角色：查看与审批录入');
 
--- NXR管理员：全部 NXR 菜单与按钮
+-- NXR管理员：业务菜单与按钮；系统设置仅由若依超级管理员维护。
 INSERT INTO sys_role_menu (role_id, menu_id) VALUES
-(100, 2000), (100, 2001), (100, 2002), (100, 2003), (100, 2004), (100, 2005),
+(100, 2000), (100, 2080),
+(100, 2081), (100, 2082), (100, 2001), (100, 2083), (100, 2084),
+(100, 2002), (100, 2003), (100, 2005),
 (100, 2011), (100, 2012), (100, 2013),
 (100, 2021), (100, 2022),
-(100, 2031), (100, 2032),
-(100, 2041), (100, 2042);
+(100, 2031), (100, 2032);
 
 -- NXR审核员：录入查看 + 审批
 INSERT INTO sys_role_menu (role_id, menu_id) VALUES
-(101, 2000), (101, 2001), (101, 2013);
+(101, 2000), (101, 2080),
+(101, 2081), (101, 2001), (101, 2083), (101, 2084), (101, 2013);

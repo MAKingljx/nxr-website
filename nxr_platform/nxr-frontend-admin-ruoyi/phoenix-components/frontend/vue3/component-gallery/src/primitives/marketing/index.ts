@@ -1,0 +1,7 @@
+export { default as PhoenixBargainCampaign } from './PhoenixBargainCampaign.vue'
+export type { PhoenixBargainParticipant } from './PhoenixBargainCampaign.vue'
+export { default as PhoenixCommentThread } from './PhoenixCommentThread.vue'
+export type { PhoenixCommentItem } from './PhoenixCommentThread.vue'
+export { default as PhoenixLuckyDraw } from './PhoenixLuckyDraw.vue'
+export type { PhoenixLuckyDrawItem, PhoenixMarketingAppearance } from './PhoenixLuckyDraw.vue'
+export { default as PhoenixProductCard } from './PhoenixProductCard.vue'

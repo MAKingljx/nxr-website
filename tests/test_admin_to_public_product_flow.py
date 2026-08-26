@@ -110,7 +110,7 @@ class AdminToPublicProductFlowTests(unittest.TestCase):
             "8234567892",
             "vintage_product",
             card_name="NXR Archive Card",
-            vintage_classification="Patina",
+            vintage_classification="Nova",
         )
 
         self.assertEqual(merch["status"], "pending")
@@ -134,7 +134,7 @@ class AdminToPublicProductFlowTests(unittest.TestCase):
         )
         self.assertIsNone(rows["8234567891"]["final_grade"])
         self.assertEqual(rows["8234567892"]["product_type"], "vintage_product")
-        self.assertEqual(rows["8234567892"]["vintage_classification"], "Patina")
+        self.assertEqual(rows["8234567892"]["vintage_classification"], "Nova")
         self.assertIsNone(rows["8234567892"]["final_grade"])
 
         public_client = public_site.app.test_client()
@@ -156,10 +156,15 @@ class AdminToPublicProductFlowTests(unittest.TestCase):
         vintage_html = vintage_response.get_data(as_text=True)
         self.assertIn("Vintage Card", vintage_html)
         self.assertIn("Condition Grade", vintage_html)
-        self.assertIn("Patina", vintage_html)
+        self.assertIn("Nova", vintage_html)
         self.assertNotIn("Final Grade", vintage_html)
         self.assertNotIn("Sub-Grades", vintage_html)
-        self.assertNotIn('<div class="vintage-badge', vintage_html)
+        self.assertIn('<div class="vintage-badge', vintage_html)
+        self.assertIn("Vintage Card Classifications", vintage_html)
+        self.assertIn("Pristine", vintage_html)
+        self.assertIn("Nova", vintage_html)
+        self.assertIn("Legacy", vintage_html)
+        self.assertIn("Helix", vintage_html)
         self.assertNotIn("Collector Ledger", vintage_html)
         self.assertNotIn("Transfer History", vintage_html)
 

@@ -16,6 +16,8 @@ const router = createRouter({
     { path: '/account/cards', component: () => import('./views/WebAccountCardsView.vue') },
     { path: '/account/orders', component: () => import('./views/WebOrdersView.vue') },
     { path: '/account/orders/:orderNo', component: () => import('./views/WebOrderDetailView.vue'), props: true },
+    { path: '/account/addresses', component: () => import('./views/WebAddressesView.vue') },
+    { path: '/account/merchant-orders', component: () => import('./views/WebMerchantOrdersView.vue') },
   ],
 })
 

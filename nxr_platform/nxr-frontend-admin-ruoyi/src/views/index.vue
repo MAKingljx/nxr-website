@@ -3,81 +3,86 @@
     <nxr-page-header kicker="NXR OPERATIONS" title="运营总览" :summary="workloadSummary">
       <template #actions>
         <span class="dashboard-date">{{ todayLabel }}</span>
-        <el-tooltip content="刷新数据" placement="bottom">
+        <el-tooltip v-if="canViewDashboard" content="刷新数据" placement="bottom">
           <el-button :icon="Refresh" circle :loading="loading" aria-label="刷新数据" @click="loadDashboard" />
         </el-tooltip>
       </template>
     </nxr-page-header>
 
-    <el-alert
-      v-if="loadError"
-      class="dashboard-alert"
-      title="暂时无法读取运营数据"
-      type="error"
-      :closable="false"
-      show-icon
-    >
-      <template #default>
-        <el-button link type="danger" @click="loadDashboard">重新加载</el-button>
-      </template>
-    </el-alert>
+    <template v-if="canViewDashboard">
+      <el-alert
+        v-if="loadError"
+        class="dashboard-alert"
+        title="暂时无法读取运营数据"
+        type="error"
+        :closable="false"
+        show-icon
+      >
+        <template #default>
+          <el-button link type="danger" @click="loadDashboard">重新加载</el-button>
+        </template>
+      </el-alert>
 
-    <section class="metric-grid" aria-label="核心运营指标">
-      <dashboard-metric-card
-        label="总录入"
-        :value="dashboard.totalSubmissions"
-        detail="系统累计评级资料"
-        :icon="Files"
-      />
-      <dashboard-metric-card
-        label="待审批"
-        :value="dashboard.pendingReview"
-        detail="需要评级人员处理"
-        :icon="DocumentChecked"
-      />
-      <dashboard-metric-card
-        label="待发布"
-        :value="dashboard.approvedReady"
-        detail="已审批，等待证书发布"
-        :icon="UploadFilled"
-      />
-      <dashboard-metric-card
-        label="已发布证书"
-        :value="dashboard.publishedCertificates"
-        :detail="`发布率 ${publishedRate}`"
-        :icon="Medal"
-      />
-    </section>
+      <section class="metric-grid" aria-label="核心运营指标">
+        <dashboard-metric-card
+          label="总录入"
+          :value="dashboard.totalSubmissions"
+          detail="系统累计评级资料"
+          :icon="Files"
+        />
+        <dashboard-metric-card
+          label="待审批"
+          :value="dashboard.pendingReview"
+          detail="需要评级人员处理"
+          :icon="DocumentChecked"
+        />
+        <dashboard-metric-card
+          label="待发布"
+          :value="dashboard.approvedReady"
+          detail="已审批，等待证书发布"
+          :icon="UploadFilled"
+        />
+        <dashboard-metric-card
+          label="已发布证书"
+          :value="dashboard.publishedCertificates"
+          :detail="`发布率 ${publishedRate}`"
+          :icon="Medal"
+        />
+      </section>
 
-    <dashboard-workflow
-      :total-submissions="dashboard.totalSubmissions"
-      :pending-review="dashboard.pendingReview"
-      :approved-ready="dashboard.approvedReady"
-      :pending-work="pendingWork"
-    />
-
-    <section class="dashboard-content">
-      <dashboard-recent
-        :rows="dashboard.recentPublished"
-        :loading="loading"
-        @view-all="navigate('/nxr/entries')"
+      <dashboard-workflow
+        :total-submissions="dashboard.totalSubmissions"
+        :pending-review="dashboard.pendingReview"
+        :approved-ready="dashboard.approvedReady"
+        :pending-work="pendingWork"
       />
-      <dashboard-action-rail
-        :waitlist-count="dashboard.waitlistCount"
-        @navigate="navigate"
-      />
-    </section>
 
-    <footer class="dashboard-footer">
-      <span class="status-dot" :class="{ 'status-dot--error': loadError }"></span>
-      {{ loadError ? '数据连接异常' : `数据已更新 ${updatedAt}` }}
-    </footer>
+      <section class="dashboard-content">
+        <dashboard-recent
+          :rows="dashboard.recentPublished"
+          :loading="loading"
+          @view-all="navigate('/nxr/cards/entries')"
+        />
+        <dashboard-action-rail
+          :waitlist-count="dashboard.waitlistCount"
+          @navigate="navigate"
+        />
+      </section>
+
+      <footer class="dashboard-footer">
+        <span class="status-dot" :class="{ 'status-dot--error': loadError }"></span>
+        {{ loadError ? '数据连接异常' : `数据已更新 ${updatedAt}` }}
+      </footer>
+    </template>
+
+    <el-empty v-else description="当前账号没有运营总览权限，请从左侧菜单进入可用功能" />
   </main>
 </template>
 
 <script setup name="Index">
 import { DocumentChecked, Files, Medal, Refresh, UploadFilled } from '@element-plus/icons-vue'
 import { fetchDashboard } from '@/api/nxr/entries'
+import auth from '@/plugins/auth'
 import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
 import DashboardActionRail from './dashboard/components/DashboardActionRail.vue'
 import DashboardMetricCard from './dashboard/components/DashboardMetricCard.vue'
@@ -85,6 +90,7 @@ import DashboardRecent from './dashboard/components/DashboardRecent.vue'
 import DashboardWorkflow from './dashboard/components/DashboardWorkflow.vue'
 
 const router = useRouter()
+const canViewDashboard = auth.hasPermi('nxr:dashboard:view')
 const loading = ref(false)
 const loadError = ref(false)
 const updatedAt = ref('--:--')
@@ -104,6 +110,7 @@ const publishedRate = computed(() => {
   return `${rate.toFixed(1)}%`
 })
 const workloadSummary = computed(() => {
+  if (!canViewDashboard) return '请从左侧菜单进入当前账号可用的管理功能'
   if (loadError.value) return '运营数据加载失败，请稍后重试'
   if (!pendingWork.value) return '当前没有待审批或待发布项目'
   return `待审批 ${formatNumber(dashboard.value.pendingReview)} 项，待发布 ${formatNumber(dashboard.value.approvedReady)} 项`
@@ -141,7 +148,7 @@ async function loadDashboard() {
   }
 }
 
-loadDashboard()
+if (canViewDashboard) loadDashboard()
 </script>
 
 <style scoped lang="scss">

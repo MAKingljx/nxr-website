@@ -3,6 +3,7 @@ package com.nxr.platform.admin;
 import com.nxr.platform.shared.CertificateIdPolicy;
 import com.nxr.platform.shared.GradeLabelResolver;
 import com.nxr.platform.shared.NxrDictionaryService;
+import com.nxr.platform.shared.ProductTypePolicy;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
@@ -24,6 +25,11 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class AdminSubmissionService {
 
+    private static final String DEFAULT_PRODUCT_TYPE = ProductTypePolicy.GRADED_CARD;
+    private static final String MERCH_PRODUCT_TYPE = ProductTypePolicy.MERCH_PRODUCT;
+    private static final String VINTAGE_PRODUCT_TYPE = ProductTypePolicy.VINTAGE_PRODUCT;
+    private static final String PRODUCT_TYPE_SQL = " " + ProductTypePolicy.canonicalSql("product_type_code");
+    private static final String SUBMISSION_PRODUCT_TYPE_SQL = " " + ProductTypePolicy.canonicalSql("s.product_type_code");
     private static final String DEFAULT_CARD_CATEGORY = "trading_card";
     private static final Map<String, String> CARD_CATEGORY_ALIASES = Map.ofEntries(
         Map.entry("", DEFAULT_CARD_CATEGORY),
@@ -100,6 +106,9 @@ public class AdminSubmissionService {
             .withTableName("grading_submission")
             .usingColumns(
                 "cert_id",
+                "product_type_code",
+                "vintage_classification_code",
+                "merch_description",
                 "card_category_code",
                 "card_name",
                 "movie_name",
@@ -159,6 +168,7 @@ public class AdminSubmissionService {
                 OR UPPER(COALESCE(s.movie_name, '')) LIKE :query
                 OR UPPER(COALESCE(s.production_company, '')) LIKE :query
                 OR UPPER(s.set_name) LIKE :query
+                OR UPPER(COALESCE(s.merch_description, '')) LIKE :query
               )
             """;
 
@@ -177,6 +187,9 @@ public class AdminSubmissionService {
                 SELECT
                     s.id,
                     s.cert_id,
+                    COALESCE(NULLIF(s.product_type_code, ''), 'graded_card') AS product_type_code,
+                    s.vintage_classification_code,
+                    s.merch_description,
                     s.card_category_code,
                     s.card_name,
                     s.brand_name,
@@ -188,7 +201,7 @@ public class AdminSubmissionService {
                     g.final_grade_value,
                     g.final_grade_label
                 FROM grading_submission s
-                JOIN grading_score g ON g.submission_id = s.id
+                LEFT JOIN grading_score g ON g.submission_id = s.id
                 """ + whereClause + """
                 ORDER BY s.created_at DESC, s.id DESC
                 LIMIT :limit OFFSET :offset
@@ -198,6 +211,10 @@ public class AdminSubmissionService {
             .query((rs, rowNum) -> new SubmissionListItem(
                 rs.getLong("id"),
                 rs.getString("cert_id"),
+                normalizeStoredProductType(rs.getString("product_type_code")),
+                productTypeLabel(rs.getString("product_type_code")),
+                rs.getString("vintage_classification_code"),
+                rs.getString("merch_description"),
                 normalizeCardCategory(rs.getString("card_category_code")),
                 cardCategoryLabel(rs.getString("card_category_code")),
                 rs.getString("card_name"),
@@ -221,6 +238,9 @@ public class AdminSubmissionService {
                 SELECT
                     s.id,
                     s.cert_id,
+                    COALESCE(NULLIF(s.product_type_code, ''), 'graded_card') AS product_type_code,
+                    s.vintage_classification_code,
+                    s.merch_description,
                     s.card_category_code,
                     s.card_name,
                     s.movie_name,
@@ -255,7 +275,7 @@ public class AdminSubmissionService {
                     g.decision_method_code,
                     g.decision_notes
                 FROM grading_submission s
-                JOIN grading_score g ON g.submission_id = s.id
+                LEFT JOIN grading_score g ON g.submission_id = s.id
                 WHERE s.id = :submissionId
                 """
             )
@@ -263,6 +283,10 @@ public class AdminSubmissionService {
             .query((rs, rowNum) -> new SubmissionDetailResponse(
                 rs.getLong("id"),
                 rs.getString("cert_id"),
+                normalizeStoredProductType(rs.getString("product_type_code")),
+                productTypeLabel(rs.getString("product_type_code")),
+                rs.getString("vintage_classification_code"),
+                rs.getString("merch_description"),
                 normalizeCardCategory(rs.getString("card_category_code")),
                 cardCategoryLabel(rs.getString("card_category_code")),
                 rs.getString("card_name"),
@@ -345,9 +369,11 @@ public class AdminSubmissionService {
         }
 
         long submissionId = key.longValue();
-        Map<String, Object> scoreParams = new LinkedHashMap<>();
-        putScoreParams(scoreParams, submissionId, normalized, "Created from admin platform workflow.");
-        scoreInsert.execute(scoreParams);
+        if (normalized.gradedProduct()) {
+            Map<String, Object> scoreParams = new LinkedHashMap<>();
+            putScoreParams(scoreParams, submissionId, normalized, "Created from admin platform workflow.");
+            scoreInsert.execute(scoreParams);
+        }
 
         return loadSubmission(submissionId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Submission load failed"));
@@ -368,6 +394,9 @@ public class AdminSubmissionService {
                     """
                     UPDATE grading_submission
                     SET cert_id = :certId,
+                        product_type_code = :productType,
+                        vintage_classification_code = :vintageClassification,
+                        merch_description = :merchDescription,
                         card_category_code = :cardCategory,
                         card_name = :cardName,
                         movie_name = :movieName,
@@ -395,25 +424,13 @@ public class AdminSubmissionService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Certificate ID already exists");
         }
 
-        Map<String, Object> scoreParams = new LinkedHashMap<>();
-        putScoreParams(scoreParams, submissionId, normalized, "Updated from admin platform workflow.");
-        jdbcClient.sql(
-                """
-                UPDATE grading_score
-                SET centering_score = :centeringScore,
-                    edges_score = :edgesScore,
-                    corners_score = :cornersScore,
-                    surface_score = :surfaceScore,
-                    final_grade_value = :finalGradeValue,
-                    final_grade_label = :finalGradeLabel,
-                    decision_method_code = :decisionMethodCode,
-                    decision_notes = :decisionNotes,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE submission_id = :submissionId
-                """
-            )
-            .params(scoreParams)
-            .update();
+        if (normalized.gradedProduct()) {
+            saveScore(submissionId, normalized, "Updated from admin platform workflow.");
+        } else {
+            jdbcClient.sql("DELETE FROM grading_score WHERE submission_id = :submissionId")
+                .param("submissionId", submissionId)
+                .update();
+        }
 
         return loadSubmission(submissionId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Submission load failed"));
@@ -435,9 +452,20 @@ public class AdminSubmissionService {
     }
 
     public PopulationCalculationResponse calculatePopulation(PopulationCalculationRequest request) {
-        String category = normalizeCardCategory(request.cardCategory());
-        String finalGradeLabel = normalizeOptional(request.finalGradeLabel());
-        if (finalGradeLabel == null && request.hasScores()) {
+        String productType = normalizeProductType(request.productType());
+        boolean gradedProduct = DEFAULT_PRODUCT_TYPE.equals(productType);
+        String category = gradedProduct
+            ? normalizeCardCategory(request.cardCategory())
+            : DEFAULT_CARD_CATEGORY;
+        String vintageClassification = VINTAGE_PRODUCT_TYPE.equals(productType)
+            ? nxrDictionaryService.requireActiveValue(
+                NxrDictionaryService.VINTAGE_CLASSIFICATION_DICT,
+                request.vintageClassification(),
+                "Vintage Classification"
+            )
+            : null;
+        String finalGradeLabel = gradedProduct ? normalizeOptional(request.finalGradeLabel()) : null;
+        if (gradedProduct && finalGradeLabel == null && request.hasScores()) {
             finalGradeLabel = calculateGrade(new ScoreRequest(
                 request.centeringScore(),
                 request.edgesScore(),
@@ -460,7 +488,7 @@ public class AdminSubmissionService {
             request.groupName()
         );
 
-        if (finalGradeLabel == null || !identity.complete()) {
+        if ((gradedProduct && finalGradeLabel == null) || !identity.complete()) {
             return new PopulationCalculationResponse(
                 1,
                 "Incomplete data for POP calculation",
@@ -468,7 +496,13 @@ public class AdminSubmissionService {
             );
         }
 
-        int existingCount = countMatchingPopulation(identity, finalGradeLabel, request.currentSubmissionId());
+        int existingCount = countMatchingPopulation(
+            identity,
+            productType,
+            vintageClassification,
+            finalGradeLabel,
+            request.currentSubmissionId()
+        );
         int population = existingCount + 1;
         return new PopulationCalculationResponse(
             population,
@@ -478,7 +512,10 @@ public class AdminSubmissionService {
     }
 
     public MatchCardResponse matchCard(MatchCardRequest request) {
-        String category = normalizeCardCategory(request.cardCategory());
+        String productType = normalizeProductType(request.productType());
+        String category = DEFAULT_PRODUCT_TYPE.equals(productType)
+            ? normalizeCardCategory(request.cardCategory())
+            : DEFAULT_CARD_CATEGORY;
         if ("movie_film".equals(category)) {
             return MatchCardResponse.notFound("Movie Film entries are matched by movie details, not set number.");
         }
@@ -500,7 +537,9 @@ public class AdminSubmissionService {
                     sports_type,
                     group_name
                 FROM grading_submission
-                WHERE COALESCE(NULLIF(card_category_code, ''), 'trading_card') = :category
+                WHERE """ + PRODUCT_TYPE_SQL + """
+                  = :productType
+                  AND COALESCE(NULLIF(card_category_code, ''), 'trading_card') = :category
                   AND UPPER(set_name) = UPPER(:setName)
                   AND UPPER(card_number) = UPPER(:cardNumber)
                 ORDER BY
@@ -511,6 +550,7 @@ public class AdminSubmissionService {
                 """
             )
             .params(Map.of(
+                "productType", productType,
                 "category", category,
                 "setName", setName,
                 "cardNumber", cardNumber
@@ -624,6 +664,9 @@ public class AdminSubmissionService {
 
     private void putSubmissionParams(Map<String, Object> params, NormalizedSubmission normalized) {
         params.put("certId", normalized.certId());
+        params.put("productType", normalized.productType());
+        params.put("vintageClassification", normalized.vintageClassification());
+        params.put("merchDescription", normalized.merchDescription());
         params.put("cardCategory", normalized.cardCategory());
         params.put("cardName", normalized.cardName());
         params.put("movieName", normalized.movieName());
@@ -641,6 +684,9 @@ public class AdminSubmissionService {
         params.put("languageCode", normalized.languageCode());
         params.put("populationValue", normalized.populationValue());
         params.put("cert_id", normalized.certId());
+        params.put("product_type_code", normalized.productType());
+        params.put("vintage_classification_code", normalized.vintageClassification());
+        params.put("merch_description", normalized.merchDescription());
         params.put("card_category_code", normalized.cardCategory());
         params.put("card_name", normalized.cardName());
         params.put("movie_name", normalized.movieName());
@@ -685,21 +731,70 @@ public class AdminSubmissionService {
         params.put("decision_notes", decisionNotes);
     }
 
+    private void saveScore(long submissionId, NormalizedSubmission normalized, String decisionNotes) {
+        Map<String, Object> scoreParams = new LinkedHashMap<>();
+        putScoreParams(scoreParams, submissionId, normalized, decisionNotes);
+        int updated = jdbcClient.sql(
+                """
+                UPDATE grading_score
+                SET centering_score = :centeringScore,
+                    edges_score = :edgesScore,
+                    corners_score = :cornersScore,
+                    surface_score = :surfaceScore,
+                    final_grade_value = :finalGradeValue,
+                    final_grade_label = :finalGradeLabel,
+                    decision_method_code = :decisionMethodCode,
+                    decision_notes = :decisionNotes,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE submission_id = :submissionId
+                """
+            )
+            .params(scoreParams)
+            .update();
+        if (updated == 0) {
+            scoreInsert.execute(scoreParams);
+        }
+    }
+
     private NormalizedSubmission normalizeSubmission(MutateSubmissionRequest request, Long excludeSubmissionId) {
-        String category = normalizeCardCategory(request.cardCategory());
-        BigDecimal centering = normalizeScore(request.centeringScore(), "Centering");
-        BigDecimal edges = normalizeScore(request.edgesScore(), "Edges");
-        BigDecimal corners = normalizeScore(request.cornersScore(), "Corners");
-        BigDecimal surface = normalizeScore(request.surfaceScore(), "Surface");
-        BigDecimal finalGrade = gradeLabelResolver.calculateFinalGrade(centering, edges, corners, surface);
-        String finalGradeLabel = gradeLabelResolver.resolveLabel(finalGrade);
+        String productType = normalizeProductType(request.productType());
+        boolean gradedProduct = DEFAULT_PRODUCT_TYPE.equals(productType);
+        String vintageClassification = VINTAGE_PRODUCT_TYPE.equals(productType)
+            ? nxrDictionaryService.requireActiveValue(
+                NxrDictionaryService.VINTAGE_CLASSIFICATION_DICT,
+                request.vintageClassification(),
+                "Vintage Classification"
+            )
+            : null;
+        String merchDescription = MERCH_PRODUCT_TYPE.equals(productType)
+            ? normalizeOptional(request.merchDescription())
+            : null;
+        String category = gradedProduct ? normalizeCardCategory(request.cardCategory()) : DEFAULT_CARD_CATEGORY;
+        BigDecimal centering = gradedProduct ? normalizeScore(request.centeringScore(), "Centering") : null;
+        BigDecimal edges = gradedProduct ? normalizeScore(request.edgesScore(), "Edges") : null;
+        BigDecimal corners = gradedProduct ? normalizeScore(request.cornersScore(), "Corners") : null;
+        BigDecimal surface = gradedProduct ? normalizeScore(request.surfaceScore(), "Surface") : null;
+        BigDecimal finalGrade = gradedProduct
+            ? gradeLabelResolver.calculateFinalGrade(centering, edges, corners, surface)
+            : null;
+        String finalGradeLabel = gradedProduct ? gradeLabelResolver.resolveLabel(finalGrade) : null;
 
         String certId = normalizeCertificateId(request.certId(), excludeSubmissionId);
         NormalizedIdentity normalizedIdentity = normalizeIdentity(category, request);
-        int populationValue = countMatchingPopulation(normalizedIdentity.populationIdentity(), finalGradeLabel, excludeSubmissionId) + 1;
+        int populationValue = countMatchingPopulation(
+            normalizedIdentity.populationIdentity(),
+            productType,
+            vintageClassification,
+            finalGradeLabel,
+            excludeSubmissionId
+        ) + 1;
 
         return new NormalizedSubmission(
             certId,
+            productType,
+            productTypeLabel(productType),
+            vintageClassification,
+            merchDescription,
             category,
             cardCategoryLabel(category),
             normalizedIdentity.cardName(),
@@ -823,23 +918,38 @@ public class AdminSubmissionService {
         );
     }
 
-    private int countMatchingPopulation(PopulationIdentity identity, String finalGradeLabel, Long excludeSubmissionId) {
-        if (identity == null || !identity.complete() || finalGradeLabel == null || finalGradeLabel.isBlank()) {
+    private int countMatchingPopulation(
+        PopulationIdentity identity,
+        String productType,
+        String vintageClassification,
+        String finalGradeLabel,
+        Long excludeSubmissionId
+    ) {
+        boolean gradedProduct = DEFAULT_PRODUCT_TYPE.equals(productType);
+        if (identity == null || !identity.complete() || (gradedProduct && (finalGradeLabel == null || finalGradeLabel.isBlank()))) {
             return 0;
         }
 
         Map<String, Object> params = new LinkedHashMap<>();
+        params.put("productType", productType);
         params.put("category", identity.category());
         params.put("finalGradeLabel", finalGradeLabel);
+        params.put("vintageClassification", vintageClassification);
         params.put("excludeSubmissionId", excludeSubmissionId);
 
         StringBuilder where = new StringBuilder(
             """
-            WHERE COALESCE(NULLIF(s.card_category_code, ''), 'trading_card') = :category
-              AND g.final_grade_label = :finalGradeLabel
+            WHERE """ + SUBMISSION_PRODUCT_TYPE_SQL + """
+              = :productType
+              AND COALESCE(NULLIF(s.card_category_code, ''), 'trading_card') = :category
               AND (:excludeSubmissionId IS NULL OR s.id <> :excludeSubmissionId)
             """
         );
+        if (gradedProduct) {
+            where.append(" AND g.final_grade_label = :finalGradeLabel\n");
+        } else if (VINTAGE_PRODUCT_TYPE.equals(productType)) {
+            where.append(" AND UPPER(COALESCE(s.vintage_classification_code, '')) = UPPER(:vintageClassification)\n");
+        }
 
         if ("movie_film".equals(identity.category())) {
             params.put("movieName", identity.parts().get(0));
@@ -880,7 +990,7 @@ public class AdminSubmissionService {
                 """
                 SELECT COUNT(*)
                 FROM grading_submission s
-                JOIN grading_score g ON g.submission_id = s.id
+                LEFT JOIN grading_score g ON g.submission_id = s.id
                 """ + where
             )
             .params(params)
@@ -908,6 +1018,22 @@ public class AdminSubmissionService {
     private String normalizeCardCategory(String value) {
         String rawValue = value == null ? "" : value.trim().toLowerCase(Locale.ROOT).replace('-', ' ');
         return CARD_CATEGORY_ALIASES.getOrDefault(rawValue, DEFAULT_CARD_CATEGORY);
+    }
+
+    private String normalizeProductType(String value) {
+        String code = ProductTypePolicy.normalize(value);
+        if (code == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported product type");
+        }
+        return code;
+    }
+
+    private String normalizeStoredProductType(String value) {
+        return ProductTypePolicy.normalizeStored(value);
+    }
+
+    private String productTypeLabel(String value) {
+        return ProductTypePolicy.label(value);
     }
 
     private String cardCategoryLabel(String value) {
@@ -1005,6 +1131,10 @@ public class AdminSubmissionService {
     public record SubmissionListItem(
         long id,
         String certId,
+        String productType,
+        String productTypeLabel,
+        String vintageClassification,
+        String merchDescription,
         String cardCategory,
         String cardCategoryLabel,
         String cardName,
@@ -1022,6 +1152,10 @@ public class AdminSubmissionService {
     public record SubmissionDetailResponse(
         long id,
         String certId,
+        String productType,
+        String productTypeLabel,
+        String vintageClassification,
+        String merchDescription,
         String cardCategory,
         String cardCategoryLabel,
         String cardName,
@@ -1062,6 +1196,10 @@ public class AdminSubmissionService {
             return new SubmissionDetailResponse(
                 id,
                 certId,
+                productType,
+                productTypeLabel,
+                vintageClassification,
+                merchDescription,
                 cardCategory,
                 cardCategoryLabel,
                 cardName,
@@ -1110,6 +1248,9 @@ public class AdminSubmissionService {
 
     public record MutateSubmissionRequest(
         String certId,
+        String productType,
+        String vintageClassification,
+        String merchDescription,
         String cardCategory,
         String cardName,
         String movieName,
@@ -1151,6 +1292,7 @@ public class AdminSubmissionService {
     }
 
     public record PopulationCalculationRequest(
+        String productType,
         String cardCategory,
         String cardName,
         String setName,
@@ -1162,6 +1304,7 @@ public class AdminSubmissionService {
         String filmType,
         String sportsType,
         String groupName,
+        String vintageClassification,
         String finalGradeLabel,
         BigDecimal centeringScore,
         BigDecimal edgesScore,
@@ -1189,7 +1332,7 @@ public class AdminSubmissionService {
     ) {
     }
 
-    public record MatchCardRequest(String cardCategory, String setName, String cardNumber) {
+    public record MatchCardRequest(String productType, String cardCategory, String setName, String cardNumber) {
     }
 
     public record MatchCardResponse(
@@ -1250,6 +1393,10 @@ public class AdminSubmissionService {
 
     private record NormalizedSubmission(
         String certId,
+        String productType,
+        String productTypeLabel,
+        String vintageClassification,
+        String merchDescription,
         String cardCategory,
         String cardCategoryLabel,
         String cardName,
@@ -1275,5 +1422,8 @@ public class AdminSubmissionService {
         String finalGradeLabel,
         String entryNotes
     ) {
+        boolean gradedProduct() {
+            return DEFAULT_PRODUCT_TYPE.equals(productType);
+        }
     }
 }

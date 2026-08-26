@@ -1,5 +1,6 @@
 package com.nxr.platform.admin;
 
+import com.nxr.platform.shared.ProductTypePolicy;
 import com.nxr.platform.admin.storage.MediaStorageProvider;
 import java.io.IOException;
 import java.io.InputStream;
@@ -58,7 +59,7 @@ public class AdminMediaService {
                 """
                 SELECT COUNT(*)
                 FROM grading_submission s
-                JOIN grading_score g ON g.submission_id = s.id
+                LEFT JOIN grading_score g ON g.submission_id = s.id
                 WHERE s.status_code IN ('approved', 'published')
                   AND (
                     :query IS NULL
@@ -147,7 +148,7 @@ public class AdminMediaService {
                         )
                         THEN 1 ELSE 0 END), 0) AS missing_media
                 FROM grading_submission s
-                JOIN grading_score g ON g.submission_id = s.id
+                LEFT JOIN grading_score g ON g.submission_id = s.id
                 WHERE s.status_code IN ('approved', 'published')
                   AND (
                     :query IS NULL
@@ -171,6 +172,9 @@ public class AdminMediaService {
                 SELECT
                     s.id,
                     s.cert_id,
+                    COALESCE(NULLIF(s.product_type_code, ''), 'graded_card') AS product_type_code,
+                    s.vintage_classification_code,
+                    s.merch_description,
                     s.card_name,
                     s.status_code,
                     s.approved_at,
@@ -214,7 +218,7 @@ public class AdminMediaService {
                         LIMIT 1
                     ) AS published_back_url
                 FROM grading_submission s
-                JOIN grading_score g ON g.submission_id = s.id
+                LEFT JOIN grading_score g ON g.submission_id = s.id
                 WHERE s.status_code IN ('approved', 'published')
                   AND (
                     :query IS NULL
@@ -241,6 +245,9 @@ public class AdminMediaService {
                 return new MediaQueueItem(
                     rs.getLong("id"),
                     rs.getString("cert_id"),
+                    ProductTypePolicy.normalizeStored(rs.getString("product_type_code")),
+                    rs.getString("vintage_classification_code"),
+                    rs.getString("merch_description"),
                     rs.getString("card_name"),
                     rs.getString("status_code"),
                     rs.getObject("approved_at", LocalDateTime.class),
@@ -741,6 +748,9 @@ public class AdminMediaService {
     public record MediaQueueItem(
         long submissionId,
         String certId,
+        String productType,
+        String vintageClassification,
+        String merchDescription,
         String cardName,
         String statusCode,
         LocalDateTime approvedAt,

@@ -10,6 +10,7 @@ import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
 import java.util.List;
 import org.springframework.http.HttpStatus;
@@ -45,13 +46,13 @@ public class AdminSubmissionController {
         return AjaxResult.success(adminSubmissionService.listSubmissions(page, pageSize, status, query));
     }
 
-    @PreAuthorize("@ss.hasPermi('nxr:entry:list')")
+    @PreAuthorize("@ss.hasAnyPermi('nxr:entry:list,nxr:entry:add')")
     @GetMapping("/generate-cert-id")
     public AjaxResult generateCertId() {
         return AjaxResult.success(new GenerateCertIdResponse(adminSubmissionService.generateCertificateId()));
     }
 
-    @PreAuthorize("@ss.hasPermi('nxr:entry:list')")
+    @PreAuthorize("@ss.hasAnyPermi('nxr:entry:list,nxr:entry:add')")
     @PostMapping("/calculate-grade")
     public AjaxResult calculateGrade(@Valid @RequestBody ScorePayload payload) {
         return AjaxResult.success(adminSubmissionService.calculateGrade(new AdminSubmissionService.ScoreRequest(
@@ -62,10 +63,11 @@ public class AdminSubmissionController {
         )));
     }
 
-    @PreAuthorize("@ss.hasPermi('nxr:entry:list')")
+    @PreAuthorize("@ss.hasAnyPermi('nxr:entry:list,nxr:entry:add')")
     @PostMapping("/calculate-pop")
     public AjaxResult calculatePopulation(@RequestBody PopulationPayload payload) {
         return AjaxResult.success(adminSubmissionService.calculatePopulation(new AdminSubmissionService.PopulationCalculationRequest(
+            payload.productType(),
             payload.cardCategory(),
             payload.cardName(),
             payload.setName(),
@@ -77,6 +79,7 @@ public class AdminSubmissionController {
             payload.filmType(),
             payload.sportsType(),
             payload.groupName(),
+            payload.vintageClassification(),
             payload.finalGradeLabel(),
             payload.centeringScore(),
             payload.edgesScore(),
@@ -86,10 +89,11 @@ public class AdminSubmissionController {
         )));
     }
 
-    @PreAuthorize("@ss.hasPermi('nxr:entry:list')")
+    @PreAuthorize("@ss.hasAnyPermi('nxr:entry:list,nxr:entry:add')")
     @PostMapping("/match-card")
     public AjaxResult matchCard(@RequestBody MatchCardPayload payload) {
         return AjaxResult.success(adminSubmissionService.matchCard(new AdminSubmissionService.MatchCardRequest(
+            payload.productType(),
             payload.cardCategory(),
             payload.setName(),
             payload.cardNumber()
@@ -137,6 +141,9 @@ public class AdminSubmissionController {
     private AdminSubmissionService.MutateSubmissionRequest toMutationRequest(MutateSubmissionPayload payload, long userId) {
         return new AdminSubmissionService.MutateSubmissionRequest(
             payload.certId(),
+            payload.productType(),
+            payload.vintageClassification(),
+            payload.merchDescription(),
             payload.cardCategory(),
             payload.cardName(),
             payload.movieName(),
@@ -167,6 +174,9 @@ public class AdminSubmissionController {
 
     public record MutateSubmissionPayload(
         @NotBlank String certId,
+        String productType,
+        String vintageClassification,
+        @Size(max = 4000) String merchDescription,
         String cardCategory,
         String cardName,
         String movieName,
@@ -183,10 +193,10 @@ public class AdminSubmissionController {
         String cardNumber,
         String languageCode,
         @Min(1) Integer populationValue,
-        @NotNull @DecimalMin("1.0") @DecimalMax("10.0") BigDecimal centeringScore,
-        @NotNull @DecimalMin("1.0") @DecimalMax("10.0") BigDecimal edgesScore,
-        @NotNull @DecimalMin("1.0") @DecimalMax("10.0") BigDecimal cornersScore,
-        @NotNull @DecimalMin("1.0") @DecimalMax("10.0") BigDecimal surfaceScore,
+        @DecimalMin("1.0") @DecimalMax("10.0") BigDecimal centeringScore,
+        @DecimalMin("1.0") @DecimalMax("10.0") BigDecimal edgesScore,
+        @DecimalMin("1.0") @DecimalMax("10.0") BigDecimal cornersScore,
+        @DecimalMin("1.0") @DecimalMax("10.0") BigDecimal surfaceScore,
         String entryNotes
     ) {
     }
@@ -200,6 +210,7 @@ public class AdminSubmissionController {
     }
 
     public record PopulationPayload(
+        String productType,
         String cardCategory,
         String cardName,
         String setName,
@@ -211,6 +222,7 @@ public class AdminSubmissionController {
         String filmType,
         String sportsType,
         String groupName,
+        String vintageClassification,
         String finalGradeLabel,
         BigDecimal centeringScore,
         BigDecimal edgesScore,
@@ -220,7 +232,7 @@ public class AdminSubmissionController {
     ) {
     }
 
-    public record MatchCardPayload(String cardCategory, String setName, String cardNumber) {
+    public record MatchCardPayload(String productType, String cardCategory, String setName, String cardNumber) {
     }
 
     public record BatchApprovePayload(List<Long> submissionIds) {

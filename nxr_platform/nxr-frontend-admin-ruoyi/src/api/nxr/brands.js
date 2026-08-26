@@ -8,6 +8,14 @@ export function fetchBrandSettings() {
   })
 }
 
+// 录入表单只读品牌选项（不暴露品牌维护权限）
+export function fetchBrandOptions() {
+  return request({
+    url: '/api/admin/brand-settings/options',
+    method: 'get'
+  })
+}
+
 // 新增品牌
 export function createBrandSetting(data) {
   return request({

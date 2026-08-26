@@ -34,6 +34,9 @@ export type PlatformSummary = {
 
 export type FeaturedCard = {
   certId: string
+  productType?: ProductType | 'label_product' | null
+  vintageClassification?: string | null
+  merchDescription?: string | null
   cardCategory: string
   cardCategoryLabel: string
   cardName: string
@@ -41,8 +44,8 @@ export type FeaturedCard = {
   yearLabel: string
   languageCode: string
   setName: string
-  finalGradeValue: number
-  finalGradeLabel: string
+  finalGradeValue: number | null
+  finalGradeLabel: string | null
   frontImageUrl: string
 }
 
@@ -56,6 +59,8 @@ export type PublicOverview = {
   featuredCards: FeaturedCard[]
 }
 
+export type ProductType = 'graded_card' | 'merch_product' | 'vintage_product'
+
 export type PublicCardDetail = {
   certId: string
   verificationSlug: string
@@ -63,6 +68,9 @@ export type PublicCardDetail = {
   publishedAt: string
   cardCategory: string
   cardCategoryLabel: string
+  productType?: ProductType | 'label_product' | null
+  vintageClassification?: string | null
+  merchDescription?: string | null
   cardName: string
   movieName: string | null
   releaseYear: string | null
@@ -78,14 +86,14 @@ export type PublicCardDetail = {
   setName: string
   cardNumber: string
   populationValue: number
-  centeringScore: number
-  edgesScore: number
-  cornersScore: number
-  surfaceScore: number
-  finalGradeValue: number
-  finalGradeLabel: string
-  decisionMethodCode: string
-  decisionNotes: string
+  centeringScore: number | null
+  edgesScore: number | null
+  cornersScore: number | null
+  surfaceScore: number | null
+  finalGradeValue: number | null
+  finalGradeLabel: string | null
+  decisionMethodCode: string | null
+  decisionNotes: string | null
   frontImageUrl: string
   backImageUrl: string
 }

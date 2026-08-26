@@ -40,9 +40,11 @@
               @change="$emit('toggle-status', scope.row)"
             />
           </el-tooltip>
-          <el-tag v-else :type="scope.row.active ? 'success' : 'info'" effect="plain">
-            {{ scope.row.active ? '正常' : '停用' }}
-          </el-tag>
+          <nxr-status-tag
+            v-else
+            :code="scope.row.active ? 'active' : 'inactive'"
+            :label="scope.row.active ? '正常' : '停用'"
+          />
         </template>
       </el-table-column>
       <el-table-column label="详情" width="72" align="center" fixed="right">
@@ -76,9 +78,11 @@
             :aria-label="customer.active ? '停用账号' : '启用账号'"
             @change="$emit('toggle-status', customer)"
           />
-          <el-tag v-else :type="customer.active ? 'success' : 'info'" effect="plain">
-            {{ customer.active ? '正常' : '停用' }}
-          </el-tag>
+          <nxr-status-tag
+            v-else
+            :code="customer.active ? 'active' : 'inactive'"
+            :label="customer.active ? '正常' : '停用'"
+          />
         </header>
         <div class="mobile-user-metrics">
           <span><strong>{{ customer.activeCardCount }}</strong>当前持卡</span>
@@ -102,6 +106,7 @@
 
 <script setup>
 import { ArrowRight, View } from '@element-plus/icons-vue'
+import NxrStatusTag from '@/components/NxrWorkspace/StatusTag.vue'
 import { avatarColor, avatarText, formatCustomerDate } from '../customerPresentation'
 
 defineProps({

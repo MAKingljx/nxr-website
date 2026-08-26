@@ -1,5 +1,6 @@
 package com.nxr.platform.admin;
 
+import com.nxr.platform.shared.ProductTypePolicy;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -30,7 +31,7 @@ public class AdminCustomerService {
 
         List<CustomerSummary> items = jdbcClient.sql(
                 """
-                SELECT c.id, c.email, c.display_name, c.mobile, c.is_active, c.created_at, c.last_login_at,
+                SELECT c.id, c.email, c.display_name, c.mobile, c.account_type_code, c.is_active, c.created_at, c.last_login_at,
                        (SELECT COUNT(*) FROM certificate_ownership o
                         WHERE o.customer_id = c.id AND o.ownership_status_code = 'active') AS active_card_count,
                        (SELECT COUNT(*) FROM certificate_ownership o
@@ -84,7 +85,7 @@ public class AdminCustomerService {
     public CustomerDetailResponse requireCustomer(long customerId) {
         CustomerSummary customer = jdbcClient.sql(
                 """
-                SELECT c.id, c.email, c.display_name, c.mobile, c.is_active, c.created_at, c.last_login_at,
+                SELECT c.id, c.email, c.display_name, c.mobile, c.account_type_code, c.is_active, c.created_at, c.last_login_at,
                        (SELECT COUNT(*) FROM certificate_ownership o
                         WHERE o.customer_id = c.id AND o.ownership_status_code = 'active') AS active_card_count,
                        (SELECT COUNT(*) FROM certificate_ownership o
@@ -129,6 +130,20 @@ public class AdminCustomerService {
     }
 
     @Transactional
+    public CustomerDetailResponse updateCustomerType(long customerId, UpdateCustomerTypeRequest request) {
+        String accountType = request == null ? "" : clean(request.accountTypeCode(), 32).toLowerCase(Locale.ROOT);
+        if (!accountType.equals("customer") && !accountType.equals("merchant")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Customer type must be customer or merchant");
+        }
+        requireCustomer(customerId);
+        jdbcClient.sql("UPDATE customer_account SET account_type_code = :accountType WHERE id = :customerId")
+            .param("accountType", accountType)
+            .param("customerId", customerId)
+            .update();
+        return requireCustomer(customerId);
+    }
+
+    @Transactional
     public SessionRevocationResponse revokeCustomerSessions(long customerId) {
         requireCustomer(customerId);
         int revoked = jdbcClient.sql("DELETE FROM customer_session WHERE customer_id = :customerId")
@@ -142,7 +157,10 @@ public class AdminCustomerService {
                 """
                 SELECT o.id, o.cert_id, o.ownership_status_code, o.visibility_code, o.note,
                        o.bound_at, o.released_at,
-                       s.card_name, s.brand_name, gs.final_grade_value, gs.final_grade_label
+                       COALESCE(NULLIF(s.product_type_code, ''), 'graded_card') AS product_type_code,
+                       s.vintage_classification_code,
+                       s.merch_description, s.card_name, s.brand_name,
+                       gs.final_grade_value, gs.final_grade_label
                 FROM certificate_ownership o
                 LEFT JOIN published_certificate pc ON UPPER(pc.cert_id) = UPPER(o.cert_id)
                 LEFT JOIN grading_submission s ON s.id = pc.submission_id
@@ -160,6 +178,9 @@ public class AdminCustomerService {
                 rs.getString("note"),
                 rs.getObject("bound_at", LocalDateTime.class),
                 rs.getObject("released_at", LocalDateTime.class),
+                ProductTypePolicy.normalizeStored(rs.getString("product_type_code")),
+                rs.getString("vintage_classification_code"),
+                rs.getString("merch_description"),
                 rs.getString("card_name"),
                 rs.getString("brand_name"),
                 rs.getBigDecimal("final_grade_value"),
@@ -230,6 +251,7 @@ public class AdminCustomerService {
             rs.getString("email"),
             rs.getString("display_name"),
             rs.getString("mobile"),
+            rs.getString("account_type_code"),
             rs.getBoolean("is_active"),
             rs.getInt("active_card_count"),
             rs.getInt("ownership_count"),
@@ -266,6 +288,7 @@ public class AdminCustomerService {
         String email,
         String displayName,
         String mobile,
+        String accountTypeCode,
         boolean active,
         int activeCardCount,
         int ownershipCount,
@@ -292,6 +315,9 @@ public class AdminCustomerService {
         String note,
         LocalDateTime boundAt,
         LocalDateTime releasedAt,
+        String productType,
+        String vintageClassification,
+        String merchDescription,
         String cardName,
         String brandName,
         BigDecimal finalGradeValue,
@@ -327,6 +353,9 @@ public class AdminCustomerService {
     }
 
     public record UpdateCustomerStatusRequest(Boolean active) {
+    }
+
+    public record UpdateCustomerTypeRequest(String accountTypeCode) {
     }
 
     public record SessionRevocationResponse(long customerId, int revokedSessions) {

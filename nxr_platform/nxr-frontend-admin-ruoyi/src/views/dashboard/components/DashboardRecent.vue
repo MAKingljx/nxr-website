@@ -23,11 +23,11 @@
           <span class="card-brand">{{ scope.row.brandName || '未设置品牌' }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="评级" width="150" align="right">
+      <el-table-column label="结果" width="180" align="right">
         <template #default="scope">
           <span class="grade-badge">
-            <strong>{{ displayGrade(scope.row.finalGradeValue) }}</strong>
-            <small>{{ scope.row.finalGradeLabel }}</small>
+            <strong>{{ resultPrimary(scope.row) }}</strong>
+            <small>{{ resultSecondary(scope.row) }}</small>
           </span>
         </template>
       </el-table-column>
@@ -49,6 +49,18 @@ defineEmits(['view-all'])
 function displayGrade(value) {
   const number = Number(value)
   return Number.isFinite(number) ? number.toFixed(1) : '-'
+}
+
+function resultPrimary(row) {
+  if (row.productType === 'merch_product' || row.productType === 'label_product') return 'Merch'
+  if (row.productType === 'vintage_product') return 'Vintage'
+  return displayGrade(row.finalGradeValue)
+}
+
+function resultSecondary(row) {
+  if (row.productType === 'merch_product' || row.productType === 'label_product') return row.merchDescription || 'Merch Product'
+  if (row.productType === 'vintage_product') return row.vintageClassification || 'Vintage Card'
+  return row.finalGradeLabel || ''
 }
 
 </script>

@@ -38,6 +38,26 @@ public class AdminBrandSettingsService {
             .list();
     }
 
+    /**
+     * Returns the minimal active-brand projection needed by the entry form.
+     * Brand maintenance metadata remains behind the dedicated brand permission.
+     */
+    public List<BrandOptionResponse> listActiveBrandOptions() {
+        return jdbcClient.sql(
+                """
+                SELECT id, name
+                FROM brand_settings
+                WHERE is_active = 1
+                ORDER BY sort_order ASC, name ASC
+                """
+            )
+            .query((rs, rowNum) -> new BrandOptionResponse(
+                rs.getLong("id"),
+                rs.getString("name")
+            ))
+            .list();
+    }
+
     public BrandSettingResponse createBrand(BrandSettingRequest request) {
         NormalizedBrand normalizedBrand = normalize(request, null);
         try {
@@ -180,6 +200,9 @@ public class AdminBrandSettingsService {
         LocalDateTime createdAt,
         LocalDateTime updatedAt
     ) {
+    }
+
+    public record BrandOptionResponse(long id, String name) {
     }
 
     private record NormalizedBrand(
