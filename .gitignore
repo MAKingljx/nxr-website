@@ -81,6 +81,9 @@ processed_12.zip
 # Local-only review and archive artifacts.
 nxr_website.zip
 python_changes_review.csv
+
+# Historical shell/heredoc artifact found in the production worktree.
+", total_pop, normalized_language, temp_count, main_count)*
 # Java/Vue platform source is versioned. Keep only generated and local state out.
 nxr_platform/archive/
 nxr_platform/**/node_modules/
