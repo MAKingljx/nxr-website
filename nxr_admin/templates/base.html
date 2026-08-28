@@ -224,9 +224,6 @@
                     </a>
                     
                     <h6 class="px-3 text-uppercase text-muted mt-4 mb-3">Tools</h6>
-                    <a href="{{ url_for('export_approved') }}">
-                        <i class="fas fa-database me-2"></i>Export to Main DB
-                    </a>
                     <a href="{{ url_for('export_excel_page') }}" class="{% if request.endpoint == 'export_excel_page' %}active{% endif %}">
                         <i class="fas fa-file-excel me-2"></i>Export to Excel
                     </a>

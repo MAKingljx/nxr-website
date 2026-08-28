@@ -1,9 +1,12 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from nxr_admin import admin_core
 from nxr_admin import routes_entries  # noqa: F401 - registers entry workflow routes.
+from nxr_admin import routes_uploads  # noqa: F401 - registers guarded upload routes.
 from nxr_site import app as public_site
 
 
@@ -89,12 +92,28 @@ class AdminToPublicProductFlowTests(unittest.TestCase):
         self.assertIsNotNone(entry)
         return entry
 
-    def approve_and_export(self, client, entry_id):
+    def attach_queue_images(self, entry_id, cert_id):
+        front_name = f"front_{cert_id}.webp"
+        back_name = f"back_{cert_id}.webp"
+        (admin_core.UPLOAD_FOLDER / front_name).write_bytes(b"front-image")
+        (admin_core.UPLOAD_FOLDER / back_name).write_bytes(b"back-image")
+        with admin_core.get_temp_db_connection() as conn:
+            conn.execute(
+                "UPDATE temp_cards SET front_image = ?, back_image = ? WHERE id = ?",
+                (front_name, back_name, entry_id),
+            )
+            conn.commit()
+        return front_name, back_name
+
+    def approve_and_upload(self, client, entry_id, cert_id):
         response = client.post(f"/admin/entries/{entry_id}/approve")
         self.assertEqual(response.status_code, 302)
 
-        response = client.get("/admin/export/approved")
-        self.assertEqual(response.status_code, 302)
+        self.attach_queue_images(entry_id, cert_id)
+        with patch.dict(os.environ, {"NXR_STORAGE_DRIVER": "local"}):
+            response = client.post(f"/admin/api/upload/{entry_id}")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["success"])
 
     def test_merch_and_vintage_entries_reach_the_classic_public_layout(self):
         client = self.admin_client()
@@ -115,8 +134,8 @@ class AdminToPublicProductFlowTests(unittest.TestCase):
 
         self.assertEqual(merch["status"], "pending")
         self.assertEqual(vintage["status"], "pending")
-        self.approve_and_export(client, merch["id"])
-        self.approve_and_export(client, vintage["id"])
+        self.approve_and_upload(client, merch["id"], merch["cert_id"])
+        self.approve_and_upload(client, vintage["id"], vintage["cert_id"])
 
         with admin_core.get_main_db_connection() as conn:
             rows = {
@@ -167,6 +186,26 @@ class AdminToPublicProductFlowTests(unittest.TestCase):
         self.assertIn("Helix", vintage_html)
         self.assertNotIn("Collector Ledger", vintage_html)
         self.assertNotIn("Transfer History", vintage_html)
+
+    def test_legacy_export_redirect_does_not_replay_approved_entries(self):
+        client = self.admin_client()
+        entry = self.create_entry(client, "8234567893", "merch_product")
+        response = client.post(f"/admin/entries/{entry['id']}/approve")
+        self.assertEqual(response.status_code, 302)
+        front_name, back_name = self.attach_queue_images(entry["id"], entry["cert_id"])
+
+        response = client.get("/admin/export/approved")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response.headers["Location"].endswith("/admin/upload"))
+        with admin_core.get_main_db_connection() as conn:
+            main_count = conn.execute(
+                "SELECT COUNT(*) FROM cards WHERE cert_id = ?", (entry["cert_id"],)
+            ).fetchone()[0]
+        self.assertEqual(main_count, 0)
+        self.assertTrue((admin_core.UPLOAD_FOLDER / front_name).is_file())
+        self.assertTrue((admin_core.UPLOAD_FOLDER / back_name).is_file())
+        self.assertEqual(list(admin_core.SITE_STATIC_DIR.iterdir()), [])
 
 
 if __name__ == "__main__":
