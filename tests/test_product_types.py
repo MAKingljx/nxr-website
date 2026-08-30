@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 os.environ.setdefault('NXR_DB_BACKEND', 'sqlite')
 _IMPORT_TEMPORARY_DIRECTORY = tempfile.TemporaryDirectory()
@@ -79,21 +80,36 @@ class ProductTypeTests(unittest.TestCase):
             'updated_at': '2026-08-13T10:00:00',
         }
 
-    def _insert_temp_entry(self, cert_id, product_type, classification='', grade_text='', final_grade=1.0):
+    def _insert_temp_entry(
+        self,
+        cert_id,
+        product_type,
+        classification='',
+        grade_text='',
+        final_grade=1.0,
+        merch_description='',
+    ):
         with admin_core.get_temp_db_connection() as conn:
             conn.execute(
                 '''
                     INSERT INTO temp_cards (
-                        cert_id, card_name, product_type, vintage_classification,
+                        cert_id, card_name, product_type, vintage_classification, merch_description,
                         card_category, brand, variety, language, set_name, card_number,
                         centering, edges, corners, surface, final_grade, final_grade_text,
                         status, entry_date, created_at, updated_at
                     )
-                    VALUES (?, 'Shared Identity', ?, ?, 'trading_card', 'Pokemon', 'Foil',
+                    VALUES (?, 'Shared Identity', ?, ?, ?, 'trading_card', 'Pokemon', 'Foil',
                             'EN', 'Set A', '001', 1, 1, 1, 1, ?, ?, 'approved',
                             '2026-08-13T10:00:00', '2026-08-13T10:00:00', '2026-08-13T10:00:00')
                 ''',
-                (cert_id, product_type, classification, final_grade, grade_text),
+                (
+                    cert_id,
+                    product_type,
+                    classification,
+                    merch_description,
+                    final_grade,
+                    grade_text,
+                ),
             )
             conn.commit()
 
@@ -253,7 +269,11 @@ class ProductTypeTests(unittest.TestCase):
 
     def test_match_card_and_grade_api_respect_product_type(self):
         self._insert_temp_entry('1234567898', 'graded_card', grade_text='9', final_grade=9.0)
-        self._insert_temp_entry('1234567899', 'label_product')
+        self._insert_temp_entry(
+            '1234567899',
+            'label_product',
+            merch_description='Limited enamel pin with gold-tone finish.',
+        )
         with admin_core.get_temp_db_connection() as conn:
             conn.execute(
                 "UPDATE temp_cards SET card_name = 'Graded Match' WHERE cert_id = '1234567898'"
@@ -288,11 +308,109 @@ class ProductTypeTests(unittest.TestCase):
                 'surface': 10,
             },
         )
+        with admin_core.get_main_db_connection() as conn:
+            conn.execute(
+                '''
+                    INSERT INTO cards (
+                        cert_id, card_name, product_type, merch_description,
+                        card_category, brand, year, variety, language,
+                        set_name, card_number, created_at, updated_at
+                    )
+                    VALUES (
+                        '1234567900', 'Main Merch Match', 'merch_product',
+                        'Description loaded from the published card.',
+                        'trading_card', 'Pokemon', '2025', 'Pin', 'EN',
+                        'Main Set', '002',
+                        '2026-08-13T09:00:00', '2026-08-13T09:00:00'
+                    )
+                ''',
+            )
+            conn.commit()
+        main_match_response = client.post(
+            '/admin/api/match-card',
+            json={
+                'product_type': 'merch_product',
+                'card_category': 'trading_card',
+                'set_name': 'Main Set',
+                'card_number': '002',
+            },
+        )
 
         self.assertEqual(match_response.status_code, 200)
         self.assertEqual(match_response.get_json()['card_name'], 'Label Match')
+        self.assertEqual(
+            match_response.get_json()['merch_description'],
+            'Limited enamel pin with gold-tone finish.',
+        )
+        self.assertEqual(main_match_response.status_code, 200)
+        self.assertEqual(main_match_response.get_json()['source'], 'cards')
+        self.assertEqual(
+            main_match_response.get_json()['merch_description'],
+            'Description loaded from the published card.',
+        )
         self.assertEqual(grade_response.status_code, 400)
         self.assertIn('does not accept grading', grade_response.get_json()['error'])
+
+    def test_export_filters_are_ordered_and_scope_each_product_type(self):
+        self._insert_temp_entry(
+            '3234567891',
+            'graded_card',
+            grade_text='9',
+            final_grade=9.0,
+        )
+        self._insert_temp_entry(
+            '3234567892',
+            'merch_product',
+            merch_description='Collector pin',
+        )
+        self._insert_temp_entry(
+            '3234567893',
+            'vintage_product',
+            classification='Pristine',
+        )
+
+        client = admin_core.app.test_client()
+        with client.session_transaction() as session_state:
+            session_state['admin_logged_in'] = True
+            session_state['username'] = 'tester'
+            session_state['role'] = 'superadmin'
+
+        page = client.get('/admin/export/excel')
+        self.assertEqual(page.status_code, 200)
+        rendered = page.get_data(as_text=True)
+        grade_position = rendered.index('value="grade:9"')
+        merch_position = rendered.index('value="merch_product"')
+        vintage_positions = [
+            rendered.index(f'value="vintage_product:{classification}"')
+            for classification in ('Pristine', 'Nova', 'Legacy', 'Helix')
+        ]
+        self.assertLess(grade_position, merch_position)
+        self.assertLess(merch_position, vintage_positions[0])
+        self.assertEqual(vintage_positions, sorted(vintage_positions))
+
+        expected_filters = {
+            'grade:9': ('3234567891', '9'),
+            'merch_product': ('3234567892', 'Merch Product'),
+            'vintage_product:Pristine': ('3234567893', 'Vintage Card - Pristine'),
+        }
+        for export_filter, (cert_id, export_label) in expected_filters.items():
+            with self.subTest(export_filter=export_filter):
+                response = client.post(
+                    '/admin/export/preview',
+                    data={'export_filter': export_filter},
+                )
+                payload = response.get_json()
+                self.assertEqual(response.status_code, 200)
+                self.assertTrue(payload['can_export'])
+                self.assertEqual(payload['total_count'], 1)
+                self.assertEqual(payload['rows'][0]['cert_id'], cert_id)
+                self.assertEqual(payload['rows'][0]['export_label'], export_label)
+
+        invalid_response = client.post(
+            '/admin/export/preview',
+            data={'export_filter': 'vintage_product:Unknown'},
+        )
+        self.assertEqual(invalid_response.status_code, 400)
 
     def test_export_masks_all_unscored_score_columns(self):
         try:
@@ -322,6 +440,65 @@ class ProductTypeTests(unittest.TestCase):
         self.assertTrue(pd.isna(result.loc[1, 'final_grade']))
         self.assertTrue(pd.isna(result.loc[1, 'final_grade_text']))
 
+    def test_generate_excel_exports_merch_and_vintage_rows(self):
+        try:
+            import pandas as pd
+        except ImportError:
+            self.skipTest('pandas is not installed')
+
+        self._insert_temp_entry(
+            '4234567891',
+            'merch_product',
+            merch_description='Numbered collector pin',
+        )
+        self._insert_temp_entry(
+            '4234567892',
+            'vintage_product',
+            classification='Nova',
+        )
+
+        client = admin_core.app.test_client()
+        with client.session_transaction() as session_state:
+            session_state['admin_logged_in'] = True
+            session_state['username'] = 'tester'
+            session_state['role'] = 'superadmin'
+
+        export_cases = {
+            'merch_product': {
+                'cert_id': '4234567891',
+                'product_type': 'merch_product',
+                'merch_description': 'Numbered collector pin',
+            },
+            'vintage_product:Nova': {
+                'cert_id': '4234567892',
+                'product_type': 'vintage_product',
+                'vintage_classification': 'Nova',
+            },
+        }
+        with tempfile.TemporaryDirectory() as export_root:
+            export_admin_dir = Path(export_root)
+            with mock.patch.object(routes_exports, 'ADMIN_DIR', export_admin_dir):
+                for export_filter, expected in export_cases.items():
+                    with self.subTest(export_filter=export_filter):
+                        existing_files = set((export_admin_dir / 'exports').glob('*.xlsx'))
+                        response = client.post(
+                            '/admin/export/generate-excel',
+                            data={'export_filter': export_filter},
+                        )
+                        generated_files = set((export_admin_dir / 'exports').glob('*.xlsx'))
+                        new_files = generated_files - existing_files
+
+                        self.assertEqual(response.status_code, 302)
+                        self.assertEqual(len(new_files), 1)
+                        frame = pd.read_excel(
+                            new_files.pop(),
+                            sheet_name='Approved Cards',
+                            converters={'cert_id': str},
+                        )
+                        self.assertEqual(len(frame), 1)
+                        for column_name, expected_value in expected.items():
+                            self.assertEqual(frame.loc[0, column_name], expected_value)
+
     def test_changed_templates_parse(self):
         template_names = (
             'entry_form_updated.html',
@@ -330,6 +507,7 @@ class ProductTypeTests(unittest.TestCase):
             'dashboard.html',
             'upload_manager.html',
             'dictionary_settings.html',
+            'export_excel.html',
         )
         for template_name in template_names:
             with self.subTest(template=template_name):

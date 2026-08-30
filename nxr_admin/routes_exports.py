@@ -16,6 +16,105 @@ SCORE_EXPORT_COLUMNS = (
     'ai_surface',
 )
 
+EXPORT_FILTER_ALL = 'all'
+EXPORT_FILTER_GRADE_PREFIX = 'grade:'
+EXPORT_FILTER_MERCH = 'merch_product'
+EXPORT_FILTER_VINTAGE_PREFIX = 'vintage_product:'
+
+
+def parse_export_selection(raw_value):
+    raw_value = (raw_value or '').strip()
+    if not raw_value or raw_value == EXPORT_FILTER_ALL:
+        return {
+            'value': EXPORT_FILTER_ALL,
+            'kind': 'all',
+            'label': 'All Approved Products',
+            'product_type': '',
+            'grade_filter': '',
+            'vintage_classification': '',
+            'file_suffix': 'all',
+        }
+
+    raw_grade = raw_value
+    if raw_value.startswith(EXPORT_FILTER_GRADE_PREFIX):
+        raw_grade = raw_value[len(EXPORT_FILTER_GRADE_PREFIX):]
+    grade_filter = normalize_final_grade_text(raw_grade)
+    if grade_filter:
+        return {
+            'value': f'{EXPORT_FILTER_GRADE_PREFIX}{grade_filter}',
+            'kind': 'graded',
+            'label': f'Graded Card - {grade_filter}',
+            'product_type': DEFAULT_PRODUCT_TYPE,
+            'grade_filter': grade_filter,
+            'vintage_classification': '',
+            'file_suffix': grade_filter,
+        }
+
+    if raw_value == EXPORT_FILTER_MERCH:
+        return {
+            'value': EXPORT_FILTER_MERCH,
+            'kind': 'merch',
+            'label': 'Merch Product',
+            'product_type': EXPORT_FILTER_MERCH,
+            'grade_filter': '',
+            'vintage_classification': '',
+            'file_suffix': EXPORT_FILTER_MERCH,
+        }
+
+    if raw_value.startswith(EXPORT_FILTER_VINTAGE_PREFIX):
+        requested_classification = normalize_vintage_classification(
+            raw_value[len(EXPORT_FILTER_VINTAGE_PREFIX):]
+        )
+        classification = next(
+            (
+                option
+                for option in get_vintage_classification_options()
+                if option.casefold() == requested_classification.casefold()
+            ),
+            '',
+        )
+        if classification:
+            return {
+                'value': f'{EXPORT_FILTER_VINTAGE_PREFIX}{classification}',
+                'kind': 'vintage',
+                'label': f'Vintage Card - {classification}',
+                'product_type': 'vintage_product',
+                'grade_filter': '',
+                'vintage_classification': classification,
+                'file_suffix': f'vintage_{classification}',
+            }
+
+    raise ValueError('Unsupported export filter')
+
+
+def get_requested_export_selection(form_data):
+    raw_value = form_data.get('export_filter')
+    if raw_value is None:
+        raw_value = form_data.get('grade_filter', EXPORT_FILTER_ALL)
+    return parse_export_selection(raw_value)
+
+
+def export_selection_query_filters(selection):
+    return {
+        'grade_filter': selection['grade_filter'] or None,
+        'product_type_filter': (
+            selection['product_type']
+            if selection['kind'] in {'merch', 'vintage'}
+            else None
+        ),
+        'vintage_classification_filter': selection['vintage_classification'] or None,
+    }
+
+
+def format_export_row_label(row):
+    product_type = normalize_product_type(row['product_type'])
+    if product_type == DEFAULT_PRODUCT_TYPE:
+        return normalize_final_grade_text(row['final_grade_text']) or 'Graded Card'
+    if product_type == EXPORT_FILTER_MERCH:
+        return 'Merch Product'
+    classification = normalize_vintage_classification(row['vintage_classification'])
+    return f'Vintage Card - {classification}' if classification else 'Vintage Card'
+
 
 def normalize_score_columns_for_export(df, pd_module):
     if 'product_type' in df.columns:
@@ -70,13 +169,26 @@ def parse_cert_id_filter(raw_value):
     return cert_ids, invalid_tokens
 
 
-def build_export_filter_sql(grade_filter=None, cert_ids=None):
+def build_export_filter_sql(
+    grade_filter=None,
+    cert_ids=None,
+    product_type_filter=None,
+    vintage_classification_filter=None,
+):
     query = "SELECT * FROM temp_cards WHERE status = 'approved'"
     params = []
 
     if grade_filter:
         query += f" AND {build_grade_filter_sql(grade_filter)}"
         params.append(grade_filter)
+
+    if product_type_filter:
+        query += f" AND {product_type_sql_expression()} = ?"
+        params.append(normalize_product_type(product_type_filter))
+
+    if vintage_classification_filter:
+        query += " AND LOWER(TRIM(COALESCE(vintage_classification, ''))) = LOWER(?)"
+        params.append(normalize_vintage_classification(vintage_classification_filter))
 
     if cert_ids:
         placeholders = ', '.join(['?' for _ in cert_ids])
@@ -86,11 +198,22 @@ def build_export_filter_sql(grade_filter=None, cert_ids=None):
     return query, params
 
 
-def get_matching_export_cert_ids(conn, grade_filter=None, cert_ids=None):
+def get_matching_export_cert_ids(
+    conn,
+    grade_filter=None,
+    cert_ids=None,
+    product_type_filter=None,
+    vintage_classification_filter=None,
+):
     if not cert_ids:
         return set()
 
-    query, params = build_export_filter_sql(grade_filter=grade_filter, cert_ids=cert_ids)
+    query, params = build_export_filter_sql(
+        grade_filter=grade_filter,
+        cert_ids=cert_ids,
+        product_type_filter=product_type_filter,
+        vintage_classification_filter=vintage_classification_filter,
+    )
     rows = conn.execute(
         f"SELECT cert_id FROM ({query})",
         params,
@@ -98,9 +221,12 @@ def get_matching_export_cert_ids(conn, grade_filter=None, cert_ids=None):
     return {row['cert_id'] for row in rows}
 
 
-def format_export_filter_label(grade_filter=None, cert_ids=None):
+def format_export_filter_label(grade_filter=None, cert_ids=None, export_selection=None):
     filters = []
-    filters.append(f"final_grade_text = {grade_filter}" if grade_filter else "全部等级")
+    if export_selection:
+        filters.append(export_selection['label'])
+    else:
+        filters.append(f"Graded Card - {grade_filter}" if grade_filter else "All Approved Products")
     if cert_ids:
         filters.append(f"Cert IDs = {', '.join(cert_ids)}")
     return '; '.join(filters)
@@ -113,6 +239,13 @@ def format_export_grade_suffix(grade_filter=None):
     return f"_{safe_grade or 'grade'}"
 
 
+def format_export_selection_suffix(selection):
+    if selection['kind'] in {'all', 'graded'}:
+        return format_export_grade_suffix(selection['grade_filter'] or None)
+    safe_suffix = secure_filename(selection['file_suffix'])
+    return f"_{safe_suffix or 'products'}"
+
+
 def get_grade_options_from_db():
     """从数据库获取所有可用的final grade选项"""
     conn = get_temp_db_connection()
@@ -121,8 +254,8 @@ def get_grade_options_from_db():
 
     return grades
 
-def get_grade_stats_from_db():
-    """从数据库获取各评分等级的数量统计"""
+def get_export_stats_from_db():
+    """Return approved counts for graded, merch, and vintage export options."""
     conn = get_temp_db_connection()
     cursor = conn.cursor()
 
@@ -139,8 +272,31 @@ def get_grade_stats_from_db():
     cursor.execute("SELECT COUNT(*) FROM temp_cards WHERE status = 'approved'")
     total_approved = cursor.fetchone()[0]
 
+    cursor.execute(f'''
+        SELECT COUNT(*) FROM temp_cards
+        WHERE status = 'approved'
+          AND {product_type_sql_expression()} = 'merch_product'
+    ''')
+    merch_count = cursor.fetchone()[0]
+
+    vintage_stats = {}
+    for classification in get_vintage_classification_options():
+        cursor.execute(f'''
+            SELECT COUNT(*) FROM temp_cards
+            WHERE status = 'approved'
+              AND {product_type_sql_expression()} = 'vintage_product'
+              AND LOWER(TRIM(COALESCE(vintage_classification, ''))) = LOWER(?)
+        ''', (classification,))
+        vintage_stats[classification] = cursor.fetchone()[0]
+
     conn.close()
 
+    return total_approved, grade_stats, merch_count, vintage_stats
+
+
+def get_grade_stats_from_db():
+    """Backward-compatible graded-card statistics helper."""
+    total_approved, grade_stats, _, _ = get_export_stats_from_db()
     return total_approved, grade_stats
 
 # ========== Excel Export Page ==========
@@ -148,13 +304,16 @@ def get_grade_stats_from_db():
 @login_required
 def export_excel_page():
     """Excel导出页面"""
-    total_approved, grade_stats = get_grade_stats_from_db()
+    total_approved, grade_stats, merch_count, vintage_stats = get_export_stats_from_db()
     grade_options = [grade for grade in STANDARD_GRADE_OPTIONS if grade_stats.get(grade, 0) > 0]
 
     return render_template('export_excel.html',
                          grade_options=grade_options,
                          total_approved=total_approved,
                          grade_stats=grade_stats,
+                         merch_count=merch_count,
+                         vintage_stats=vintage_stats,
+                         export_option_count=len(grade_options) + 2 + len(vintage_stats),
                          export_history_default_page_size=EXPORT_HISTORY_DEFAULT_PAGE_SIZE,
                          page_size_options=PAGE_SIZE_OPTIONS,
                          brand_options=get_brand_options(include_inactive=True),
@@ -164,9 +323,11 @@ def export_excel_page():
 @app.route('/admin/export/preview', methods=['POST'])
 @login_required
 def preview_excel_export():
-    grade_filter = normalize_final_grade_text(request.form.get('grade_filter', '').strip())
-    if request.form.get('grade_filter', '').strip() == 'all':
-        grade_filter = None
+    try:
+        export_selection = get_requested_export_selection(request.form)
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    query_filters = export_selection_query_filters(export_selection)
 
     cert_ids, invalid_cert_ids = parse_cert_id_filter(request.form.get('cert_ids', ''))
 
@@ -174,14 +335,14 @@ def preview_excel_export():
     try:
         matching_cert_ids = get_matching_export_cert_ids(
             conn,
-            grade_filter=grade_filter,
             cert_ids=cert_ids,
+            **query_filters,
         )
         missing_cert_ids = [cert_id for cert_id in cert_ids if cert_id not in matching_cert_ids]
 
         query, params = build_export_filter_sql(
-            grade_filter=grade_filter,
             cert_ids=cert_ids,
+            **query_filters,
         )
         total_count = conn.execute(f"SELECT COUNT(*) FROM ({query})", params).fetchone()[0]
         rows = conn.execute(
@@ -203,7 +364,9 @@ def preview_excel_export():
         'can_export': can_export,
         'total_count': total_count,
         'preview_limit': 20,
-        'grade_filter': grade_filter or 'all',
+        'export_filter': export_selection['value'],
+        'export_filter_label': export_selection['label'],
+        'grade_filter': export_selection['grade_filter'],
         'cert_ids': cert_ids,
         'invalid_cert_ids': invalid_cert_ids,
         'missing_cert_ids': missing_cert_ids,
@@ -218,6 +381,7 @@ def preview_excel_export():
                     else ''
                 ),
                 'card_category_label': get_card_category_label(row['card_category']),
+                'export_label': format_export_row_label(row),
                 'landing_page_url': f"nxrgrading.com/card/{row['cert_id']}",
             }
             for row in rows
@@ -233,9 +397,8 @@ def generate_excel():
     try:
         import pandas as pd
 
-        grade_filter = normalize_final_grade_text(request.form.get('grade_filter', '').strip())
-        if request.form.get('grade_filter', '').strip() == 'all':
-            grade_filter = None
+        export_selection = get_requested_export_selection(request.form)
+        query_filters = export_selection_query_filters(export_selection)
 
         cert_ids, invalid_cert_ids = parse_cert_id_filter(request.form.get('cert_ids', ''))
         if invalid_cert_ids:
@@ -243,7 +406,7 @@ def generate_excel():
             return redirect(url_for('export_excel_page'))
 
         # 构建查询
-        query, params = build_export_filter_sql(grade_filter=grade_filter, cert_ids=cert_ids)
+        query, params = build_export_filter_sql(cert_ids=cert_ids, **query_filters)
 
         query += f" ORDER BY {build_approved_order_clause()}"
 
@@ -251,8 +414,8 @@ def generate_excel():
         conn = get_temp_db_connection()
         matching_cert_ids = get_matching_export_cert_ids(
             conn,
-            grade_filter=grade_filter,
             cert_ids=cert_ids,
+            **query_filters,
         )
         missing_cert_ids = [cert_id for cert_id in cert_ids if cert_id not in matching_cert_ids]
         if missing_cert_ids:
@@ -280,12 +443,12 @@ def generate_excel():
 
         # 生成输出文件名
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        grade_suffix = format_export_grade_suffix(grade_filter)
+        filter_suffix = format_export_selection_suffix(export_selection)
         id_suffix = f"_ids_{len(cert_ids)}" if cert_ids else ""
         exports_dir = ADMIN_DIR / "exports"
         exports_dir.mkdir(exist_ok=True)
 
-        output_filename = f"approved_cards{grade_suffix}{id_suffix}_{timestamp}.xlsx"
+        output_filename = f"approved_cards{filter_suffix}{id_suffix}_{timestamp}.xlsx"
         output_path = exports_dir / output_filename
 
         # 导出到Excel
@@ -298,7 +461,7 @@ def generate_excel():
             summary_data = {
                 '导出时间': [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
                 '总记录数': [len(df)],
-                '筛选条件': [format_export_filter_label(grade_filter=grade_filter, cert_ids=cert_ids)],
+                '筛选条件': [format_export_filter_label(export_selection=export_selection, cert_ids=cert_ids)],
                 '数据范围': [format_export_date_range(df)],
                 '包含字段数': [len(df.columns)],
                 '文件名称': [output_filename]
@@ -321,7 +484,9 @@ def generate_excel():
 
         history.append({
             'filename': output_filename,
-            'grade_filter': grade_filter,
+            'export_filter': export_selection['value'],
+            'export_filter_label': export_selection['label'],
+            'grade_filter': export_selection['grade_filter'] or None,
             'cert_ids': cert_ids,
             'record_count': len(df),
             'export_time': datetime.now().isoformat(),

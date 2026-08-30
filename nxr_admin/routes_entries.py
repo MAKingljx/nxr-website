@@ -1006,7 +1006,8 @@ def api_match_card():
             return jsonify({'error': 'Set name and card number are required'}), 400
 
         lookup_sql = f'''
-            SELECT card_name, brand, year, variety, language, sports_type, group_name
+            SELECT card_name, brand, year, variety, language, sports_type, group_name,
+                   merch_description
             FROM {{table_name}}
             WHERE {product_type_sql_expression()} = ?
               AND COALESCE(NULLIF(card_category, ''), 'trading_card') = ?
@@ -1059,6 +1060,11 @@ def api_match_card():
                 'language': normalize_language(row['language']),
                 'sports_type': row['sports_type'] or '',
                 'group_name': row['group_name'] or '',
+                'merch_description': (
+                    (row['merch_description'] or '').strip()
+                    if product_type == 'merch_product'
+                    else ''
+                ),
                 'source': source,
             })
 

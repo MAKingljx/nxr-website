@@ -356,8 +356,12 @@
             if (groupNameField) {
                 groupNameField.value = data.group_name || '';
             }
+            const merchDescriptionField = document.getElementById('merch_description');
+            if (merchDescriptionField && data.product_type === 'merch_product') {
+                merchDescriptionField.value = data.merch_description || '';
+            }
 
-            ['card_name', 'brand', 'language', 'year', 'variety', 'sports_type', 'group_name'].forEach(markFieldPopulated);
+            ['card_name', 'brand', 'language', 'year', 'variety', 'sports_type', 'group_name', 'merch_description'].forEach(markFieldPopulated);
             if (window.schedulePOPCalculation) {
                 window.schedulePOPCalculation();
             }
