@@ -306,6 +306,9 @@ class JavaDomainMigrationTests(unittest.TestCase):
         cards.execute(
             "ALTER TABLE cards ADD COLUMN vintage_classification TEXT DEFAULT ''"
         )
+        cards.execute(
+            "ALTER TABLE cards ADD COLUMN merch_description TEXT DEFAULT ''"
+        )
         cards.commit()
         cards.close()
 
@@ -316,13 +319,17 @@ class JavaDomainMigrationTests(unittest.TestCase):
         temp.execute(
             "ALTER TABLE temp_cards ADD COLUMN vintage_classification TEXT DEFAULT ''"
         )
+        temp.execute(
+            "ALTER TABLE temp_cards ADD COLUMN merch_description TEXT DEFAULT ''"
+        )
         insert_temp_card(temp, "LABEL001", status="approved")
         insert_temp_card(temp, "VINTAGE1", status="approved")
         temp.execute(
             """
             UPDATE temp_cards
-            SET product_type='label_product', centering=1, edges=1, corners=1,
-                surface=1, final_grade=1, final_grade_text=''
+            SET product_type='merch_product', merch_description='Limited pin',
+                centering=1, edges=1, corners=1, surface=1, final_grade=1,
+                final_grade_text=''
             WHERE cert_id='LABEL001'
             """
         )
@@ -346,7 +353,8 @@ class JavaDomainMigrationTests(unittest.TestCase):
 
         self.assertEqual(stats.submissions, 2)
         self.assertEqual(stats.graded_submissions, 0)
-        self.assertEqual(rows["LABEL001"]["product_type_code"], "label_product")
+        self.assertEqual(rows["LABEL001"]["product_type_code"], "merch_product")
+        self.assertEqual(rows["LABEL001"]["merch_description"], "Limited pin")
         self.assertIsNone(rows["LABEL001"]["final_grade_value"])
         self.assertIsNone(rows["LABEL001"]["final_grade_label"])
         self.assertEqual(
@@ -363,18 +371,21 @@ class JavaDomainMigrationTests(unittest.TestCase):
             "ALTER TABLE cards ADD COLUMN vintage_classification TEXT DEFAULT ''"
         )
         cards.execute(
+            "ALTER TABLE cards ADD COLUMN merch_description TEXT DEFAULT ''"
+        )
+        cards.execute(
             """
             INSERT INTO cards (
                 cert_id, card_name, grade, year, brand, variety, pop, language,
                 set_name, card_number, grading_phase, created_at, updated_at,
                 ai_confidence, ai_grade, has_ai_analysis, final_grade,
                 decision_method, final_grade_text, card_category, product_type,
-                vintage_classification
+                vintage_classification, merch_description
             ) VALUES (
                 'LABELAI1', 'Label AI Record', '', '2026', 'Pokemon', 'Label',
                 '1', 'EN', 'Set', '001', 'human_only', '2026-07-01',
                 '2026-07-01', 0.97, 9.5, 1, NULL, 'human_only', '',
-                'trading_card', 'label_product', ''
+                'trading_card', 'label_product', '', 'Legacy merch description'
             )
             """
         )
@@ -387,7 +398,8 @@ class JavaDomainMigrationTests(unittest.TestCase):
             source.validate()
             row = list(source.iter_submissions())[0]
 
-        self.assertEqual(row["product_type_code"], "label_product")
+        self.assertEqual(row["product_type_code"], "merch_product")
+        self.assertEqual(row["merch_description"], "Legacy merch description")
         self.assertIsNone(row["ai_grade_value"])
         self.assertIsNone(row["ai_confidence_value"])
 
@@ -456,6 +468,18 @@ class JavaDomainMigrationTests(unittest.TestCase):
                 migration.MigrationError, "must exactly match"
             ):
                 runner.assert_target()
+
+    def test_target_column_preflight_includes_product_sync_fields(self):
+        available = {
+            table: set(columns)
+            for table, columns in migration.TARGET_REQUIRED_COLUMNS.items()
+        }
+        available["grading_submission"].remove("merch_description")
+
+        self.assertEqual(
+            migration.missing_target_columns(available),
+            ["grading_submission.merch_description"],
+        )
 
     def test_unsupported_temp_status_fails_before_mysql(self):
         temp = sqlite3.connect(self.fixture.temp_path)

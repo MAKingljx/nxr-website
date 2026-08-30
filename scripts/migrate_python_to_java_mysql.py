@@ -43,7 +43,7 @@ SUPPORTED_CATEGORIES = {
 DEFAULT_PRODUCT_TYPE = "graded_card"
 SUPPORTED_PRODUCT_TYPES = {
     DEFAULT_PRODUCT_TYPE,
-    "label_product",
+    "merch_product",
     "vintage_product",
 }
 PRODUCT_TYPE_ALIASES = {
@@ -51,8 +51,10 @@ PRODUCT_TYPE_ALIASES = {
     "graded": DEFAULT_PRODUCT_TYPE,
     "graded_card": DEFAULT_PRODUCT_TYPE,
     "tcg_card": DEFAULT_PRODUCT_TYPE,
-    "label": "label_product",
-    "label_product": "label_product",
+    "merch": "merch_product",
+    "merch_product": "merch_product",
+    "label": "merch_product",
+    "label_product": "merch_product",
     "vintage": "vintage_product",
     "vintage_card": "vintage_product",
     "vintage_product": "vintage_product",
@@ -88,6 +90,76 @@ UNTOUCHED_TABLES = (
     "order_timeline_event",
 )
 
+# Every column referenced by the migration or incremental synchronizer is
+# checked before a transaction starts. Keeping this list explicit makes a
+# Python schema change fail with a useful compatibility error instead of an
+# opaque MySQL "unknown column" error halfway through synchronization.
+TARGET_REQUIRED_COLUMNS = {
+    "grading_submission": {
+        "id", "cert_id", "card_name", "year_label", "brand_name",
+        "player_name", "variety_name", "set_name", "card_number",
+        "language_code", "population_value", "status_code",
+        "grading_phase_code", "card_category_code", "product_type_code",
+        "vintage_classification_code", "merch_description", "movie_name",
+        "release_year", "production_company", "film_type", "sports_type",
+        "group_name", "approval_sequence", "entry_notes", "entry_by_user_id",
+        "approved_by_user_id", "approved_at", "published_at", "created_at",
+        "updated_at",
+    },
+    "grading_score": {
+        "submission_id", "centering_score", "edges_score", "corners_score",
+        "surface_score", "final_grade_value", "final_grade_label",
+        "ai_grade_value", "ai_confidence_value", "decision_method_code",
+        "decision_notes", "created_at", "updated_at",
+    },
+    "submission_media": {
+        "id", "submission_id", "cert_id", "media_side_code",
+        "media_stage_code", "storage_provider_code", "storage_bucket",
+        "storage_key", "public_url", "sort_order", "is_active", "created_at",
+        "updated_at",
+    },
+    "published_certificate": {
+        "id", "submission_id", "cert_id", "verification_slug", "qr_url",
+        "published_at", "published_front_media_id", "published_back_media_id",
+        "updated_at",
+    },
+    "waitlist_email": {
+        "id", "email", "source_code", "status_code", "created_at",
+    },
+    "brand_settings": {
+        "id", "name", "aliases", "sort_order", "is_active", "created_at",
+        "updated_at",
+    },
+    "ai_character_cache": {
+        "id", "cert_id", "brand_name", "character_name", "language_code",
+        "content_html", "provider_code", "created_at", "updated_at",
+    },
+    "sys_dict_type": {"dict_type"},
+    "sys_dict_data": {
+        "dict_code", "dict_sort", "dict_label", "dict_value", "dict_type",
+        "css_class", "list_class", "is_default", "status", "create_by",
+        "create_time", "update_by", "update_time", "remark",
+    },
+    "nxr_python_sync_submission": {
+        "cert_id", "submission_id", "source_fingerprint", "source_updated_at",
+        "first_synced_at", "last_synced_at",
+    },
+    "nxr_python_sync_state": {
+        "stream_name", "cursor_json", "last_full_sync_at", "last_success_at",
+    },
+}
+
+
+def missing_target_columns(
+    available_columns: Mapping[str, set[str]],
+) -> list[str]:
+    """Return stable table.column names missing from the target schema."""
+    return [
+        f"{table}.{column}"
+        for table, required_columns in sorted(TARGET_REQUIRED_COLUMNS.items())
+        for column in sorted(required_columns - available_columns.get(table, set()))
+    ]
+
 SUBMISSION_COLUMNS = (
     "cert_id",
     "card_name",
@@ -104,6 +176,7 @@ SUBMISSION_COLUMNS = (
     "card_category_code",
     "product_type_code",
     "vintage_classification_code",
+    "merch_description",
     "movie_name",
     "release_year",
     "production_company",
@@ -360,6 +433,11 @@ def _base_submission(row: Mapping[str, Any]) -> dict[str, Any]:
         "card_category_code": category,
         "product_type_code": product_type,
         "vintage_classification_code": vintage_classification,
+        "merch_description": optional_raw_text(
+            source_value(row, "merch_description", "")
+        )
+        if product_type == "merch_product"
+        else None,
         "movie_name": truncate(row["movie_name"], 255, field="movie_name") or None,
         "release_year": truncate(row["release_year"], 16, field="release_year") or None,
         "production_company": truncate(
@@ -922,6 +1000,29 @@ class JavaMySqlMigration:
                     details.append("non_innodb=" + ",".join(non_innodb))
                 raise MigrationError("Unsafe target schema: " + "; ".join(details))
 
+            checked_tables = tuple(TARGET_REQUIRED_COLUMNS)
+            column_placeholders = ",".join(["%s"] * len(checked_tables))
+            cursor.execute(
+                f"""
+                SELECT TABLE_NAME, COLUMN_NAME
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME IN ({column_placeholders})
+                """,
+                checked_tables,
+            )
+            available_columns: dict[str, set[str]] = {}
+            for row in cursor:
+                available_columns.setdefault(row["TABLE_NAME"], set()).add(
+                    row["COLUMN_NAME"]
+                )
+            missing_columns = missing_target_columns(available_columns)
+            if missing_columns:
+                raise MigrationError(
+                    "Incompatible target schema; missing columns: "
+                    + ",".join(missing_columns)
+                )
+
             cursor.execute(
                 "SELECT COUNT(*) AS count FROM sys_dict_type WHERE dict_type='nxr_sports_type'"
             )
@@ -970,6 +1071,7 @@ class JavaMySqlMigration:
                 card_category_code VARCHAR(32) NOT NULL,
                 product_type_code VARCHAR(32) NOT NULL,
                 vintage_classification_code VARCHAR(64) NULL,
+                merch_description TEXT NULL,
                 movie_name VARCHAR(255) NULL,
                 release_year VARCHAR(16) NULL,
                 production_company VARCHAR(128) NULL,
@@ -1163,7 +1265,7 @@ class JavaMySqlMigration:
                 cert_id,card_name,year_label,brand_name,player_name,variety_name,
                 set_name,card_number,language_code,population_value,status_code,
                 grading_phase_code,card_category_code,product_type_code,
-                vintage_classification_code,movie_name,release_year,
+                vintage_classification_code,merch_description,movie_name,release_year,
                 production_company,film_type,sports_type,group_name,approval_sequence,
                 entry_notes,entry_by_user_id,approved_by_user_id,approved_at,published_at,
                 created_at,updated_at
@@ -1172,7 +1274,7 @@ class JavaMySqlMigration:
                 cert_id,card_name,year_label,brand_name,player_name,variety_name,
                 set_name,card_number,language_code,population_value,status_code,
                 grading_phase_code,card_category_code,product_type_code,
-                vintage_classification_code,movie_name,release_year,
+                vintage_classification_code,merch_description,movie_name,release_year,
                 production_company,film_type,sports_type,group_name,approval_sequence,
                 entry_notes,NULL,NULL,approved_at,published_at,created_at,updated_at
             FROM tmp_nxr_submission
@@ -1361,6 +1463,7 @@ class JavaMySqlMigration:
                         AND s.card_category_code <=> t.card_category_code
                         AND s.product_type_code <=> t.product_type_code
                         AND s.vintage_classification_code <=> t.vintage_classification_code
+                        AND s.merch_description <=> t.merch_description
                         AND s.movie_name <=> t.movie_name
                         AND s.release_year <=> t.release_year
                         AND s.production_company <=> t.production_company

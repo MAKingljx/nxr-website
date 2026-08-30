@@ -34,6 +34,18 @@ nxr:
     # No default is intentional. A real provider callback is rejected until a
     # deployment supplies NXR_PAYMENT_CALLBACK_TOKEN.
     callback-token: ${NXR_PAYMENT_CALLBACK_TOKEN:}
+  email:
+    from: ${NXR_EMAIL_FROM:}
+    resend-key: ${NXR_RESEND_KEY:}
+    smtp-host: ${NXR_SMTP_HOST:}
+    smtp-port: ${NXR_SMTP_PORT:587}
+    smtp-user: ${NXR_SMTP_USER:}
+    smtp-password: ${NXR_SMTP_PASS:}
+    smtp-starttls: ${NXR_SMTP_STARTTLS:true}
+  ai:
+    deepseek-key: ${DEEPSEEK_API_KEY:}
+    deepseek-base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
+    deepseek-model: ${DEEPSEEK_MODEL:deepseek-chat}
 
 # 开发环境配置
 server:

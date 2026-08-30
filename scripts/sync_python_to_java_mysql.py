@@ -550,7 +550,7 @@ class PythonToJavaSync:
                 cert_id,card_name,year_label,brand_name,player_name,variety_name,
                 set_name,card_number,language_code,population_value,status_code,
                 grading_phase_code,card_category_code,product_type_code,
-                vintage_classification_code,movie_name,release_year,
+                vintage_classification_code,merch_description,movie_name,release_year,
                 production_company,film_type,sports_type,group_name,approval_sequence,
                 entry_notes,entry_by_user_id,approved_by_user_id,approved_at,published_at,
                 created_at,updated_at
@@ -559,7 +559,7 @@ class PythonToJavaSync:
                 cert_id,card_name,year_label,brand_name,player_name,variety_name,
                 set_name,card_number,language_code,population_value,status_code,
                 grading_phase_code,card_category_code,product_type_code,
-                vintage_classification_code,movie_name,release_year,
+                vintage_classification_code,merch_description,movie_name,release_year,
                 production_company,film_type,sports_type,group_name,approval_sequence,
                 entry_notes,NULL,NULL,approved_at,published_at,created_at,updated_at
             FROM tmp_nxr_submission
@@ -573,6 +573,7 @@ class PythonToJavaSync:
                 card_category_code=VALUES(card_category_code),
                 product_type_code=VALUES(product_type_code),
                 vintage_classification_code=VALUES(vintage_classification_code),
+                merch_description=VALUES(merch_description),
                 movie_name=VALUES(movie_name),
                 release_year=VALUES(release_year),
                 production_company=VALUES(production_company),film_type=VALUES(film_type),
@@ -790,6 +791,7 @@ class PythonToJavaSync:
                    AND s.card_category_code <=> t.card_category_code
                    AND s.product_type_code <=> t.product_type_code
                    AND s.vintage_classification_code <=> t.vintage_classification_code
+                   AND s.merch_description <=> t.merch_description
                    AND s.movie_name <=> t.movie_name
                    AND s.release_year <=> t.release_year
                    AND s.production_company <=> t.production_company

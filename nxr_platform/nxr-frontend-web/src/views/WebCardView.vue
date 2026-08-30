@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import LegacySiteFooter from '../components/LegacySiteFooter.vue'
 import LegacySiteNav from '../components/LegacySiteNav.vue'
-import { fetchAiCharacterInfo, fetchPublicCard, type ProductType, type PublicCardDetail } from '../lib/api'
+import { fetchPublicCard, streamAiCharacterInfo, type ProductType, type PublicCardDetail } from '../lib/api'
 import {
   claimCustomerCard,
   customerSession,
@@ -22,6 +22,7 @@ const hasLoaded = ref(false)
 const isAiOpen = ref(false)
 const isAiLoading = ref(false)
 const aiHtml = ref('')
+const aiStreamingText = ref('')
 const aiError = ref('')
 const aiLanguage = ref('en')
 const placeholderImage = `${import.meta.env.BASE_URL}static/placeholder.png`
@@ -140,21 +141,48 @@ const subgrades = computed(() => {
     {
       name: 'Centering',
       score: card.value.centeringScore,
+      description: 'Measures how evenly the image is positioned within the borders. Critical for vintage cards.',
     },
     {
       name: 'Edges',
       score: card.value.edgesScore,
+      description: 'Evaluates the condition of all four edges. Look for chipping, whitening, or wear.',
     },
     {
       name: 'Corners',
       score: card.value.cornersScore,
+      description: 'Assesses sharpness and wear on all four corners. The most common area for damage.',
     },
     {
       name: 'Surface',
       score: card.value.surfaceScore,
+      description: 'Checks for scratches, print defects, stains, or other surface imperfections.',
     },
-  ].filter((item): item is { name: string; score: number } => item.score !== null)
+  ].filter((item): item is { name: string; score: number; description: string } => item.score !== null)
 })
+
+const vintageClassifications = [
+  {
+    code: 'I',
+    name: 'Pristine',
+    description: 'Near-pristine vintage survivor. Almost no age-related patina. Sharp corners, crisp edges and clean surface. Free of creases, scuffs, stains and paper loss.',
+  },
+  {
+    code: 'II',
+    name: 'Nova',
+    description: 'Displays natural age patina matching its era. Minor soft corner rounding and trivial edge wear. No creases or tears. Card surface stays fully intact.',
+  },
+  {
+    code: 'III',
+    name: 'Legacy',
+    description: 'Noticeable corner rounding and edge wear with moderate age patina. Faint soft indentations may appear. No hard creases and no paper loss.',
+  },
+  {
+    code: 'IV',
+    name: 'Helix',
+    description: 'Carries honest traces of past collector enjoyment. Heavy corner and edge wear, together with rich age patina. Visible creases, surface scuffs and minor spots are acceptable. The card remains structurally complete, without major tears or missing pieces.',
+  },
+]
 
 function subgradeClass(score: number) {
   if (score >= 9.5) {
@@ -241,15 +269,22 @@ async function openAiInfo() {
   isAiLoading.value = true
   aiError.value = ''
   aiHtml.value = ''
+  aiStreamingText.value = ''
 
   try {
-    const response = await fetchAiCharacterInfo({
-      certId: card.value.certId,
-      brand: card.value.brandName || card.value.productionCompany || 'Unknown',
-      character: displayTitle.value,
-      language: aiLanguage.value,
-    })
+    const response = await streamAiCharacterInfo(
+      {
+        certId: card.value.certId,
+        brand: card.value.brandName || card.value.productionCompany || 'Unknown',
+        character: displayTitle.value,
+        language: aiLanguage.value,
+      },
+      (chunk) => {
+        aiStreamingText.value += chunk
+      },
+    )
     aiHtml.value = response.html
+    aiStreamingText.value = ''
   } catch {
     aiError.value = 'Unable to load character information at this time.'
   } finally {
@@ -317,6 +352,20 @@ watch(
         </div>
         <div v-if="productProfile.showFinalGrade" class="grade-badge">Final Grade: {{ gradeText }}</div>
 
+        <section v-if="productProfile.showClassification" class="vintage-condition-guide">
+          <h2>NXR Vintage Card Classifications</h2>
+          <p class="vintage-condition-intro">Four archival classifications for vintage cards. Age-related patina is regarded as authentic character, not damage.</p>
+          <div class="vintage-condition-list">
+            <article v-for="classification in vintageClassifications" :key="classification.code" class="vintage-condition-item">
+              <div class="vintage-condition-code">{{ classification.code }}</div>
+              <div>
+                <div class="vintage-condition-name">{{ classification.name }}</div>
+                <p>{{ classification.description }}</p>
+              </div>
+            </article>
+          </div>
+        </section>
+
         <div class="detail-grid">
           <div v-for="row in detailRows" :key="row.key" class="detail-row">
             <span class="detail-key">{{ row.key }}</span>
@@ -328,7 +377,10 @@ watch(
           <h2 class="subgrades-title">Sub-Grades</h2>
           <div class="subgrades-grid">
             <div v-for="item in subgrades" :key="item.name" class="subgrade-card">
-              <div class="subgrade-name">{{ item.name }}</div>
+              <div class="subgrade-copy">
+                <div class="subgrade-name">{{ item.name }}</div>
+                <p class="subgrade-description">{{ item.description }}</p>
+              </div>
               <div class="subgrade-score" :class="subgradeClass(item.score)">
                 {{ Number(item.score).toFixed(1) }}
               </div>
@@ -390,9 +442,10 @@ watch(
         </select>
       </label>
 
-      <div v-if="isAiLoading" class="ai-loading">Loading cached AI context...</div>
+      <div v-if="isAiLoading && !aiStreamingText" class="ai-loading">Loading AI context...</div>
+      <div v-if="aiStreamingText" class="ai-character-info ai-character-info--streaming">{{ aiStreamingText }}</div>
       <div v-else-if="aiError" class="ai-error">{{ aiError }}</div>
-      <div v-else class="ai-character-info" v-html="aiHtml" />
+      <div v-else-if="!isAiLoading" class="ai-character-info" v-html="aiHtml" />
     </section>
   </div>
 
@@ -481,6 +534,10 @@ watch(
 
 .ai-error {
   color: #a11f2b;
+}
+
+.ai-character-info--streaming {
+  white-space: pre-wrap;
 }
 
 .community-section {

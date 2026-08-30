@@ -1361,6 +1361,65 @@ select {
   font-weight: 700;
 }
 
+.vintage-condition-guide {
+  margin: 0 0 28px;
+  border: 1px solid var(--product-border);
+  border-radius: 8px;
+  padding: 20px;
+  background: var(--bg2);
+}
+
+.vintage-condition-guide h2 {
+  margin: 0 0 6px;
+  color: var(--text);
+  font-size: 16px;
+}
+
+.vintage-condition-intro {
+  margin: 0 0 16px;
+  color: var(--text3);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.vintage-condition-list {
+  display: grid;
+  gap: 14px;
+}
+
+.vintage-condition-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.vintage-condition-code {
+  display: grid;
+  flex: 0 0 36px;
+  height: 36px;
+  place-items: center;
+  border: 1px solid var(--product-border);
+  border-radius: 6px;
+  color: var(--product-accent);
+  background: var(--bg3);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.vintage-condition-name {
+  margin-bottom: 2px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.vintage-condition-item p {
+  margin: 0;
+  color: var(--text2);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .grade-badge {
   display: inline-block;
   background: var(--red);
@@ -1431,13 +1490,25 @@ select {
   padding: 20px;
 }
 
+.subgrade-copy {
+  min-width: 0;
+}
+
 .subgrade-name {
   font-size: 14px;
   font-weight: 700;
   letter-spacing: 0;
 }
 
+.subgrade-description {
+  margin: 8px 0 0;
+  color: var(--text2);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .subgrade-score {
+  flex: 0 0 auto;
   font-size: 32px;
   font-weight: 900;
   color: var(--red);

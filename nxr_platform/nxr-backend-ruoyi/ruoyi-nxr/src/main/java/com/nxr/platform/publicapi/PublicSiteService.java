@@ -3,11 +3,12 @@ package com.nxr.platform.publicapi;
 import com.nxr.platform.shared.ProductTypePolicy;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.Locale;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
-import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -22,9 +23,19 @@ public class PublicSiteService {
     );
 
     private final JdbcClient jdbcClient;
+    private final WaitlistConfirmationService waitlistConfirmationService;
 
     public PublicSiteService(JdbcClient jdbcClient) {
+        this(jdbcClient, null);
+    }
+
+    @Autowired
+    public PublicSiteService(
+        JdbcClient jdbcClient,
+        WaitlistConfirmationService waitlistConfirmationService
+    ) {
         this.jdbcClient = jdbcClient;
+        this.waitlistConfirmationService = waitlistConfirmationService;
     }
 
     public PublicOverviewResponse loadOverview() {
@@ -215,6 +226,7 @@ public class PublicSiteService {
             .query(Integer.class)
             .single() > 0;
 
+        boolean emailQueued = false;
         if (!alreadyJoined) {
             jdbcClient.sql(
                     """
@@ -224,9 +236,17 @@ public class PublicSiteService {
                 )
                 .param("email", email)
                 .update();
+            emailQueued = waitlistConfirmationService != null
+                && waitlistConfirmationService.queueConfirmation(email);
         }
 
-        return new WaitlistSignupResponse("ok", email, countWaitlistEmails(), alreadyJoined);
+        return new WaitlistSignupResponse(
+            "ok",
+            email,
+            countWaitlistEmails(),
+            alreadyJoined,
+            emailQueued
+        );
     }
 
     private int countWaitlistEmails() {
@@ -328,6 +348,12 @@ public class PublicSiteService {
     public record WaitlistSignupRequest(String email) {
     }
 
-    public record WaitlistSignupResponse(String status, String email, int count, boolean alreadyJoined) {
+    public record WaitlistSignupResponse(
+        String status,
+        String email,
+        int count,
+        boolean alreadyJoined,
+        boolean emailQueued
+    ) {
     }
 }

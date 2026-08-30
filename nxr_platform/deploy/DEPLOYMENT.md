@@ -70,9 +70,12 @@ install only `requirements-mysql.txt`; the system Python environment stays
 unchanged.
 
 Use a dedicated `nxr_python_sync` MySQL account for the selected clone. Grant
-only `SELECT`, `INSERT`, `UPDATE`, and `CREATE TEMPORARY TABLES`; do not grant
-schema changes or row deletion. Store its generated password only in the same
-root-readable synchronization environment file.
+`SELECT`, `INSERT`, `UPDATE`, and `CREATE TEMPORARY TABLES` on that database,
+plus `DELETE` only on its `grading_score` table. The table-scoped delete is
+required when Python reclassifies a previously graded record as merchandise or
+a vintage product; do not grant row deletion on any other table. Store the
+generated password only in the same root-readable synchronization environment
+file.
 
 The timer runs the synchronizer once per day at 00:00 Asia/Shanghai. It has no
 minute-level, boot-time, or missed-run catch-up trigger. The synchronizer still

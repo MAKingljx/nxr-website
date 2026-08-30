@@ -3,6 +3,7 @@ package com.nxr.platform.publicapi;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ruoyi.common.annotation.Anonymous;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -69,17 +70,31 @@ public class PublicSiteController {
     public ResponseEntity<StreamingResponseBody> aiCharacterInfoStream(
         @RequestBody PublicAiCharacterService.AiCharacterRequest request
     ) {
-        PublicAiCharacterService.AiCharacterResponse response = publicAiCharacterService.loadCharacterInfo(request);
         StreamingResponseBody body = outputStream -> {
-            String plainText = response.html().replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim();
-            int chunkSize = 120;
-            for (int start = 0; start < plainText.length(); start += chunkSize) {
-                String chunk = plainText.substring(start, Math.min(start + chunkSize, plainText.length()));
-                outputStream.write(sse("chunk", java.util.Map.of("content", chunk)).getBytes(StandardCharsets.UTF_8));
+            try {
+                PublicAiCharacterService.AiCharacterResponse response = publicAiCharacterService.streamCharacterInfo(
+                    request,
+                    chunk -> {
+                        try {
+                            outputStream.write(
+                                sse("chunk", java.util.Map.of("content", chunk)).getBytes(StandardCharsets.UTF_8)
+                            );
+                            outputStream.flush();
+                        } catch (java.io.IOException exc) {
+                            throw new UncheckedIOException(exc);
+                        }
+                    }
+                );
+                outputStream.write(sse("done", response).getBytes(StandardCharsets.UTF_8));
+                outputStream.flush();
+            } catch (UncheckedIOException exc) {
+                throw exc.getCause();
+            } catch (RuntimeException exc) {
+                outputStream.write(sse("error", java.util.Map.of(
+                    "message", "Unable to generate character information right now."
+                )).getBytes(StandardCharsets.UTF_8));
                 outputStream.flush();
             }
-            outputStream.write(sse("done", java.util.Map.of("html", response.html(), "cached", response.cached())).getBytes(StandardCharsets.UTF_8));
-            outputStream.flush();
         };
 
         return ResponseEntity.ok()

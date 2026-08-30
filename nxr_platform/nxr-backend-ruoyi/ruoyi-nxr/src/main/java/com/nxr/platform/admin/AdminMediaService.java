@@ -1,18 +1,21 @@
 package com.nxr.platform.admin;
 
-import com.nxr.platform.shared.ProductTypePolicy;
 import com.nxr.platform.admin.storage.MediaStorageProvider;
+import com.nxr.platform.shared.ProductTypePolicy;
 import java.io.IOException;
 import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
@@ -24,6 +27,9 @@ import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class AdminMediaService {
+
+    private static final Logger log = LoggerFactory.getLogger(AdminMediaService.class);
+    private static final int MAX_BATCH_PUBLISH_ITEMS = 100;
 
     private static final Pattern IMPORT_FILE_PATTERN = Pattern.compile(
         "(^|[\\\\/])(?<certId>[A-Za-z0-9]+)_(?<side>[AB])(?:_\\d+)?\\.(?<ext>webp|jpg|jpeg|png)$",
@@ -409,11 +415,12 @@ public class AdminMediaService {
             .findExistingMedia(submissionId, "staged", "back")
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Back staged media is required."));
 
-        MediaStorageProvider.StoredMediaObject publishedFront = copyManagedMedia(stagedFront, submission.certId(), "front", "published");
-        MediaStorageProvider.StoredMediaObject publishedBack = copyManagedMedia(stagedBack, submission.certId(), "back", "published");
-
+        MediaStorageProvider.StoredMediaObject publishedFront = null;
+        MediaStorageProvider.StoredMediaObject publishedBack = null;
         AdminMediaPersistenceService.MediaPublishTransactionResult publishResult;
         try {
+            publishedFront = copyManagedMedia(stagedFront, submission.certId(), "front", "published");
+            publishedBack = copyManagedMedia(stagedBack, submission.certId(), "back", "published");
             publishResult = adminMediaPersistenceService.publishSubmissionRecords(
                 submissionId,
                 submission.certId(),
@@ -438,6 +445,50 @@ public class AdminMediaService {
             publishResult.publishedAt(),
             publishedFront.publicUrl(),
             publishedBack.publicUrl()
+        );
+    }
+
+    public MediaBatchPublishResponse publishSubmissions(List<Long> submissionIds) {
+        LinkedHashSet<Long> uniqueIds = new LinkedHashSet<>();
+        if (submissionIds != null) {
+            for (Long submissionId : submissionIds) {
+                if (submissionId != null && submissionId > 0) {
+                    uniqueIds.add(submissionId);
+                }
+            }
+        }
+        if (uniqueIds.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Select at least one ready submission.");
+        }
+        if (uniqueIds.size() > MAX_BATCH_PUBLISH_ITEMS) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "Publish at most " + MAX_BATCH_PUBLISH_ITEMS + " submissions at once."
+            );
+        }
+
+        List<MediaPublishResponse> published = new ArrayList<>();
+        List<MediaBatchPublishFailure> failures = new ArrayList<>();
+        for (Long submissionId : uniqueIds) {
+            try {
+                published.add(publishSubmission(submissionId));
+            } catch (ResponseStatusException exc) {
+                failures.add(new MediaBatchPublishFailure(
+                    submissionId,
+                    exc.getReason() == null ? "Publish failed." : exc.getReason()
+                ));
+            } catch (RuntimeException exc) {
+                log.error("Unexpected batch media publish failure for submission {}", submissionId, exc);
+                failures.add(new MediaBatchPublishFailure(submissionId, "Unexpected publish failure."));
+            }
+        }
+
+        return new MediaBatchPublishResponse(
+            uniqueIds.size(),
+            published.size(),
+            failures.size(),
+            published,
+            failures
         );
     }
 
@@ -787,6 +838,21 @@ public class AdminMediaService {
         LocalDateTime publishedAt,
         String publishedFrontUrl,
         String publishedBackUrl
+    ) {
+    }
+
+    public record MediaBatchPublishRequest(List<Long> submissionIds) {
+    }
+
+    public record MediaBatchPublishFailure(long submissionId, String message) {
+    }
+
+    public record MediaBatchPublishResponse(
+        int requestedCount,
+        int publishedCount,
+        int failedCount,
+        List<MediaPublishResponse> published,
+        List<MediaBatchPublishFailure> failures
     ) {
     }
 

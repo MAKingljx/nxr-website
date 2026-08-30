@@ -18,6 +18,16 @@ export function publishSubmissionMedia(submissionId) {
   })
 }
 
+// 批量发布媒体；服务端逐条提交并返回每条结果，单条失败不会隐藏其他成功项。
+export function publishSubmissionMediaBatch(submissionIds) {
+  return request({
+    url: '/api/admin/media/batch-publish',
+    method: 'post',
+    data: { submissionIds },
+    timeout: 1000 * 60 * 30
+  })
+}
+
 // 分批上传图片文件（文件名约定 {certId}_A / {certId}_B）
 const MAX_BATCH_FILES = 12
 const MAX_BATCH_BYTES = 24 * 1024 * 1024

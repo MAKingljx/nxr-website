@@ -107,6 +107,7 @@ export type WaitlistSignupResponse = {
   email: string
   count: number
   alreadyJoined: boolean
+  emailQueued: boolean
 }
 
 export type AiCharacterInfoResponse = {
@@ -172,4 +173,63 @@ export function fetchAiCharacterInfo(payload: { certId: string; brand: string; c
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   })
+}
+
+export async function streamAiCharacterInfo(
+  payload: { certId: string; brand: string; character: string; language: string },
+  onChunk: (chunk: string) => void,
+) {
+  const response = await fetch(`${apiBaseUrl}/api/public/ai-character-info/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify(payload),
+  })
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response))
+  }
+  if (!response.body) {
+    throw new Error('Streaming response is unavailable')
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let completed: AiCharacterInfoResponse | null = null
+
+  const consumeEvent = (block: string) => {
+    let eventName = 'message'
+    const dataLines: string[] = []
+    for (const line of block.split('\n')) {
+      if (line.startsWith('event:')) eventName = line.slice(6).trim()
+      if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
+    }
+    if (!dataLines.length) return
+    const event = JSON.parse(dataLines.join('\n'))
+    if (eventName === 'chunk' && typeof event.content === 'string') {
+      onChunk(event.content)
+    } else if (eventName === 'done') {
+      completed = event as AiCharacterInfoResponse
+    } else if (eventName === 'error') {
+      throw new Error(event.message || 'Unable to generate character information')
+    }
+  }
+
+  while (true) {
+    const { value, done } = await reader.read()
+    buffer += decoder.decode(value, { stream: !done })
+    buffer = buffer.replace(/\r\n/g, '\n')
+    let boundary = buffer.indexOf('\n\n')
+    while (boundary >= 0) {
+      consumeEvent(buffer.slice(0, boundary))
+      buffer = buffer.slice(boundary + 2)
+      boundary = buffer.indexOf('\n\n')
+    }
+    if (done) break
+  }
+  if (buffer.trim()) consumeEvent(buffer)
+  const result = completed as AiCharacterInfoResponse | null
+  if (!result) {
+    throw new Error('AI stream ended before completion')
+  }
+  return result
 }

@@ -86,9 +86,19 @@
       <el-form-item>
         <el-button type="primary" icon="Search" @click="loadQueue(true)">搜索</el-button>
       </el-form-item>
+      <el-form-item v-hasPermi="['nxr:media:publish']">
+        <el-button
+          type="success"
+          icon="Promotion"
+          :loading="batchPublishing"
+          :disabled="!selectedReadyIds.length"
+          @click="publishSelected"
+        >批量发布（{{ selectedReadyIds.length }}）</el-button>
+      </el-form-item>
     </el-form>
 
-    <el-table v-loading="loading" :data="queue">
+    <el-table v-loading="loading" :data="queue" @selection-change="handleSelectionChange">
+      <el-table-column type="selection" width="48" :selectable="isReadyToSelect" />
       <el-table-column label="证书编号" prop="certId" width="140" />
       <el-table-column label="卡名" prop="cardName" min-width="160" show-overflow-tooltip />
       <el-table-column label="结果" width="180" show-overflow-tooltip>
@@ -144,7 +154,7 @@
 
 <script setup name="NxrUpload">
 import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
-import { fetchMediaQueue, importMediaFolder, publishSubmissionMedia } from '@/api/nxr/media'
+import { fetchMediaQueue, importMediaFolder, publishSubmissionMedia, publishSubmissionMediaBatch } from '@/api/nxr/media'
 
 const { proxy } = getCurrentInstance()
 const allowedImagePattern = /\.(webp|png|jpe?g)$/i
@@ -157,6 +167,8 @@ const searchQuery = ref('')
 const loading = ref(false)
 const importing = ref(false)
 const publishLoadingId = ref(null)
+const batchPublishing = ref(false)
+const selectedReadyIds = ref([])
 const selectedFiles = ref([])
 const skippedFileCount = ref(0)
 const selectedFolderName = ref('')
@@ -169,13 +181,14 @@ const folderInput = ref(null)
 function loadQueue(resetPage = false) {
   if (resetPage) queuePage.value = 1
   loading.value = true
-  fetchMediaQueue({
+  return fetchMediaQueue({
     query: searchQuery.value.trim() || undefined,
     page: queuePage.value,
     pageSize: queuePageSize.value
   })
     .then((res) => {
       queue.value = res.data.items
+      selectedReadyIds.value = []
       summary.value = res.data.summary
       queuePage.value = res.data.page
       queuePageSize.value = res.data.pageSize
@@ -183,6 +196,14 @@ function loadQueue(resetPage = false) {
     .finally(() => {
       loading.value = false
     })
+}
+
+function isReadyToSelect(row) {
+  return row.readyToPublish
+}
+
+function handleSelectionChange(rows) {
+  selectedReadyIds.value = rows.filter(isReadyToSelect).map((row) => row.submissionId)
 }
 
 function openFolderPicker() {
@@ -249,6 +270,33 @@ function publishEntry(submissionId) {
     .finally(() => {
       publishLoadingId.value = null
     })
+}
+
+async function publishSelected() {
+  if (!selectedReadyIds.value.length) return
+  try {
+    await proxy.$modal.confirm(`确认发布选中的 ${selectedReadyIds.value.length} 条卡片吗？`)
+  } catch {
+    return
+  }
+
+  batchPublishing.value = true
+  try {
+    const response = await publishSubmissionMediaBatch(selectedReadyIds.value)
+    const result = response.data
+    if (result.failedCount) {
+      const details = result.failures.slice(0, 5).map((item) => `${item.submissionId}: ${item.message}`).join('；')
+      const suffix = result.failedCount > 5 ? '；其余失败项请刷新后重试' : ''
+      proxy.$modal.msgWarning(`成功 ${result.publishedCount} 条，失败 ${result.failedCount} 条。${details}${suffix}`)
+    } else {
+      proxy.$modal.msgSuccess(`已成功发布 ${result.publishedCount} 条卡片`)
+    }
+    await loadQueue()
+  } catch (error) {
+    proxy.$modal.msgError(error?.message || '批量发布失败')
+  } finally {
+    batchPublishing.value = false
+  }
 }
 
 function mediaStateLabel(item) {
