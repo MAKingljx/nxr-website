@@ -10,7 +10,7 @@ Group=root
 WorkingDirectory=/root/nxr_website
 EnvironmentFile=/etc/nxr-java/python-sync.env
 Environment=PYTHONDONTWRITEBYTECODE=1
-ExecStart=/opt/nxr-java/python-sync-venv/bin/python /root/nxr_website/scripts/sync_python_to_java_mysql.py --apply --target-database ${NXR_SYNC_TARGET_DATABASE} --confirm-target-database ${NXR_SYNC_CONFIRM_TARGET_DATABASE} --full-if-due-hours 24
+ExecStart=/opt/nxr-java/python-sync-venv/bin/python /opt/nxr-java/current/scripts/sync_python_to_java_mysql.py --cards-db /root/nxr_website/Data/cards.db --temp-db /root/nxr_website/Data/temp_cards.db --apply --target-database ${NXR_SYNC_TARGET_DATABASE} --confirm-target-database ${NXR_SYNC_CONFIRM_TARGET_DATABASE} --full-if-due-hours 24
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7

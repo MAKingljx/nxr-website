@@ -30,6 +30,11 @@ replace or proxy the existing Python services.
     admin/
     web-remote/
     admin-remote/
+    scripts/
+      migrate_python_to_java_mysql.py
+      sync_python_to_java_mysql.py
+    sql/
+      10_nxr_product_types.sql
 ```
 
 Runtime files live under `/var/lib/nxr-java`; bounded application logs live
@@ -62,7 +67,9 @@ MB, and the accompanying MySQL drop-in at 768 MB.
 ## Python data synchronization
 
 Install `08_nxr_python_sync.sql` only in the cloned Java database selected for
-migration. Put its exact database name twice in the root-readable
+migration. Apply `10_nxr_product_types.sql` after a verified MySQL backup when
+upgrading a database created before product types were introduced. Put its
+exact database name twice in the root-readable
 `/etc/nxr-java/python-sync.env`, install the `nxr-python-java-sync` service and
 timer, then run one manual full synchronization before enabling the timer.
 Create `/opt/nxr-java/python-sync-venv` with the system Python venv module and
