@@ -1,22 +1,22 @@
 <template>
-  <section class="workflow-strip" aria-label="评级处理进度">
+  <section class="workflow-strip" :aria-label="$tx('Grading workflow progress')">
     <div class="workflow-strip__heading">
-      <span>评级流程</span>
-      <strong>{{ formatNumber(pendingWork) }} 项待处理</strong>
+      <span>{{ $tx('Grading Workflow') }}</span>
+      <strong>{{ formatNumber(pendingWork) }} {{ $tx('pending') }}</strong>
     </div>
     <div class="workflow-step">
       <span class="workflow-step__number">01</span>
-      <div><strong>资料录入</strong><small>{{ formatNumber(totalSubmissions) }} 条</small></div>
+      <div><strong>{{ $tx('Data Entry') }}</strong><small>{{ formatNumber(totalSubmissions) }} {{ $tx('records') }}</small></div>
     </div>
     <el-icon class="workflow-arrow"><ArrowRight /></el-icon>
     <div class="workflow-step">
       <span class="workflow-step__number">02</span>
-      <div><strong>审批处理</strong><small>{{ formatNumber(pendingReview) }} 条</small></div>
+      <div><strong>{{ $tx('Review') }}</strong><small>{{ formatNumber(pendingReview) }} {{ $tx('records') }}</small></div>
     </div>
     <el-icon class="workflow-arrow"><ArrowRight /></el-icon>
     <div class="workflow-step">
       <span class="workflow-step__number">03</span>
-      <div><strong>证书发布</strong><small>{{ formatNumber(approvedReady) }} 条待发布</small></div>
+      <div><strong>{{ $tx('Publication') }}</strong><small>{{ formatNumber(approvedReady) }} {{ $tx('ready') }}</small></div>
     </div>
   </section>
 </template>
@@ -32,7 +32,7 @@ defineProps({
 })
 
 function formatNumber(value) {
-  return new Intl.NumberFormat('zh-CN').format(value || 0)
+  return new Intl.NumberFormat('en-US').format(value || 0)
 }
 </script>
 

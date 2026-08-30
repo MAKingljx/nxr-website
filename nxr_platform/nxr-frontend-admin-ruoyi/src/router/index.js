@@ -1,6 +1,7 @@
 import { createWebHistory, createRouter } from 'vue-router'
 /* Layout */
 import Layout from '@/layout'
+import { i18n } from '@/i18n'
 
 /**
  * Note: 路由配置项
@@ -66,7 +67,7 @@ export const constantRoutes = [
         path: '/index',
         component: () => import('@/views/index'),
         name: 'Index',
-        meta: { title: '运营总览', icon: 'dashboard', affix: true }
+        meta: { title: i18n.global.t('nav.operationsDashboard'), icon: 'dashboard', affix: true }
       }
     ]
   },
@@ -74,7 +75,7 @@ export const constantRoutes = [
     path: '/lock',
     component: () => import('@/views/lock'),
     hidden: true,
-    meta: { title: '锁定屏幕' }
+    meta: { title: i18n.global.t('common.lockScreen') }
   },
   {
     path: '/user',
@@ -86,7 +87,7 @@ export const constantRoutes = [
         path: 'profile/:activeTab?',
         component: () => import('@/views/system/user/profile/index'),
         name: 'Profile',
-        meta: { title: '个人中心', icon: 'user' }
+        meta: { title: i18n.global.t('common.profile'), icon: 'user' }
       }
     ]
   }
@@ -104,7 +105,7 @@ export const dynamicRoutes = [
         path: 'role/:userId(\\d+)',
         component: () => import('@/views/system/user/authRole'),
         name: 'AuthRole',
-        meta: { title: '分配角色', activeMenu: '/nxr/settings/user' }
+        meta: { title: i18n.global.t('nav.roleManagement'), activeMenu: '/nxr/settings/user' }
       }
     ]
   },
@@ -118,7 +119,7 @@ export const dynamicRoutes = [
         path: 'user/:roleId(\\d+)',
         component: () => import('@/views/system/role/authUser'),
         name: 'AuthUser',
-        meta: { title: '分配用户', activeMenu: '/system/role' }
+        meta: { title: i18n.global.t('nav.adminUsers'), activeMenu: '/system/role' }
       }
     ]
   },
@@ -132,7 +133,7 @@ export const dynamicRoutes = [
         path: 'index/:dictId(\\d+)',
         component: () => import('@/views/system/dict/data'),
         name: 'Data',
-        meta: { title: '字典数据', activeMenu: '/nxr/settings/dict' }
+        meta: { title: i18n.global.t('nav.dictionarySettings'), activeMenu: '/nxr/settings/dict' }
       }
     ]
   },
@@ -146,7 +147,7 @@ export const dynamicRoutes = [
         path: 'index/:jobId(\\d+)',
         component: () => import('@/views/monitor/job/log'),
         name: 'JobLog',
-        meta: { title: '调度日志', activeMenu: '/monitor/job' }
+        meta: { title: 'Job Logs', activeMenu: '/monitor/job' }
       }
     ]
   },
@@ -160,7 +161,7 @@ export const dynamicRoutes = [
         path: 'index/:tableId(\\d+)',
         component: () => import('@/views/tool/gen/editTable'),
         name: 'GenEdit',
-        meta: { title: '修改生成配置', activeMenu: '/tool/gen' }
+        meta: { title: 'Edit Generator Configuration', activeMenu: '/tool/gen' }
       }
     ]
   }

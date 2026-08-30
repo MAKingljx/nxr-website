@@ -12,7 +12,9 @@
       <template v-if="appStore.device !== 'mobile'">
         <header-search id="header-search" class="right-menu-item" />
 
-        <el-tooltip content="切换明暗模式" effect="dark" placement="bottom">
+        <language-switcher class="right-menu-item language-menu" />
+
+        <el-tooltip :content="t('shell.themeToggle')" effect="dark" placement="bottom">
           <div class="right-menu-item hover-effect theme-switch-wrapper" @click="toggleTheme">
             <svg-icon v-if="settingsStore.isDark" icon-class="sunny" />
             <svg-icon v-if="!settingsStore.isDark" icon-class="moon" />
@@ -28,16 +30,16 @@
         <template #dropdown>
           <el-dropdown-menu>
             <router-link to="/user/profile">
-              <el-dropdown-item>个人中心</el-dropdown-item>
+              <el-dropdown-item>{{ t('common.profile') }}</el-dropdown-item>
             </router-link>
             <el-dropdown-item command="setLayout" v-if="settingsStore.showSettings">
-                <span>布局设置</span>
+                <span>{{ t('common.layoutSettings') }}</span>
             </el-dropdown-item>
             <el-dropdown-item command="lockScreen">
-                <span>锁定屏幕</span>
+                <span>{{ t('common.lockScreen') }}</span>
             </el-dropdown-item>
             <el-dropdown-item divided command="logout">
-              <span>退出登录</span>
+              <span>{{ t('common.signOut') }}</span>
             </el-dropdown-item>
           </el-dropdown-menu>
         </template>
@@ -48,12 +50,14 @@
 
 <script setup>
 import { ElMessageBox } from 'element-plus'
+import { useI18n } from 'vue-i18n'
 import Breadcrumb from '@/components/Breadcrumb'
 import TopNav from './TopNav'
 import TopBar from './TopBar'
 import Logo from './Sidebar/Logo'
 import Hamburger from '@/components/Hamburger'
 import HeaderSearch from '@/components/HeaderSearch'
+import LanguageSwitcher from '@/components/LanguageSwitcher'
 import useAppStore from '@/store/modules/app'
 import useUserStore from '@/store/modules/user'
 import useLockStore from '@/store/modules/lock'
@@ -65,6 +69,7 @@ const appStore = useAppStore()
 const userStore = useUserStore()
 const lockStore = useLockStore()
 const settingsStore = useSettingsStore()
+const { t } = useI18n()
 
 function toggleSideBar() {
   appStore.toggleSideBar()
@@ -87,9 +92,9 @@ function handleCommand(command) {
 }
 
 function logout() {
-  ElMessageBox.confirm('确定注销并退出系统吗？', '提示', {
-    confirmButtonText: '确定',
-    cancelButtonText: '取消',
+  ElMessageBox.confirm(t('shell.signOutConfirm'), t('common.confirmation'), {
+    confirmButtonText: t('common.signOut'),
+    cancelButtonText: t('common.cancel'),
     type: 'warning'
   }).then(() => {
     userStore.logOut().then(() => {
@@ -240,7 +245,7 @@ async function toggleTheme(event) {
 
         svg {
           transition: transform 0.3s;
-          
+
           &:hover {
             transform: scale(1.15);
           }

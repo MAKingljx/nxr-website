@@ -1,52 +1,52 @@
 <template>
    <div class="app-container">
       <el-form :model="queryParams" ref="queryRef" :inline="true" v-show="showSearch" label-width="68px">
-         <el-form-item label="字典名称" prop="dictName">
+         <el-form-item :label="$tx('Dictionary Name')" prop="dictName">
             <el-input
                v-model="queryParams.dictName"
-               placeholder="请输入字典名称"
+               :placeholder="$tx('Enter dictionary name')"
                clearable
                style="width: 240px"
                @keyup.enter="handleQuery"
             />
          </el-form-item>
-         <el-form-item label="字典类型" prop="dictType">
+         <el-form-item :label="$tx('Dictionary Type')" prop="dictType">
             <el-input
                v-model="queryParams.dictType"
-               placeholder="请输入字典类型"
+               :placeholder="$tx('Enter dictionary type')"
                clearable
                style="width: 240px"
                @keyup.enter="handleQuery"
             />
          </el-form-item>
-         <el-form-item label="状态" prop="status">
+         <el-form-item :label="$tx('Status')" prop="status">
             <el-select
                v-model="queryParams.status"
-               placeholder="字典状态"
+               :placeholder="$tx('All statuses')"
                clearable
                style="width: 240px"
             >
                <el-option
-                  v-for="dict in sys_normal_disable"
-                  :key="dict.value"
-                  :label="dict.label"
-                  :value="dict.value"
+                  v-for="option in statusOptions"
+                  :key="option.value"
+                  :label="option.label"
+                  :value="option.value"
                />
             </el-select>
          </el-form-item>
-         <el-form-item label="创建时间" style="width: 308px">
+         <el-form-item :label="$tx('Created')" style="width: 308px">
             <el-date-picker
                v-model="dateRange"
                value-format="YYYY-MM-DD"
                type="daterange"
                range-separator="-"
-               start-placeholder="开始日期"
-               end-placeholder="结束日期"
+               :start-placeholder="$tx('Start date')"
+               :end-placeholder="$tx('End date')"
             ></el-date-picker>
          </el-form-item>
          <el-form-item>
-            <el-button type="primary" icon="Search" @click="handleQuery">搜索</el-button>
-            <el-button icon="Refresh" @click="resetQuery">重置</el-button>
+            <el-button type="primary" icon="Search" @click="handleQuery">{{ $tx('Search') }}</el-button>
+            <el-button icon="Refresh" @click="resetQuery">{{ $tx('Reset') }}</el-button>
          </el-form-item>
       </el-form>
 
@@ -58,7 +58,7 @@
                icon="Plus"
                @click="handleAdd"
                v-hasPermi="['system:dict:add']"
-            >新增</el-button>
+            >{{ $tx('Add') }}</el-button>
          </el-col>
          <el-col :span="1.5">
             <el-button
@@ -68,7 +68,7 @@
                :disabled="single"
                @click="handleUpdate"
                v-hasPermi="['system:dict:edit']"
-            >修改</el-button>
+            >{{ $tx('Edit') }}</el-button>
          </el-col>
          <el-col :span="1.5">
             <el-button
@@ -78,7 +78,7 @@
                :disabled="multiple"
                @click="handleDelete"
                v-hasPermi="['system:dict:remove']"
-            >删除</el-button>
+            >{{ $tx('Delete') }}</el-button>
          </el-col>
          <el-col :span="1.5">
             <el-button
@@ -87,7 +87,7 @@
                icon="Download"
                @click="handleExport"
                v-hasPermi="['system:dict:export']"
-            >导出</el-button>
+            >{{ $tx('Export') }}</el-button>
          </el-col>
          <el-col :span="1.5">
             <el-button
@@ -96,36 +96,38 @@
                icon="Refresh"
                @click="handleRefreshCache"
                v-hasPermi="['system:dict:remove']"
-            >刷新缓存</el-button>
+            >{{ $tx('Refresh Cache') }}</el-button>
          </el-col>
          <right-toolbar v-model:showSearch="showSearch" @queryTable="getList"></right-toolbar>
       </el-row>
 
       <el-table v-loading="loading" :data="typeList" @selection-change="handleSelectionChange">
          <el-table-column type="selection" width="55" align="center" />
-         <el-table-column label="字典编号" align="center" prop="dictId" />
-         <el-table-column label="字典名称" align="center" prop="dictName" :show-overflow-tooltip="true"/>
-         <el-table-column label="字典类型" align="center" :show-overflow-tooltip="true">
+         <el-table-column :label="$tx('Dictionary ID')" align="center" prop="dictId" />
+         <el-table-column :label="$tx('Dictionary Name')" align="center" :show-overflow-tooltip="true">
+            <template #default="scope">{{ displayDictionaryName(scope.row) }}</template>
+         </el-table-column>
+         <el-table-column :label="$tx('Dictionary Type')" align="center" :show-overflow-tooltip="true">
             <template #default="scope">
                <a class="link-type" style="cursor:pointer" @click="handleViewData(scope.row)">{{ scope.row.dictType }}</a>
             </template>
          </el-table-column>
-         <el-table-column label="状态" align="center" prop="status">
+         <el-table-column :label="$tx('Status')" align="center" prop="status">
             <template #default="scope">
-               <dict-tag :options="sys_normal_disable" :value="scope.row.status" />
+               <dict-tag :options="statusOptions" :value="scope.row.status" />
             </template>
          </el-table-column>
-         <el-table-column label="备注" align="center" prop="remark" :show-overflow-tooltip="true" />
-         <el-table-column label="创建时间" align="center" prop="createTime" width="180">
+         <el-table-column :label="$tx('Notes')" align="center" prop="remark" :show-overflow-tooltip="true" />
+         <el-table-column :label="$tx('Created At')" align="center" prop="createTime" width="180">
             <template #default="scope">
                <span>{{ parseTime(scope.row.createTime) }}</span>
             </template>
          </el-table-column>
-         <el-table-column label="操作" align="center" width="280" class-name="small-padding fixed-width">
+         <el-table-column :label="$tx('Actions')" align="center" width="280" class-name="small-padding fixed-width">
             <template #default="scope">
-               <el-button link type="primary" icon="Edit" @click="handleUpdate(scope.row)" v-hasPermi="['system:dict:edit']">修改</el-button>
-               <el-button link type="primary" icon="Operation" @click="handleDataList(scope.row)" v-hasPermi="['system:dict:edit']">列表</el-button>
-               <el-button link type="primary" icon="Delete" @click="handleDelete(scope.row)" v-hasPermi="['system:dict:remove']">删除</el-button>
+               <el-button link type="primary" icon="Edit" @click="handleUpdate(scope.row)" v-hasPermi="['system:dict:edit']">{{ $tx('Edit') }}</el-button>
+               <el-button link type="primary" icon="Operation" @click="handleDataList(scope.row)" v-hasPermi="['system:dict:edit']">{{ $tx('Data') }}</el-button>
+               <el-button link type="primary" icon="Delete" @click="handleDelete(scope.row)" v-hasPermi="['system:dict:remove']">{{ $tx('Delete') }}</el-button>
             </template>
          </el-table-column>
       </el-table>
@@ -141,37 +143,35 @@
       <!-- 添加或修改参数配置对话框 -->
       <el-dialog :title="title" v-model="open" width="500px" append-to-body>
          <el-form ref="dictRef" :model="form" :rules="rules" label-width="100px">
-            <el-form-item label="字典名称" prop="dictName">
-               <el-input v-model="form.dictName" placeholder="请输入字典名称" />
+            <el-form-item :label="$tx('Dictionary Name')" prop="dictName">
+               <el-input v-model="form.dictName" :placeholder="$tx('Enter dictionary name')" />
             </el-form-item>
             <el-form-item prop="dictType">
-               <el-input v-model="form.dictType" placeholder="请输入字典类型" />
+               <el-input v-model="form.dictType" :placeholder="$tx('Enter dictionary type')" />
                <template #label>
                  <span>
-                   <el-tooltip content='数据存储中的Key值，如：sys_user_sex' placement="top">
+                   <el-tooltip :content="$tx('Storage key, for example: sys_user_sex')" placement="top">
                      <el-icon><question-filled /></el-icon>
-                   </el-tooltip>
-                   字典类型
-                 </span>
+                   </el-tooltip> {{ $tx('Dictionary Type') }} </span>
                </template>
             </el-form-item>
-            <el-form-item label="状态" prop="status">
+            <el-form-item :label="$tx('Status')" prop="status">
                <el-radio-group v-model="form.status">
                   <el-radio
-                     v-for="dict in sys_normal_disable"
-                     :key="dict.value"
-                     :value="dict.value"
-                  >{{ dict.label }}</el-radio>
+                     v-for="option in statusOptions"
+                     :key="option.value"
+                     :value="option.value"
+                  >{{ option.label }}</el-radio>
                </el-radio-group>
             </el-form-item>
-            <el-form-item label="备注" prop="remark">
-               <el-input v-model="form.remark" type="textarea" placeholder="请输入内容"></el-input>
+            <el-form-item :label="$tx('Notes')" prop="remark">
+               <el-input v-model="form.remark" type="textarea" :placeholder="$tx('Enter notes')"></el-input>
             </el-form-item>
          </el-form>
          <template #footer>
             <div class="dialog-footer">
-               <el-button type="primary" @click="submitForm">确 定</el-button>
-               <el-button @click="cancel">取 消</el-button>
+               <el-button type="primary" @click="submitForm">{{ $tx('Save') }}</el-button>
+               <el-button @click="cancel">{{ $tx('Cancel') }}</el-button>
             </div>
          </template>
       </el-dialog>
@@ -186,7 +186,21 @@ import useDictStore from '@/store/modules/dict'
 import { listType, getType, delType, addType, updateType, refreshCache } from "@/api/system/dict/type"
 
 const { proxy } = getCurrentInstance()
-const { sys_normal_disable } = useDict("sys_normal_disable")
+const statusOptions = [
+  { value: '0', label: tx('Active'), elTagType: 'success' },
+  { value: '1', label: tx('Disabled'), elTagType: 'danger' }
+]
+const dictionaryNameMap = {
+  nxr_sports_type: 'Sports Type',
+  nxr_card_category: 'Card Category',
+  nxr_product_type: 'Product Type',
+  nxr_vintage_classification: 'Vintage Classification',
+  nxr_language: 'Card Language'
+}
+
+function displayDictionaryName(row) {
+  return tx(dictionaryNameMap[row?.dictType] || row?.dictName || '-')
+}
 
 const typeList = ref([])
 const open = ref(false)
@@ -211,8 +225,8 @@ const data = reactive({
     status: undefined
   },
   rules: {
-    dictName: [{ required: true, message: "字典名称不能为空", trigger: "blur" }],
-    dictType: [{ required: true, message: "字典类型不能为空", trigger: "blur" }]
+    dictName: [{ required: true, message: tx('Dictionary name is required'), trigger: "blur" }],
+    dictType: [{ required: true, message: tx('Dictionary type is required'), trigger: "blur" }]
   },
 })
 
@@ -263,7 +277,7 @@ function resetQuery() {
 function handleAdd() {
   reset()
   open.value = true
-  title.value = "添加字典类型"
+  title.value = tx('Add Dictionary')
 }
 
 /** 多选框选中数据 */
@@ -281,7 +295,7 @@ function handleViewData(row) {
 
 /** 字典数据列表页面 */
 function handleDataList(row) {
-  proxy.$tab.openPage("字典数据", '/system/dict-data/index/' + row.dictId)
+  proxy.$tab.openPage("Dictionary Data", '/system/dict-data/index/' + row.dictId)
 }
 
 /** 修改按钮操作 */
@@ -291,7 +305,7 @@ function handleUpdate(row) {
   getType(dictId).then(response => {
     form.value = response.data
     open.value = true
-    title.value = "修改字典类型"
+    title.value = tx('Edit Dictionary')
   })
 }
 
@@ -301,13 +315,13 @@ function submitForm() {
     if (valid) {
       if (form.value.dictId != undefined) {
         updateType(form.value).then(response => {
-          proxy.$modal.msgSuccess("修改成功")
+          proxy.$modal.msgSuccess(tx('Dictionary updated'))
           open.value = false
           getList()
         })
       } else {
         addType(form.value).then(response => {
-          proxy.$modal.msgSuccess("新增成功")
+          proxy.$modal.msgSuccess(tx('Dictionary created'))
           open.value = false
           getList()
         })
@@ -319,11 +333,11 @@ function submitForm() {
 /** 删除按钮操作 */
 function handleDelete(row) {
   const dictIds = row.dictId || ids.value
-  proxy.$modal.confirm('是否确认删除字典编号为"' + dictIds + '"的数据项？').then(function() {
+  proxy.$modal.confirm('Delete dictionary ID(s) "' + dictIds + '"?').then(function() {
     return delType(dictIds)
   }).then(() => {
     getList()
-    proxy.$modal.msgSuccess("删除成功")
+    proxy.$modal.msgSuccess(tx('Dictionary deleted'))
   }).catch(() => {})
 }
 
@@ -337,7 +351,7 @@ function handleExport() {
 /** 刷新缓存按钮操作 */
 function handleRefreshCache() {
   refreshCache().then(() => {
-    proxy.$modal.msgSuccess("刷新成功")
+    proxy.$modal.msgSuccess(tx('Dictionary cache refreshed'))
     useDictStore().cleanDict()
   })
 }

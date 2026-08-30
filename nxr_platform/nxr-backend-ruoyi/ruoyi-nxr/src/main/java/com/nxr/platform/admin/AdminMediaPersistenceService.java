@@ -54,6 +54,24 @@ public class AdminMediaPersistenceService {
     }
 
     @Transactional(readOnly = true)
+    public SubmissionForMediaImport loadSubmissionForMediaImport(long submissionId) {
+        return jdbcClient.sql(
+                """
+                SELECT id, cert_id
+                FROM grading_submission
+                WHERE id = :submissionId
+                """
+            )
+            .param("submissionId", submissionId)
+            .query((rs, rowNum) -> new SubmissionForMediaImport(
+                rs.getLong("id"),
+                rs.getString("cert_id")
+            ))
+            .optional()
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Submission not found."));
+    }
+
+    @Transactional(readOnly = true)
     public SubmissionForPublish loadSubmissionForPublish(long submissionId) {
         return jdbcClient.sql(
                 """
@@ -393,6 +411,9 @@ public class AdminMediaPersistenceService {
     }
 
     public record SubmissionForPublish(long id, String certId, String statusCode) {
+    }
+
+    public record SubmissionForMediaImport(long id, String certId) {
     }
 
     public record ExistingMedia(

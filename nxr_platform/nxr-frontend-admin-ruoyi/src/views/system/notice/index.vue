@@ -1,26 +1,26 @@
 <template>
    <div class="app-container">
       <el-form :model="queryParams" ref="queryRef" :inline="true" v-show="showSearch">
-         <el-form-item label="公告标题" prop="noticeTitle">
+         <el-form-item :label="$tx('Notice Title')" prop="noticeTitle">
             <el-input
                v-model="queryParams.noticeTitle"
-               placeholder="请输入公告标题"
+               :placeholder="$tx('Enter notice title')"
                clearable
                style="width: 200px"
                @keyup.enter="handleQuery"
             />
          </el-form-item>
-         <el-form-item label="操作人员" prop="createBy">
+         <el-form-item :label="$tx('Created By')" prop="createBy">
             <el-input
                v-model="queryParams.createBy"
-               placeholder="请输入操作人员"
+               :placeholder="$tx('Enter username')"
                clearable
                style="width: 200px"
                @keyup.enter="handleQuery"
             />
          </el-form-item>
-         <el-form-item label="类型" prop="noticeType">
-            <el-select v-model="queryParams.noticeType" placeholder="公告类型" clearable style="width: 200px">
+         <el-form-item :label="$tx('Type')" prop="noticeType">
+            <el-select v-model="queryParams.noticeType" :placeholder="$tx('Notice type')" clearable style="width: 200px">
                <el-option
                   v-for="dict in sys_notice_type"
                   :key="dict.value"
@@ -30,8 +30,8 @@
             </el-select>
          </el-form-item>
          <el-form-item>
-            <el-button type="primary" icon="Search" @click="handleQuery">搜索</el-button>
-            <el-button icon="Refresh" @click="resetQuery">重置</el-button>
+            <el-button type="primary" icon="Search" @click="handleQuery">{{ $tx('Search') }}</el-button>
+            <el-button icon="Refresh" @click="resetQuery">{{ $tx('Reset') }}</el-button>
          </el-form-item>
       </el-form>
 
@@ -43,7 +43,7 @@
                icon="Plus"
                @click="handleAdd"
                v-hasPermi="['system:notice:add']"
-            >新增</el-button>
+            >{{ $tx('Add') }}</el-button>
          </el-col>
          <el-col :span="1.5">
             <el-button
@@ -53,7 +53,7 @@
                :disabled="single"
                @click="handleUpdate"
                v-hasPermi="['system:notice:edit']"
-            >修改</el-button>
+            >{{ $tx('Edit') }}</el-button>
          </el-col>
          <el-col :span="1.5">
             <el-button
@@ -63,40 +63,40 @@
                :disabled="multiple"
                @click="handleDelete"
                v-hasPermi="['system:notice:remove']"
-            >删除</el-button>
+            >{{ $tx('Delete') }}</el-button>
          </el-col>
          <right-toolbar v-model:showSearch="showSearch" @queryTable="getList"></right-toolbar>
       </el-row>
 
       <el-table v-loading="loading" :data="noticeList" @selection-change="handleSelectionChange">
          <el-table-column type="selection" width="55" align="center" />
-         <el-table-column label="序号" align="center" prop="noticeId" width="100" />
-         <el-table-column label="公告标题" align="center" :show-overflow-tooltip="true">
+         <el-table-column :label="$tx('ID')" align="center" prop="noticeId" width="100" />
+         <el-table-column :label="$tx('Notice Title')" align="center" :show-overflow-tooltip="true">
             <template #default="scope">
                <a class="link-type" style="cursor:pointer" @click="handleViewData(scope.row)">{{ scope.row.noticeTitle }}</a>
             </template>
          </el-table-column>
-         <el-table-column label="公告类型" align="center" prop="noticeType" width="100">
+         <el-table-column :label="$tx('Type')" align="center" prop="noticeType" width="100">
             <template #default="scope">
                <dict-tag :options="sys_notice_type" :value="scope.row.noticeType" />
             </template>
          </el-table-column>
-         <el-table-column label="状态" align="center" prop="status" width="100">
+         <el-table-column :label="$tx('Status')" align="center" prop="status" width="100">
             <template #default="scope">
                <dict-tag :options="sys_notice_status" :value="scope.row.status" />
             </template>
          </el-table-column>
-         <el-table-column label="创建者" align="center" prop="createBy" width="100" />
-         <el-table-column label="创建时间" align="center" prop="createTime" width="100">
+         <el-table-column :label="$tx('Created By')" align="center" prop="createBy" width="100" />
+         <el-table-column :label="$tx('Created At')" align="center" prop="createTime" width="100">
             <template #default="scope">
                <span>{{ parseTime(scope.row.createTime, '{y}-{m}-{d}') }}</span>
             </template>
          </el-table-column>
-         <el-table-column label="操作" align="center" class-name="small-padding fixed-width">
+         <el-table-column :label="$tx('Actions')" align="center" class-name="small-padding fixed-width">
             <template #default="scope">
-               <el-button link type="primary" icon="User" @click="handleReadUsers(scope.row)" v-hasPermi="['system:notice:list']">阅读用户</el-button>
-               <el-button link type="primary" icon="Edit" @click="handleUpdate(scope.row)" v-hasPermi="['system:notice:edit']">修改</el-button>
-               <el-button link type="primary" icon="Delete" @click="handleDelete(scope.row)" v-hasPermi="['system:notice:remove']" >删除</el-button>
+               <el-button link type="primary" icon="User" @click="handleReadUsers(scope.row)" v-hasPermi="['system:notice:list']">{{ $tx('Readers') }}</el-button>
+               <el-button link type="primary" icon="Edit" @click="handleUpdate(scope.row)" v-hasPermi="['system:notice:edit']">{{ $tx('Edit') }}</el-button>
+               <el-button link type="primary" icon="Delete" @click="handleDelete(scope.row)" v-hasPermi="['system:notice:remove']" >{{ $tx('Delete') }}</el-button>
             </template>
          </el-table-column>
       </el-table>
@@ -114,13 +114,13 @@
          <el-form ref="noticeRef" :model="form" :rules="rules" label-width="80px">
             <el-row>
                <el-col :span="12">
-                  <el-form-item label="公告标题" prop="noticeTitle">
-                     <el-input v-model="form.noticeTitle" placeholder="请输入公告标题" />
+                  <el-form-item :label="$tx('Notice Title')" prop="noticeTitle">
+                     <el-input v-model="form.noticeTitle" :placeholder="$tx('Enter notice title')" />
                   </el-form-item>
                </el-col>
                <el-col :span="12">
-                  <el-form-item label="公告类型" prop="noticeType">
-                     <el-select v-model="form.noticeType" placeholder="请选择">
+                  <el-form-item :label="$tx('Notice Type')" prop="noticeType">
+                     <el-select v-model="form.noticeType" :placeholder="$tx('Select')">
                         <el-option
                            v-for="dict in sys_notice_type"
                            :key="dict.value"
@@ -131,7 +131,7 @@
                   </el-form-item>
                </el-col>
                <el-col :span="24">
-                  <el-form-item label="状态">
+                  <el-form-item :label="$tx('Status')">
                      <el-radio-group v-model="form.status">
                         <el-radio
                            v-for="dict in sys_notice_status"
@@ -142,7 +142,7 @@
                   </el-form-item>
                </el-col>
                <el-col :span="24">
-                  <el-form-item label="内容">
+                  <el-form-item :label="$tx('Content')">
                     <editor v-model="form.noticeContent" :min-height="192"/>
                   </el-form-item>
                </el-col>
@@ -150,8 +150,8 @@
          </el-form>
          <template #footer>
             <div class="dialog-footer">
-               <el-button type="primary" @click="submitForm">确 定</el-button>
-               <el-button @click="cancel">取 消</el-button>
+               <el-button type="primary" @click="submitForm">{{ $tx('Confirm') }}</el-button>
+               <el-button @click="cancel">{{ $tx('Cancel') }}</el-button>
             </div>
          </template>
       </el-dialog>
@@ -188,8 +188,8 @@ const data = reactive({
     status: undefined
   },
   rules: {
-    noticeTitle: [{ required: true, message: "公告标题不能为空", trigger: "blur" }],
-    noticeType: [{ required: true, message: "公告类型不能为空", trigger: "change" }]
+    noticeTitle: [{ required: true, message: tx('Notice title is required'), trigger: "blur" }],
+    noticeType: [{ required: true, message: tx('Notice type is required'), trigger: "change" }]
   },
 })
 
@@ -246,7 +246,7 @@ function handleSelectionChange(selection) {
 function handleAdd() {
   reset()
   open.value = true
-  title.value = "添加公告"
+  title.value = tx('Add Notice')
 }
 
 /**修改按钮操作 */
@@ -256,7 +256,7 @@ function handleUpdate(row) {
   getNotice(noticeId).then(response => {
     form.value = response.data
     open.value = true
-    title.value = "修改公告"
+    title.value = tx('Edit Notice')
   })
 }
 
@@ -266,13 +266,13 @@ function submitForm() {
     if (valid) {
       if (form.value.noticeId != undefined) {
         updateNotice(form.value).then(response => {
-          proxy.$modal.msgSuccess("修改成功")
+          proxy.$modal.msgSuccess(tx('Updated successfully'))
           open.value = false
           getList()
         })
       } else {
         addNotice(form.value).then(response => {
-          proxy.$modal.msgSuccess("新增成功")
+          proxy.$modal.msgSuccess(tx('Added successfully'))
           open.value = false
           getList()
         })
@@ -294,11 +294,11 @@ function handleReadUsers(row) {
 /** 删除按钮操作 */
 function handleDelete(row) {
   const noticeIds = row.noticeId || ids.value
-  proxy.$modal.confirm('是否确认删除公告编号为"' + noticeIds + '"的数据项？').then(function() {
+  proxy.$modal.confirm(tx('Delete the selected notice(s) "') + noticeIds + '"?').then(function() {
     return delNotice(noticeIds)
   }).then(() => {
     getList()
-    proxy.$modal.msgSuccess("删除成功")
+    proxy.$modal.msgSuccess(tx('Deleted successfully'))
   }).catch(() => {})
 }
 

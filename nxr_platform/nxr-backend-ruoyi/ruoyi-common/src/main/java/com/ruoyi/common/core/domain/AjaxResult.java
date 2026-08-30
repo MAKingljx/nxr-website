@@ -4,6 +4,7 @@ import java.util.HashMap;
 import java.util.Objects;
 import com.ruoyi.common.constant.HttpStatus;
 import com.ruoyi.common.utils.StringUtils;
+import com.ruoyi.common.utils.MessageUtils;
 
 /**
  * 操作消息提醒
@@ -66,7 +67,7 @@ public class AjaxResult extends HashMap<String, Object>
      */
     public static AjaxResult success()
     {
-        return AjaxResult.success("操作成功");
+        return AjaxResult.success(defaultMessage("operation.success", "操作成功"));
     }
 
     /**
@@ -76,7 +77,7 @@ public class AjaxResult extends HashMap<String, Object>
      */
     public static AjaxResult success(Object data)
     {
-        return AjaxResult.success("操作成功", data);
+        return AjaxResult.success(defaultMessage("operation.success", "操作成功"), data);
     }
 
     /**
@@ -132,7 +133,20 @@ public class AjaxResult extends HashMap<String, Object>
      */
     public static AjaxResult error()
     {
-        return AjaxResult.error("操作失败");
+        return AjaxResult.error(defaultMessage("operation.failed", "操作失败"));
+    }
+
+    private static String defaultMessage(String code, String fallback)
+    {
+        try
+        {
+            return MessageUtils.message(code);
+        }
+        catch (RuntimeException exception)
+        {
+            // Keep the domain result usable in isolated unit tests before Spring is initialized.
+            return fallback;
+        }
     }
 
     /**

@@ -21,4 +21,18 @@ class AdminMediaControllerSecurityTest {
                 .isEqualTo("@ss.hasPermi('nxr:media:publish')");
         }
     }
+
+    @Test
+    void folderAndEntryMediaImportsRequireTheSameImportPermission() {
+        for (String methodName : new String[] {"importFolder", "importSubmissionMedia"}) {
+            Method method = java.util.Arrays.stream(AdminMediaController.class.getDeclaredMethods())
+                .filter(candidate -> candidate.getName().equals(methodName))
+                .findFirst()
+                .orElseThrow();
+
+            assertThat(method.getAnnotation(PreAuthorize.class)).isNotNull();
+            assertThat(method.getAnnotation(PreAuthorize.class).value())
+                .isEqualTo("@ss.hasPermi('nxr:media:import')");
+        }
+    }
 }

@@ -4,16 +4,16 @@
     <div v-if="!collapsed" class="resize-handle" @mousedown="startResize" @touchstart="startResize" :class="{ active: isResizing }" />
     <div class="tree-header">
       <span class="tree-title" v-show="!collapsed">
-        <el-icon><component :is="titleIcon" /></el-icon> {{ title }}
+        <el-icon><component :is="titleIcon" /></el-icon> {{ displayTitle }}
       </span>
       <div class="tree-actions" v-show="!collapsed">
-        <el-tooltip :content="isExpandedAll ? '收起全部' : '展开全部'" placement="right">
+        <el-tooltip :content="isExpandedAll ? t('tree.collapseAll') : t('tree.expandAll')" placement="right">
           <el-icon class="tree-action-icon" @click="toggleExpandAll">
             <ArrowDown v-if="isExpandedAll" />
             <ArrowUp v-else />
           </el-icon>
         </el-tooltip>
-        <el-tooltip content="刷新" placement="right">
+        <el-tooltip :content="t('common.refresh')" placement="right">
           <el-icon class="tree-action-icon" @click="handleRefresh"><Refresh /></el-icon>
         </el-tooltip>
         <slot name="actions"></slot>
@@ -22,7 +22,7 @@
     
     <!-- 侧边栏展开/收起按钮 -->
     <div class="collapse-button-container">
-      <el-tooltip :content="collapsed ? '展开' : '收起'" placement="right">
+      <el-tooltip :content="collapsed ? t('tree.expand') : t('tree.collapse')" placement="right">
         <el-icon class="collapse-button" @click="toggleCollapsed">
           <DArrowRight v-if="collapsed" />
           <DArrowLeft v-else />
@@ -31,7 +31,7 @@
     </div>
 
     <div class="tree-search" v-show="!collapsed" v-if="showSearch">
-      <el-input v-model="searchKeyword" :placeholder="searchPlaceholder" clearable>
+      <el-input v-model="searchKeyword" :placeholder="displaySearchPlaceholder" clearable>
         <template #prefix>
           <el-icon><Search /></el-icon>
         </template>
@@ -72,6 +72,8 @@
 </template>
 
 <script setup>
+import { useI18n } from 'vue-i18n'
+
 const props = defineProps({
   // 树形数据
   treeData: {
@@ -81,7 +83,7 @@ const props = defineProps({
   // 标题
   title: {
     type: String,
-    default: '树形结构'
+    default: ''
   },
   // 标题图标
   titleIcon: {
@@ -96,7 +98,7 @@ const props = defineProps({
   // 搜索框占位符
   searchPlaceholder: {
     type: String,
-    default: '请输入名称'
+    default: ''
   },
   // 是否默认收起侧边栏
   defaultCollapsed: {
@@ -177,6 +179,10 @@ const props = defineProps({
     default: null
   }
 })
+
+const { t } = useI18n()
+const displayTitle = computed(() => props.title || t('tree.title'))
+const displaySearchPlaceholder = computed(() => props.searchPlaceholder || t('tree.search'))
 
 const emit = defineEmits([
   'collapsed-change',

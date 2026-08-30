@@ -1,51 +1,51 @@
 <template>
   <main class="nxr-workspace nxr-brands-workspace">
     <nxr-page-header
-      kicker="GRADING CATALOG"
-      title="品牌设置"
-      summary="维护录入使用的品牌名称、别名和启用状态"
+      :kicker="$tx('GRADING CATALOG')"
+      :title="$tx('Brand Settings')"
+      :summary="$tx('Maintain the brand names, aliases, and availability used by card entries')"
     >
       <template #actions>
-        <el-button type="primary" plain icon="Plus" v-hasPermi="['nxr:brand:add']" @click="handleAdd">新增品牌</el-button>
-        <el-button icon="Refresh" plain @click="getList">刷新</el-button>
+        <el-button type="primary" plain icon="Plus" v-hasPermi="['nxr:brand:add']" @click="handleAdd">{{ $tx('New Brand') }}</el-button>
+        <el-button icon="Refresh" plain @click="getList">{{ $tx('Refresh') }}</el-button>
       </template>
     </nxr-page-header>
 
     <el-table v-loading="loading" :data="brands">
-      <el-table-column label="排序" prop="sortOrder" width="80" align="center" />
-      <el-table-column label="品牌名称" prop="name" min-width="160" />
-      <el-table-column label="别名（逗号分隔，用于录入规范化）" prop="aliases" min-width="280" show-overflow-tooltip />
-      <el-table-column label="状态" width="100" align="center">
+      <el-table-column :label="$tx('Order')" prop="sortOrder" width="80" align="center" />
+      <el-table-column :label="$tx('Brand Name')" prop="name" min-width="160" />
+      <el-table-column :label="$tx('Aliases (comma-separated)')" prop="aliases" min-width="280" show-overflow-tooltip />
+      <el-table-column :label="$tx('Status')" width="100" align="center">
         <template #default="scope">
           <nxr-status-tag :code="scope.row.isActive ? 'active' : 'inactive'" />
         </template>
       </el-table-column>
-      <el-table-column label="更新时间" prop="updatedAt" width="180" show-overflow-tooltip />
-      <el-table-column label="操作" width="110" align="center">
+      <el-table-column :label="$tx('Updated At')" prop="updatedAt" width="180" show-overflow-tooltip />
+      <el-table-column :label="$tx('Actions')" width="110" align="center">
         <template #default="scope">
-          <el-button link type="primary" icon="Edit" v-hasPermi="['nxr:brand:edit']" @click="handleEdit(scope.row)">编辑</el-button>
+          <el-button link type="primary" icon="Edit" v-hasPermi="['nxr:brand:edit']" @click="handleEdit(scope.row)">{{ $tx('Edit') }}</el-button>
         </template>
       </el-table-column>
     </el-table>
 
     <el-dialog :title="formTitle" v-model="open" width="560px" append-to-body>
       <el-form ref="brandRef" :model="form" :rules="rules" label-width="90px">
-        <el-form-item label="品牌名称" prop="name">
-          <el-input v-model="form.name" placeholder="英文品牌名，如 Pokemon" />
+        <el-form-item :label="$tx('Brand Name')" prop="name">
+          <el-input v-model="form.name" :placeholder="$tx('English brand name, e.g. Pokemon')" />
         </el-form-item>
-        <el-form-item label="别名" prop="aliases">
-          <el-input v-model="form.aliases" type="textarea" :rows="3" placeholder="逗号分隔，如 pokemon,poke" />
+        <el-form-item :label="$tx('Aliases')" prop="aliases">
+          <el-input v-model="form.aliases" type="textarea" :rows="3" :placeholder="$tx('Comma-separated, e.g. pokemon,poke')" />
         </el-form-item>
-        <el-form-item label="排序" prop="sortOrder">
+        <el-form-item :label="$tx('Order')" prop="sortOrder">
           <el-input-number v-model="form.sortOrder" :min="0" controls-position="right" />
         </el-form-item>
-        <el-form-item label="状态">
-          <el-switch v-model="form.isActive" active-text="启用" inactive-text="停用" />
+        <el-form-item :label="$tx('Status')">
+          <el-switch v-model="form.isActive" active-text="Active" inactive-text="Inactive" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button type="primary" :loading="submitting" @click="submitForm">确 定</el-button>
-        <el-button @click="open = false">取 消</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitForm">{{ $tx('Save') }}</el-button>
+        <el-button @click="open = false">{{ $tx('Cancel') }}</el-button>
       </template>
     </el-dialog>
   </main>
@@ -66,10 +66,10 @@ const editingId = ref(null)
 
 const form = reactive({ name: '', aliases: '', sortOrder: 0, isActive: true })
 const rules = {
-  name: [{ required: true, message: '品牌名称不能为空', trigger: 'blur' }]
+  name: [{ required: true, message: tx('Brand name is required'), trigger: 'blur' }]
 }
 
-const formTitle = computed(() => (editingId.value ? '编辑品牌' : '新增品牌'))
+const formTitle = computed(() => (editingId.value ? tx('Edit Brand') : tx('New Brand')))
 
 function getList() {
   loading.value = true
@@ -108,7 +108,7 @@ function submitForm() {
       : createBrandSetting({ ...form })
     action
       .then(() => {
-        proxy.$modal.msgSuccess(editingId.value ? '保存成功' : '新增成功')
+        proxy.$modal.msgSuccess(editingId.value ? tx('Brand saved') : tx('Brand created'))
         open.value = false
         getList()
       })

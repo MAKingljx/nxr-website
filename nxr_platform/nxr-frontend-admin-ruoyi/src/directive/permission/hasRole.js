@@ -21,7 +21,7 @@ export default {
         el.parentNode && el.parentNode.removeChild(el)
       }
     } else {
-      throw new Error(`请设置角色权限标签值`)
+      throw new Error(`Set a role permission value for v-hasRole`)
     }
   }
 }

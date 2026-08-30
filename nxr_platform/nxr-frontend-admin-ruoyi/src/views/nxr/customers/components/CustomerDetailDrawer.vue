@@ -12,42 +12,42 @@
           {{ avatarText(detail.customer.displayName) }}
         </el-avatar>
         <div>
-          <strong>{{ detail.customer.displayName || '未设置昵称' }}</strong>
+          <strong>{{ detail.customer.displayName || $tx('Name not set') }}</strong>
           <span>{{ detail.customer.email }}</span>
         </div>
         <nxr-status-tag
           :code="detail.customer.active ? 'active' : 'inactive'"
-          :label="detail.customer.active ? '正常' : '已停用'"
+          :label="detail.customer.active ? $tx('Active') : $tx('Inactive')"
         />
       </div>
-      <span v-else>用户详情</span>
+      <span v-else>{{ $tx('Customer Details') }}</span>
     </template>
 
     <div v-loading="loading" class="drawer-content">
       <template v-if="detail">
-        <section class="detail-metrics" aria-label="用户数据概览">
-          <div><strong>{{ detail.customer.activeCardCount }}</strong><span>当前持卡</span></div>
-          <div><strong>{{ detail.customer.ownershipCount }}</strong><span>流转记录</span></div>
-          <div><strong>{{ detail.customer.orderCount }}</strong><span>送评订单</span></div>
-          <div><strong>{{ detail.customer.activeSessionCount }}</strong><span>有效会话</span></div>
+        <section class="detail-metrics" :aria-label="$tx('Customer overview')">
+          <div><strong>{{ detail.customer.activeCardCount }}</strong><span>{{ $tx('Active Cards') }}</span></div>
+          <div><strong>{{ detail.customer.ownershipCount }}</strong><span>{{ $tx('Ownership Events') }}</span></div>
+          <div><strong>{{ detail.customer.orderCount }}</strong><span>{{ $tx('Grading Orders') }}</span></div>
+          <div><strong>{{ detail.customer.activeSessionCount }}</strong><span>{{ $tx('Active Sessions') }}</span></div>
         </section>
 
         <el-tabs v-model="detailTab" class="detail-tabs">
-          <el-tab-pane label="账号资料" name="profile">
+          <el-tab-pane :label="$tx('Account Profile')" name="profile">
             <dl class="profile-list">
-              <div><dt>昵称</dt><dd>{{ detail.customer.displayName || '未填写' }}</dd></div>
-              <div><dt>邮箱</dt><dd>{{ detail.customer.email }}</dd></div>
-              <div><dt>手机</dt><dd>{{ detail.customer.mobile || '未填写' }}</dd></div>
-              <div><dt>账号类型</dt><dd><el-tag :type="detail.customer.accountTypeCode === 'merchant' ? 'warning' : 'info'">{{ detail.customer.accountTypeCode === 'merchant' ? '商户' : '普通客户' }}</el-tag></dd></div>
-              <div><dt>加入时间</dt><dd>{{ formatCustomerDate(detail.customer.createdAt) }}</dd></div>
-              <div><dt>最近登录</dt><dd>{{ detail.customer.lastLoginAt ? formatCustomerDate(detail.customer.lastLoginAt) : '尚未登录' }}</dd></div>
-              <div><dt>账号编号</dt><dd>#{{ detail.customer.id }}</dd></div>
+              <div><dt>{{ $tx('Display Name') }}</dt><dd>{{ detail.customer.displayName || $tx('Not provided') }}</dd></div>
+              <div><dt>{{ $tx('Email') }}</dt><dd>{{ detail.customer.email }}</dd></div>
+              <div><dt>{{ $tx('Phone') }}</dt><dd>{{ detail.customer.mobile || $tx('Not provided') }}</dd></div>
+              <div><dt>{{ $tx('Account Type') }}</dt><dd><el-tag :type="detail.customer.accountTypeCode === 'merchant' ? 'warning' : 'info'">{{ detail.customer.accountTypeCode === 'merchant' ? $tx('Merchant') : $tx('Customer') }}</el-tag></dd></div>
+              <div><dt>{{ $tx('Joined At') }}</dt><dd>{{ formatCustomerDate(detail.customer.createdAt) }}</dd></div>
+              <div><dt>{{ $tx('Last Sign-in') }}</dt><dd>{{ detail.customer.lastLoginAt ? formatCustomerDate(detail.customer.lastLoginAt) : $tx('Never signed in') }}</dd></div>
+              <div><dt>{{ $tx('Account ID') }}</dt><dd>#{{ detail.customer.id }}</dd></div>
             </dl>
 
             <div v-if="canManage" class="account-actions">
               <el-select :model-value="detail.customer.accountTypeCode" style="width: 140px" @change="$emit('change-type', detail.customer, $event)">
-                <el-option label="普通客户" value="customer" />
-                <el-option label="商户" value="merchant" />
+                <el-option :label="$tx('Customer')" value="customer" />
+                <el-option :label="$tx('Merchant')" value="merchant" />
               </el-select>
               <el-button
                 :type="detail.customer.active ? 'danger' : 'success'"
@@ -55,28 +55,26 @@
                 :loading="statusChangingId === detail.customer.id"
                 @click="$emit('toggle-status', detail.customer)"
               >
-                {{ detail.customer.active ? '停用账号' : '恢复账号' }}
+                {{ detail.customer.active ? $tx('Deactivate Account') : $tx('Reactivate Account') }}
               </el-button>
-              <el-button :icon="Key" :loading="revokingSessions" @click="$emit('revoke-sessions')">
-                退出全部设备
-              </el-button>
+              <el-button :icon="Key" :loading="revokingSessions" @click="$emit('revoke-sessions')"> {{ $tx('Sign Out All Devices') }} </el-button>
             </div>
           </el-tab-pane>
 
-          <el-tab-pane :label="`持卡 ${detail.cards.length}`" name="cards">
+          <el-tab-pane :label="$tx('Cards {count}', { count: detail.cards.length })" name="cards">
             <el-table :data="detail.cards" size="small">
-              <el-table-column label="证书" prop="certId" min-width="130" />
-              <el-table-column label="卡片" min-width="210" show-overflow-tooltip>
+              <el-table-column :label="$tx('Certificate')" prop="certId" min-width="130" />
+              <el-table-column :label="$tx('Card')" min-width="210" show-overflow-tooltip>
                 <template #default="scope">
-                  <strong class="detail-card-name">{{ scope.row.cardName || '未匹配卡片资料' }}</strong>
+                  <strong class="detail-card-name">{{ scope.row.cardName || $tx('Card details not matched') }}</strong>
                   <small class="detail-card-brand">{{ scope.row.brandName || '-' }}</small>
                   <small v-if="scope.row.merchDescription" class="detail-card-brand">{{ scope.row.merchDescription }}</small>
                 </template>
               </el-table-column>
-              <el-table-column label="评级" width="92">
+              <el-table-column :label="$tx('Grade')" width="92">
                 <template #default="scope">{{ formatGrade(scope.row) }}</template>
               </el-table-column>
-              <el-table-column label="状态" width="105">
+              <el-table-column :label="$tx('Status')" width="105">
                 <template #default="scope">
                   <nxr-status-tag
                     :code="scope.row.statusCode"
@@ -84,14 +82,14 @@
                   />
                 </template>
               </el-table-column>
-              <el-table-column label="绑定时间" width="160">
+              <el-table-column :label="$tx('Bound At')" width="160">
                 <template #default="scope">{{ formatCustomerDate(scope.row.boundAt) }}</template>
               </el-table-column>
             </el-table>
           </el-tab-pane>
 
-          <el-tab-pane :label="`流转 ${detail.ownershipEvents.length}`" name="history">
-            <el-empty v-if="!detail.ownershipEvents.length" description="暂无卡片流转记录" :image-size="72" />
+          <el-tab-pane :label="$tx('Ownership {count}', { count: detail.ownershipEvents.length })" name="history">
+            <el-empty v-if="!detail.ownershipEvents.length" :description="$tx('No ownership history')" :image-size="72" />
             <el-timeline v-else class="ownership-timeline">
               <el-timeline-item
                 v-for="event in detail.ownershipEvents"
@@ -111,19 +109,19 @@
             </el-timeline>
           </el-tab-pane>
 
-          <el-tab-pane :label="`订单 ${detail.orders.length}`" name="orders">
+          <el-tab-pane :label="$tx('Orders {count}', { count: detail.orders.length })" name="orders">
             <el-table :data="detail.orders" size="small">
-              <el-table-column label="订单号" prop="orderNo" min-width="150" />
-              <el-table-column label="状态" min-width="125">
+              <el-table-column :label="$tx('Order No.')" prop="orderNo" min-width="150" />
+              <el-table-column :label="$tx('Status')" min-width="125">
                 <template #default="scope">
                   <el-tag effect="plain">{{ orderStatusLabel(scope.row.statusCode) }}</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="卡数" prop="totalCardCount" width="74" align="center" />
-              <el-table-column label="金额" width="125" align="right">
+              <el-table-column :label="$tx('Cards')" prop="totalCardCount" width="74" align="center" />
+              <el-table-column :label="$tx('Amount')" width="125" align="right">
                 <template #default="scope">{{ formatAmount(scope.row) }}</template>
               </el-table-column>
-              <el-table-column label="创建时间" width="160">
+              <el-table-column :label="$tx('Created At')" width="160">
                 <template #default="scope">{{ formatCustomerDate(scope.row.createdAt) }}</template>
               </el-table-column>
             </el-table>

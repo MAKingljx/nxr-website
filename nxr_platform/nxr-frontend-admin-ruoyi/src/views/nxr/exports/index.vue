@@ -1,27 +1,48 @@
 <template>
   <main class="nxr-workspace nxr-exports-workspace">
     <nxr-page-header
-      kicker="DATA EXPORTS"
-      title="数据导出"
-      summary="预览、生成并管理已审批或已发布的数据文件"
+      :kicker="$tx('DATA EXPORTS')"
+      :title="$tx('Data Export')"
+      :summary="$tx('Preview, generate, and manage data files for approved or published records')"
     />
 
     <el-card shadow="never" class="mb8">
-      <template #header><span>导出条件（仅导出已审批/已发布数据）</span></template>
+      <template #header><span>{{ $tx('Export Criteria (approved/published records only)') }}</span></template>
       <el-form :inline="true" :model="exportForm" @submit.prevent>
-        <el-form-item label="评级筛选">
-          <el-input v-model="exportForm.gradeFilter" placeholder="如 10 / 9.5，留空为全部" clearable style="width: 220px" />
+        <el-form-item :label="$tx('Export Filter')">
+          <el-select v-model="exportForm.exportFilter" style="width: 260px">
+            <el-option :label="$tx('All Approved Products')" value="all" />
+            <el-option-group :label="$tx('Graded Cards')">
+              <el-option
+                v-for="grade in gradeExportOptions"
+                :key="grade"
+                :label="grade"
+                :value="`grade:${grade}`"
+              />
+            </el-option-group>
+            <el-option-group :label="$tx('Merch Product')">
+              <el-option :label="$tx('Merch Product')" value="merch_product" />
+            </el-option-group>
+            <el-option-group :label="$tx('Vintage Cards')">
+              <el-option
+                v-for="classification in vintageExportOptions"
+                :key="classification"
+                :label="classification"
+                :value="`vintage_product:${classification}`"
+              />
+            </el-option-group>
+          </el-select>
         </el-form-item>
-        <el-form-item label="证书编号">
+        <el-form-item :label="$tx('Cert IDs')">
           <el-input
             v-model="exportForm.certIds"
-            placeholder="逗号分隔，留空为全部"
+            :placeholder="$tx('Comma-separated; blank for all')"
             clearable
             style="width: 320px"
           />
         </el-form-item>
         <el-form-item>
-          <el-button :loading="previewing" icon="View" @click="handlePreview">预 览</el-button>
+          <el-button :loading="previewing" icon="View" @click="handlePreview">{{ $tx('Preview') }}</el-button>
           <el-button
             type="primary"
             icon="Download"
@@ -29,7 +50,7 @@
             :disabled="preview && !preview.canExport"
             v-hasPermi="['nxr:export:generate']"
             @click="handleGenerate"
-          >生成 Excel</el-button>
+          >{{ $tx('Generate Excel') }}</el-button>
         </el-form-item>
       </el-form>
 
@@ -39,24 +60,24 @@
           :closable="false"
           class="mb8"
         >
-          <div>符合条件共 {{ preview.totalCount }} 条（预览前 {{ preview.previewLimit }} 条）。</div>
-          <div v-if="preview.invalidCertIds.length">无效证书编号：{{ preview.invalidCertIds.join(', ') }}</div>
-          <div v-if="preview.missingCertIds.length">未找到的证书编号：{{ preview.missingCertIds.join(', ') }}</div>
+          <div>{{ preview.totalCount }} {{ $tx('matching records (showing the first') }} {{ preview.previewLimit }}).</div>
+          <div v-if="preview.invalidCertIds.length">{{ $tx('Invalid Cert IDs:') }} {{ preview.invalidCertIds.join(', ') }}</div>
+          <div v-if="preview.missingCertIds.length">{{ $tx('Cert IDs not found:') }} {{ preview.missingCertIds.join(', ') }}</div>
         </el-alert>
         <el-table :data="preview.rows" size="small" max-height="320">
-          <el-table-column label="证书编号" prop="certId" width="140" />
-          <el-table-column label="产品类型" width="125">
+          <el-table-column :label="$tx('Cert ID')" prop="certId" width="140" />
+          <el-table-column :label="$tx('Product Type')" width="125">
             <template #default="scope">{{ productTypeLabel(scope.row.productType) }}</template>
           </el-table-column>
-          <el-table-column label="卡名" prop="cardName" min-width="160" show-overflow-tooltip />
-          <el-table-column label="商品描述" prop="merchDescription" min-width="180" show-overflow-tooltip />
-          <el-table-column label="品牌" prop="brandName" width="120" />
-          <el-table-column label="系列" prop="setName" min-width="140" show-overflow-tooltip />
-          <el-table-column label="卡号" prop="cardNumber" width="110" />
-          <el-table-column label="语言" prop="languageCode" width="80" align="center" />
-          <el-table-column label="POP" prop="populationValue" width="80" align="center" />
-          <el-table-column label="状态" prop="statusCode" width="100" align="center" />
-          <el-table-column label="结果" width="150">
+          <el-table-column :label="$tx('Card Name')" prop="cardName" min-width="160" show-overflow-tooltip />
+          <el-table-column :label="$tx('Merch Description')" prop="merchDescription" min-width="180" show-overflow-tooltip />
+          <el-table-column :label="$tx('Brand')" prop="brandName" width="120" />
+          <el-table-column :label="$tx('Set Name')" prop="setName" min-width="140" show-overflow-tooltip />
+          <el-table-column :label="$tx('Card Number')" prop="cardNumber" width="110" />
+          <el-table-column :label="$tx('Language')" prop="languageCode" width="80" align="center" />
+          <el-table-column :label="$tx('POP')" prop="populationValue" width="80" align="center" />
+          <el-table-column :label="$tx('Status')" prop="statusCode" width="100" align="center" />
+          <el-table-column :label="$tx('Result')" width="150">
             <template #default="scope">{{ exportResult(scope.row) }}</template>
           </el-table-column>
         </el-table>
@@ -66,22 +87,22 @@
     <el-card shadow="never">
       <template #header>
         <div class="card-header">
-          <span>导出历史</span>
+          <span>{{ $tx('Export History') }}</span>
           <el-button icon="Refresh" circle @click="loadExports" />
         </div>
       </template>
       <el-table v-loading="loading" :data="exports">
-        <el-table-column label="文件名" prop="filename" min-width="240" show-overflow-tooltip />
-        <el-table-column label="筛选条件" prop="filterLabel" min-width="160" show-overflow-tooltip />
-        <el-table-column label="记录数" prop="recordCount" width="100" align="center" />
-        <el-table-column label="大小" width="110" align="center">
-          <template #default="scope">{{ (scope.row.fileSizeBytes / 1024).toFixed(1) }} KB</template>
+        <el-table-column :label="$tx('Filename')" prop="filename" min-width="240" show-overflow-tooltip />
+        <el-table-column :label="$tx('Filter')" prop="filterLabel" min-width="160" show-overflow-tooltip />
+        <el-table-column :label="$tx('Records')" prop="recordCount" width="100" align="center" />
+        <el-table-column :label="$tx('Size')" width="110" align="center">
+          <template #default="scope">{{ (scope.row.fileSizeBytes / 1024).toFixed(1) }} {{ $tx('KB') }}</template>
         </el-table-column>
-        <el-table-column label="创建时间" prop="createdAt" width="180" show-overflow-tooltip />
-        <el-table-column label="操作" width="170" align="center">
+        <el-table-column :label="$tx('Created At')" prop="createdAt" width="180" show-overflow-tooltip />
+        <el-table-column :label="$tx('Actions')" width="170" align="center">
           <template #default="scope">
-            <el-button link type="primary" icon="Download" @click="handleDownload(scope.row)">下载</el-button>
-            <el-button link type="danger" icon="Delete" v-hasPermi="['nxr:export:remove']" @click="handleDelete(scope.row)">删除</el-button>
+            <el-button link type="primary" icon="Download" @click="handleDownload(scope.row)">{{ $tx('Download') }}</el-button>
+            <el-button link type="danger" icon="Delete" v-hasPermi="['nxr:export:remove']" @click="handleDelete(scope.row)">{{ $tx('Delete') }}</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -103,7 +124,9 @@ import { previewExport, generateExport, fetchExports, downloadExportBlob, delete
 
 const { proxy } = getCurrentInstance()
 
-const exportForm = reactive({ gradeFilter: '', certIds: '' })
+const gradeExportOptions = ['8', '8.5', '9', '9.5', '10', 'Pristine 10']
+const vintageExportOptions = ['Pristine', 'Nova', 'Legacy', 'Helix']
+const exportForm = reactive({ exportFilter: 'all', certIds: '' })
 const preview = ref(null)
 const previewing = ref(false)
 const generating = ref(false)
@@ -113,9 +136,9 @@ const loading = ref(false)
 const pageParams = reactive({ page: 1, pageSize: 10 })
 
 function productTypeLabel(value) {
-  if (value === 'merch_product' || value === 'label_product') return 'Merch Product'
-  if (value === 'vintage_product') return 'Vintage Card'
-  return 'Graded Card'
+  if (value === 'merch_product' || value === 'label_product') return tx('Merch Product')
+  if (value === 'vintage_product') return tx('Vintage Card')
+  return tx('Graded Card')
 }
 
 function exportResult(row) {
@@ -142,7 +165,7 @@ function handleGenerate() {
   generating.value = true
   generateExport({ ...exportForm })
     .then((res) => {
-      proxy.$modal.msgSuccess('已生成 ' + res.data.filename + '（' + res.data.recordCount + ' 条）')
+      proxy.$modal.msgSuccess(tx('Generated ') + res.data.filename + ' (' + res.data.recordCount + tx(' records)'))
       loadExports()
     })
     .finally(() => {
@@ -170,10 +193,10 @@ function handleDownload(row) {
 
 function handleDelete(row) {
   proxy.$modal
-    .confirm('确认删除导出文件 "' + row.filename + '" 吗？')
+    .confirm(tx('Delete export file "') + row.filename + '"?')
     .then(() => deleteExport(row.filename))
     .then(() => {
-      proxy.$modal.msgSuccess('删除成功')
+      proxy.$modal.msgSuccess(tx('Export file deleted'))
       loadExports()
     })
     .catch(() => {})

@@ -146,16 +146,36 @@ public class AdminSubmissionService {
             );
     }
 
-    public SubmissionListResponse listSubmissions(int page, int pageSize, String status, String query) {
-        int resolvedPage = Math.max(page, 1);
-        int resolvedPageSize = Math.min(Math.max(pageSize, 1), 50);
+    public SubmissionListResponse listSubmissions(SubmissionListFilter filter) {
+        SubmissionListFilter resolvedFilter = filter == null ? SubmissionListFilter.empty() : filter;
+        int resolvedPage = Math.max(resolvedFilter.page(), 1);
+        int resolvedPageSize = Math.min(Math.max(resolvedFilter.pageSize(), 1), 50);
         int offset = (resolvedPage - 1) * resolvedPageSize;
-        String normalizedStatus = normalizeFilter(status);
-        String normalizedQuery = normalizeFilter(query);
+        String normalizedStatus = normalizeFilter(resolvedFilter.status());
+        String normalizedQuery = normalizeFilter(resolvedFilter.query());
+        String normalizedCertId = normalizeFilter(resolvedFilter.certId());
+        String normalizedCardName = normalizeFilter(resolvedFilter.cardName());
+        String normalizedCategory = normalizeFilter(resolvedFilter.cardCategory());
+        String normalizedProductType = normalizeFilter(resolvedFilter.productType());
+        String normalizedBrand = normalizeFilter(resolvedFilter.brand());
+        String normalizedFinalGrade = normalizeFilter(resolvedFilter.finalGrade());
+        String normalizedSetName = normalizeFilter(resolvedFilter.setName());
+        String normalizedLanguage = normalizeFilter(normalizeLanguage(resolvedFilter.language()));
+        String normalizedEnteredBy = normalizeFilter(resolvedFilter.enteredBy());
 
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("status", normalizedStatus);
         params.put("query", normalizedQuery == null ? null : "%" + normalizedQuery.toUpperCase(Locale.ROOT) + "%");
+        params.put("certId", likeFilter(normalizedCertId));
+        params.put("cardName", likeFilter(normalizedCardName));
+        params.put("cardCategory", normalizedCategory == null ? null : normalizeCardCategory(normalizedCategory));
+        params.put("productType", normalizedProductType == null ? null : normalizeProductType(normalizedProductType));
+        params.put("brand", likeFilter(normalizedBrand));
+        params.put("finalGrade", normalizedFinalGrade == null ? null : normalizedFinalGrade.toUpperCase(Locale.ROOT));
+        params.put("finalGradeValue", parseGradeFilter(normalizedFinalGrade));
+        params.put("setName", likeFilter(normalizedSetName));
+        params.put("language", normalizedLanguage == null ? null : normalizedLanguage.toUpperCase(Locale.ROOT));
+        params.put("enteredBy", likeFilter(normalizedEnteredBy));
         params.put("limit", resolvedPageSize);
         params.put("offset", offset);
 
@@ -167,20 +187,47 @@ public class AdminSubmissionService {
                 OR UPPER(s.card_name) LIKE :query
                 OR UPPER(COALESCE(s.movie_name, '')) LIKE :query
                 OR UPPER(COALESCE(s.production_company, '')) LIKE :query
+                OR UPPER(COALESCE(s.brand_name, '')) LIKE :query
                 OR UPPER(s.set_name) LIKE :query
                 OR UPPER(COALESCE(s.merch_description, '')) LIKE :query
               )
+              AND (:certId IS NULL OR UPPER(s.cert_id) LIKE :certId)
+              AND (:cardName IS NULL OR UPPER(COALESCE(s.card_name, '')) LIKE :cardName)
+              AND (:cardCategory IS NULL OR COALESCE(NULLIF(s.card_category_code, ''), 'trading_card') = :cardCategory)
+              AND (:productType IS NULL OR %s = :productType)
+              AND (:brand IS NULL OR UPPER(COALESCE(s.brand_name, '')) LIKE :brand)
+              AND (
+                :finalGrade IS NULL
+                OR UPPER(COALESCE(g.final_grade_label, '')) = :finalGrade
+                OR (:finalGradeValue IS NOT NULL AND g.final_grade_value = :finalGradeValue)
+              )
+              AND (:setName IS NULL OR UPPER(COALESCE(s.set_name, '')) LIKE :setName)
+              AND (:language IS NULL OR UPPER(COALESCE(s.language_code, '')) = :language)
+              AND (
+                :enteredBy IS NULL
+                OR UPPER(COALESCE(u.user_name, '')) LIKE :enteredBy
+                OR UPPER(COALESCE(u.nick_name, '')) LIKE :enteredBy
+              )
+            """.formatted(ProductTypePolicy.canonicalSql("s.product_type_code"));
+        String joins = """
+            LEFT JOIN grading_score g ON g.submission_id = s.id
+            LEFT JOIN sys_user u ON u.user_id = s.entry_by_user_id
             """;
 
         Integer total = jdbcClient.sql(
                 """
                 SELECT COUNT(*)
                 FROM grading_submission s
-                """ + whereClause
+                """ + joins + whereClause
             )
             .params(params)
             .query(Integer.class)
             .single();
+
+        String orderClause = " ORDER BY "
+            + resolveSubmissionSort(resolvedFilter.sortBy(), normalizedStatus)
+            + " " + resolveSortOrder(resolvedFilter.sortOrder())
+            + ", s.id " + resolveSortOrder(resolvedFilter.sortOrder()) + "\n";
 
         List<SubmissionListItem> items = jdbcClient.sql(
                 """
@@ -198,12 +245,11 @@ public class AdminSubmissionService {
                     s.status_code,
                     s.created_at,
                     s.updated_at,
+                    COALESCE(NULLIF(u.user_name, ''), NULLIF(u.nick_name, '')) AS entered_by,
                     g.final_grade_value,
                     g.final_grade_label
                 FROM grading_submission s
-                LEFT JOIN grading_score g ON g.submission_id = s.id
-                """ + whereClause + """
-                ORDER BY s.created_at DESC, s.id DESC
+                """ + joins + whereClause + orderClause + """
                 LIMIT :limit OFFSET :offset
                 """
             )
@@ -224,6 +270,7 @@ public class AdminSubmissionService {
                 rs.getString("status_code"),
                 rs.getObject("created_at", LocalDateTime.class),
                 rs.getObject("updated_at", LocalDateTime.class),
+                rs.getString("entered_by"),
                 rs.getBigDecimal("final_grade_value"),
                 rs.getString("final_grade_label")
             ))
@@ -260,6 +307,7 @@ public class AdminSubmissionService {
                     s.status_code,
                     s.grading_phase_code,
                     s.entry_notes,
+                    COALESCE(NULLIF(u.user_name, ''), NULLIF(u.nick_name, '')) AS entered_by,
                     s.created_at,
                     s.updated_at,
                     s.approved_at,
@@ -276,6 +324,7 @@ public class AdminSubmissionService {
                     g.decision_notes
                 FROM grading_submission s
                 LEFT JOIN grading_score g ON g.submission_id = s.id
+                LEFT JOIN sys_user u ON u.user_id = s.entry_by_user_id
                 WHERE s.id = :submissionId
                 """
             )
@@ -307,6 +356,7 @@ public class AdminSubmissionService {
                 rs.getString("status_code"),
                 rs.getString("grading_phase_code"),
                 rs.getString("entry_notes"),
+                rs.getString("entered_by"),
                 rs.getObject("created_at", LocalDateTime.class),
                 rs.getObject("updated_at", LocalDateTime.class),
                 rs.getObject("approved_at", LocalDateTime.class),
@@ -457,13 +507,16 @@ public class AdminSubmissionService {
         String category = gradedProduct
             ? normalizeCardCategory(request.cardCategory())
             : DEFAULT_CARD_CATEGORY;
-        String vintageClassification = VINTAGE_PRODUCT_TYPE.equals(productType)
-            ? nxrDictionaryService.requireActiveValue(
-                NxrDictionaryService.VINTAGE_CLASSIFICATION_DICT,
-                request.vintageClassification(),
-                "Vintage Classification"
-            )
+        String requestedVintageClassification = VINTAGE_PRODUCT_TYPE.equals(productType)
+            ? normalizeOptional(request.vintageClassification())
             : null;
+        String vintageClassification = requestedVintageClassification == null
+            ? null
+            : nxrDictionaryService.requireActiveValue(
+                NxrDictionaryService.VINTAGE_CLASSIFICATION_DICT,
+                requestedVintageClassification,
+                "Vintage Classification"
+            );
         String finalGradeLabel = gradedProduct ? normalizeOptional(request.finalGradeLabel()) : null;
         if (gradedProduct && finalGradeLabel == null && request.hasScores()) {
             finalGradeLabel = calculateGrade(new ScoreRequest(
@@ -488,7 +541,9 @@ public class AdminSubmissionService {
             request.groupName()
         );
 
-        if ((gradedProduct && finalGradeLabel == null) || !identity.complete()) {
+        boolean vintageClassificationMissing = VINTAGE_PRODUCT_TYPE.equals(productType)
+            && vintageClassification == null;
+        if ((gradedProduct && finalGradeLabel == null) || vintageClassificationMissing || !identity.complete()) {
             return new PopulationCalculationResponse(
                 1,
                 "Incomplete data for POP calculation",
@@ -535,7 +590,8 @@ public class AdminSubmissionService {
                     variety_name,
                     language_code,
                     sports_type,
-                    group_name
+                    group_name,
+                    merch_description
                 FROM grading_submission
                 WHERE """ + PRODUCT_TYPE_SQL + """
                   = :productType
@@ -564,6 +620,9 @@ public class AdminSubmissionService {
                 rs.getString("language_code"),
                 rs.getString("sports_type"),
                 rs.getString("group_name"),
+                MERCH_PRODUCT_TYPE.equals(productType)
+                    ? normalizeOptional(rs.getString("merch_description"))
+                    : null,
                 "grading_submission",
                 "Matched from Java submissions."
             ))
@@ -1115,6 +1174,37 @@ public class AdminSubmissionService {
         return normalized == null ? null : normalized;
     }
 
+    private String likeFilter(String value) {
+        return value == null ? null : "%" + value.toUpperCase(Locale.ROOT) + "%";
+    }
+
+    private BigDecimal parseGradeFilter(String value) {
+        try {
+            return value == null ? null : new BigDecimal(value);
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    private String resolveSubmissionSort(String sortBy, String status) {
+        String normalized = normalizeFilter(sortBy);
+        return switch (normalized == null ? "entry_date" : normalized.toLowerCase(Locale.ROOT)) {
+            case "cert_id" -> "s.cert_id";
+            case "card_name" -> "s.card_name";
+            case "product_type" -> ProductTypePolicy.canonicalSql("s.product_type_code");
+            case "card_category" -> "s.card_category_code";
+            case "brand" -> "s.brand_name";
+            case "final_grade" -> "g.final_grade_value";
+            case "set_name" -> "s.set_name";
+            case "language" -> "s.language_code";
+            default -> "approved".equals(status) ? "COALESCE(s.approved_at, s.created_at)" : "s.created_at";
+        };
+    }
+
+    private String resolveSortOrder(String sortOrder) {
+        return "asc".equalsIgnoreCase(normalizeFilter(sortOrder)) ? "ASC" : "DESC";
+    }
+
     private String firstPresent(String first, String second) {
         String normalizedFirst = normalizeFilter(first);
         return normalizedFirst == null ? normalizeFilter(second) : normalizedFirst;
@@ -1126,6 +1216,31 @@ public class AdminSubmissionService {
         int pageSize,
         int total
     ) {
+    }
+
+    public record SubmissionListFilter(
+        int page,
+        int pageSize,
+        String status,
+        String query,
+        String certId,
+        String cardName,
+        String cardCategory,
+        String productType,
+        String brand,
+        String finalGrade,
+        String setName,
+        String language,
+        String enteredBy,
+        String sortBy,
+        String sortOrder
+    ) {
+        static SubmissionListFilter empty() {
+            return new SubmissionListFilter(
+                1, 10, null, null, null, null, null, null,
+                null, null, null, null, null, "entry_date", "desc"
+            );
+        }
     }
 
     public record SubmissionListItem(
@@ -1144,6 +1259,7 @@ public class AdminSubmissionService {
         String statusCode,
         LocalDateTime createdAt,
         LocalDateTime updatedAt,
+        String enteredBy,
         BigDecimal finalGradeValue,
         String finalGradeLabel
     ) {
@@ -1176,6 +1292,7 @@ public class AdminSubmissionService {
         String statusCode,
         String gradingPhaseCode,
         String entryNotes,
+        String enteredBy,
         LocalDateTime createdAt,
         LocalDateTime updatedAt,
         LocalDateTime approvedAt,
@@ -1220,6 +1337,7 @@ public class AdminSubmissionService {
                 statusCode,
                 gradingPhaseCode,
                 entryNotes,
+                enteredBy,
                 createdAt,
                 updatedAt,
                 approvedAt,
@@ -1344,11 +1462,12 @@ public class AdminSubmissionService {
         String languageCode,
         String sportsType,
         String groupName,
+        String merchDescription,
         String source,
         String message
     ) {
         static MatchCardResponse notFound(String message) {
-            return new MatchCardResponse(false, "", "", "", "", "", "", "", "", message);
+            return new MatchCardResponse(false, "", "", "", "", "", "", "", "", "", message);
         }
     }
 

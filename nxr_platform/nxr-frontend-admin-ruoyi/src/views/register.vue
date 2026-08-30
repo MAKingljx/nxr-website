@@ -3,12 +3,12 @@
     <el-form ref="registerRef" :model="registerForm" :rules="registerRules" class="register-form">
       <h3 class="title">{{ title }}</h3>
       <el-form-item prop="username">
-        <el-input 
-          v-model="registerForm.username" 
-          type="text" 
-          size="large" 
-          auto-complete="off" 
-          placeholder="账号"
+        <el-input
+          v-model="registerForm.username"
+          type="text"
+          size="large"
+          auto-complete="off"
+          :placeholder="$tx('Username')"
         >
           <template #prefix><svg-icon icon-class="user" class="el-input__icon input-icon" /></template>
         </el-input>
@@ -17,9 +17,9 @@
         <el-input
           v-model="registerForm.password"
           type="password"
-          size="large" 
+          size="large"
           auto-complete="off"
-          placeholder="密码"
+          :placeholder="$tx('Password')"
           @keyup.enter="handleRegister"
         >
           <template #prefix><svg-icon icon-class="password" class="el-input__icon input-icon" /></template>
@@ -29,9 +29,9 @@
         <el-input
           v-model="registerForm.confirmPassword"
           type="password"
-          size="large" 
+          size="large"
           auto-complete="off"
-          placeholder="确认密码"
+          :placeholder="$tx('Confirm password')"
           @keyup.enter="handleRegister"
         >
           <template #prefix><svg-icon icon-class="password" class="el-input__icon input-icon" /></template>
@@ -39,10 +39,10 @@
       </el-form-item>
       <el-form-item prop="code" v-if="captchaEnabled">
         <el-input
-          size="large" 
+          size="large"
           v-model="registerForm.code"
           auto-complete="off"
-          placeholder="验证码"
+          :placeholder="$tx('Verification code')"
           style="width: 63%"
           @keyup.enter="handleRegister"
         >
@@ -55,16 +55,16 @@
       <el-form-item style="width:100%;">
         <el-button
           :loading="loading"
-          size="large" 
+          size="large"
           type="primary"
           style="width:100%;"
           @click.prevent="handleRegister"
         >
-          <span v-if="!loading">注 册</span>
-          <span v-else>注 册 中...</span>
+          <span v-if="!loading">{{ $tx('Register') }}</span>
+          <span v-else>{{ $tx('Registering...') }}</span>
         </el-button>
         <div style="float: right;">
-          <router-link class="link-type" :to="'/login'">使用已有账户登录</router-link>
+          <router-link class="link-type" :to="'/login'">{{ $tx('Sign in with an existing account') }}</router-link>
         </div>
       </el-form-item>
     </el-form>
@@ -97,7 +97,7 @@ const registerForm = ref({
 
 const equalToPassword = (rule, value, callback) => {
   if (registerForm.value.password !== value) {
-    callback(new Error("两次输入的密码不一致"))
+    callback(new Error(tx('Passwords do not match')))
   } else {
     callback()
   }
@@ -105,14 +105,14 @@ const equalToPassword = (rule, value, callback) => {
 
 const registerRules = {
   username: [
-    { required: true, trigger: "blur", message: "请输入您的账号" },
-    { min: 2, max: 20, message: "用户账号长度必须介于 2 和 20 之间", trigger: "blur" }
+    { required: true, trigger: "blur", message: tx('Enter your username') },
+    { min: 2, max: 20, message: tx('Username must contain 2 to 20 characters'), trigger: "blur" }
   ],
   confirmPassword: [
-    { required: true, trigger: "blur", message: "请再次输入您的密码" },
+    { required: true, trigger: "blur", message: tx('Confirm your password') },
     { required: true, validator: equalToPassword, trigger: "blur" }
   ],
-  code: [{ required: true, trigger: "change", message: "请输入验证码" }]
+  code: [{ required: true, trigger: "change", message: tx('Enter the verification code') }]
 }
 
 const codeUrl = ref("")
@@ -125,7 +125,7 @@ function handleRegister() {
       loading.value = true
       register(registerForm.value).then(res => {
         const username = registerForm.value.username
-        ElMessageBox.alert("<font color='red'>恭喜你，您的账号 " + username + " 注册成功！</font>", "系统提示", {
+        ElMessageBox.alert(tx('<font color=\'green\'>Account ') + username + tx(' was created successfully.</font>'), tx('Registration Complete'), {
           dangerouslyUseHTMLString: true,
           type: "success",
         }).then(() => {

@@ -8,8 +8,8 @@
       <router-link v-else key="expand" class="sidebar-logo-link" to="/">
         <span class="sidebar-logo sidebar-wordmark">{{ title }}</span>
         <span class="sidebar-brand">
-          <strong>NXR GRADING</strong>
-          <small>Operations</small>
+          <strong>{{ $tx('NXR GRADING') }}</strong>
+          <small>{{ $tx('Operations') }}</small>
         </span>
       </router-link>
     </transition>

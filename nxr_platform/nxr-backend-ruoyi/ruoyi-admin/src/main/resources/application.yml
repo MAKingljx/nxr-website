@@ -85,6 +85,8 @@ spring:
   messages:
     # 国际化资源文件路径
     basename: i18n/messages
+    # Do not fall back to the machine's locale; English is the admin default.
+    fallback-to-system-locale: false
   profiles:
     active: druid
   # 文件上传（NXR 媒体导入需要大文件支持，与原后端保持 2GB 上限）

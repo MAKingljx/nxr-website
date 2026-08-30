@@ -1,30 +1,30 @@
 <template>
   <main class="nxr-workspace nxr-upload-workspace">
     <nxr-page-header
-      kicker="MEDIA OPERATIONS"
-      title="卡图上传与发布"
-      summary="为已审批卡牌批量导入正反面图片并检查发布状态"
+      :kicker="$tx('MEDIA OPERATIONS')"
+      :title="$tx('Card Image Upload & Publication')"
+      :summary="$tx('Import front/back images for approved cards and review publication status')"
     />
 
     <el-row :gutter="16" class="mb8">
       <el-col :span="6">
-        <el-card shadow="never"><el-statistic title="跟踪条目" :value="summary.trackedEntries" /></el-card>
+        <el-card shadow="never"><el-statistic :title="$tx('Tracked Entries')" :value="summary.trackedEntries" /></el-card>
       </el-col>
       <el-col :span="6">
-        <el-card shadow="never"><el-statistic title="可发布" :value="summary.readyToPublish" /></el-card>
+        <el-card shadow="never"><el-statistic :title="$tx('Ready to Publish')" :value="summary.readyToPublish" /></el-card>
       </el-col>
       <el-col :span="6">
-        <el-card shadow="never"><el-statistic title="已发布" :value="summary.livePublished" /></el-card>
+        <el-card shadow="never"><el-statistic :title="$tx('Published')" :value="summary.livePublished" /></el-card>
       </el-col>
       <el-col :span="6">
-        <el-card shadow="never"><el-statistic title="缺图" :value="summary.missingMedia" /></el-card>
+        <el-card shadow="never"><el-statistic :title="$tx('Missing Images')" :value="summary.missingMedia" /></el-card>
       </el-col>
     </el-row>
 
     <el-card shadow="never" class="mb8" v-hasPermi="['nxr:media:import']">
       <template #header>
         <div class="card-header">
-          <span>文件夹导入（文件名约定：证书编号_A 为正面，证书编号_B 为背面，支持 webp/jpg/jpeg/png）</span>
+          <span>{{ $tx('Folder Import (CertID_A = front, CertID_B = back; webp/jpg/jpeg/png)') }}</span>
           <el-button icon="Refresh" circle @click="loadQueue()" />
         </div>
       </template>
@@ -41,19 +41,18 @@
       />
 
       <div class="picker-row">
-        <el-button type="primary" icon="FolderOpened" @click="openFolderPicker">选择文件夹</el-button>
-        <el-button :disabled="!selectedFiles.length || importing" @click="clearSelectedFiles">清空</el-button>
+        <el-button type="primary" icon="FolderOpened" @click="openFolderPicker">{{ $tx('Select Folder') }}</el-button>
+        <el-button :disabled="!selectedFiles.length || importing" @click="clearSelectedFiles">{{ $tx('Clear') }}</el-button>
         <el-button
           type="success"
           icon="Upload"
           :loading="importing"
           :disabled="!selectedFiles.length"
           @click="submitImport"
-        >开始导入</el-button>
+        >{{ $tx('Start Import') }}</el-button>
         <span class="picker-meta">
-          {{ selectedFolderName || (selectedFiles.length ? '已选择文件' : '未选择文件夹') }}
-          · {{ selectedFiles.length }} 个图片文件
-          <template v-if="skippedFileCount">（已跳过 {{ skippedFileCount }} 个非图片文件）</template>
+          {{ selectedFolderName || (selectedFiles.length ? $tx('Files selected') : $tx('No folder selected')) }}
+          · {{ selectedFiles.length }} {{ $tx('image files') }} <template v-if="skippedFileCount">({{ skippedFileCount }} {{ $tx('non-image files skipped)') }}</template>
         </span>
       </div>
 
@@ -66,25 +65,25 @@
       <div v-if="uploadLabel" class="upload-label">{{ uploadLabel }}</div>
 
       <el-alert v-if="lastImport" type="success" :closable="false" class="mt8">
-        <div>已保存 {{ lastImport.savedFiles }} 个文件，更新 {{ lastImport.updatedSides }} 个面，匹配 {{ lastImport.matchedEntries }} 条录入。</div>
-        <div v-if="lastImport.missingCertIds.length">未找到的证书编号：{{ lastImport.missingCertIds.join(', ') }}</div>
-        <div v-if="lastImport.invalidNames.length">命名不合规：{{ lastImport.invalidNames.join(', ') }}</div>
-        <div v-if="lastImport.duplicateNames.length">重复文件：{{ lastImport.duplicateNames.join(', ') }}</div>
+        <div>{{ $tx('Saved') }} {{ lastImport.savedFiles }} {{ $tx('files, updated') }} {{ lastImport.updatedSides }} {{ $tx('sides, and matched') }} {{ lastImport.matchedEntries }} {{ $tx('entries.') }}</div>
+        <div v-if="lastImport.missingCertIds.length">{{ $tx('Cert IDs not found:') }} {{ lastImport.missingCertIds.join(', ') }}</div>
+        <div v-if="lastImport.invalidNames.length">{{ $tx('Invalid filenames:') }} {{ lastImport.invalidNames.join(', ') }}</div>
+        <div v-if="lastImport.duplicateNames.length">{{ $tx('Duplicate files:') }} {{ lastImport.duplicateNames.join(', ') }}</div>
       </el-alert>
     </el-card>
 
     <el-form :inline="true" @submit.prevent>
-      <el-form-item label="关键词">
+      <el-form-item :label="$tx('Keyword')">
         <el-input
           v-model="searchQuery"
-          placeholder="证书编号 / 卡名"
+          :placeholder="$tx('Cert ID / Card Name')"
           clearable
           style="width: 240px"
           @keyup.enter="loadQueue(true)"
         />
       </el-form-item>
       <el-form-item>
-        <el-button type="primary" icon="Search" @click="loadQueue(true)">搜索</el-button>
+        <el-button type="primary" icon="Search" @click="loadQueue(true)">{{ $tx('Search') }}</el-button>
       </el-form-item>
       <el-form-item v-hasPermi="['nxr:media:publish']">
         <el-button
@@ -93,18 +92,18 @@
           :loading="batchPublishing"
           :disabled="!selectedReadyIds.length"
           @click="publishSelected"
-        >批量发布（{{ selectedReadyIds.length }}）</el-button>
+        >{{ $tx('Publish Selected (') }}{{ selectedReadyIds.length }})</el-button>
       </el-form-item>
     </el-form>
 
     <el-table v-loading="loading" :data="queue" @selection-change="handleSelectionChange">
       <el-table-column type="selection" width="48" :selectable="isReadyToSelect" />
-      <el-table-column label="证书编号" prop="certId" width="140" />
-      <el-table-column label="卡名" prop="cardName" min-width="160" show-overflow-tooltip />
-      <el-table-column label="结果" width="180" show-overflow-tooltip>
+      <el-table-column :label="$tx('Cert ID')" prop="certId" width="140" />
+      <el-table-column :label="$tx('Card Name')" prop="cardName" min-width="160" show-overflow-tooltip />
+      <el-table-column :label="$tx('Result')" width="180" show-overflow-tooltip>
         <template #default="scope">{{ queueResult(scope.row) }}</template>
       </el-table-column>
-      <el-table-column label="待发布图" width="160" align="center">
+      <el-table-column :label="$tx('Staged Images')" width="160" align="center">
         <template #default="scope">
           <div class="thumb-row">
             <el-image v-if="scope.row.stagedFrontUrl" :src="scope.row.stagedFrontUrl" :preview-src-list="[scope.row.stagedFrontUrl]" fit="cover" class="thumb" preview-teleported />
@@ -113,7 +112,7 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="已发布图" width="160" align="center">
+      <el-table-column :label="$tx('Published Images')" width="160" align="center">
         <template #default="scope">
           <div class="thumb-row">
             <el-image v-if="scope.row.publishedFrontUrl" :src="scope.row.publishedFrontUrl" :preview-src-list="[scope.row.publishedFrontUrl]" fit="cover" class="thumb" preview-teleported />
@@ -122,12 +121,12 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="媒体状态" width="110" align="center">
+      <el-table-column :label="$tx('Media Status')" width="120" align="center">
         <template #default="scope">
           <el-tag :type="mediaStateTag(scope.row)">{{ mediaStateLabel(scope.row) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="130" align="center">
+      <el-table-column :label="$tx('Actions')" width="130" align="center">
         <template #default="scope">
           <el-button
             link
@@ -137,7 +136,7 @@
             :loading="publishLoadingId === scope.row.submissionId"
             v-hasPermi="['nxr:media:publish']"
             @click="publishEntry(scope.row.submissionId)"
-          >发布</el-button>
+          >{{ $tx('Publish') }}</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -232,13 +231,13 @@ function handleFolderChange(event) {
 
 async function submitImport() {
   if (!selectedFiles.value.length) {
-    proxy.$modal.msgWarning('请先选择包含图片的文件夹')
+    proxy.$modal.msgWarning(tx('Select a folder containing card images first'))
     return
   }
   importing.value = true
   uploadStatus.value = 'uploading'
   uploadPercent.value = 0
-  uploadLabel.value = '准备上传…'
+  uploadLabel.value = tx('Preparing upload…')
   try {
     const response = await importMediaFolder(selectedFiles.value, (percent, loaded, total) => {
       uploadPercent.value = percent
@@ -247,14 +246,14 @@ async function submitImport() {
     lastImport.value = response
     uploadStatus.value = 'success'
     uploadPercent.value = 100
-    uploadLabel.value = '上传完成'
+    uploadLabel.value = tx('Upload complete')
     clearSelectedFiles()
-    proxy.$modal.msgSuccess(`已保存 ${response.savedFiles} 个文件，匹配 ${response.updatedSubmissionIds.length} 条录入`)
+    proxy.$modal.msgSuccess(`Saved ${response.savedFiles} files and matched ${response.updatedSubmissionIds.length} entries`)
     loadQueue()
   } catch (error) {
     uploadStatus.value = 'failed'
-    uploadLabel.value = '上传中断于 ' + uploadPercent.value + '%'
-    proxy.$modal.msgError(error?.message || '文件夹导入失败')
+    uploadLabel.value = tx('Upload stopped at ') + uploadPercent.value + '%'
+    proxy.$modal.msgError(error?.message || tx('Folder import failed'))
   } finally {
     importing.value = false
   }
@@ -264,7 +263,7 @@ function publishEntry(submissionId) {
   publishLoadingId.value = submissionId
   publishSubmissionMedia(submissionId)
     .then((res) => {
-      proxy.$modal.msgSuccess('已发布 ' + res.data.certId)
+      proxy.$modal.msgSuccess(tx('Published ') + res.data.certId)
       loadQueue()
     })
     .finally(() => {
@@ -275,7 +274,7 @@ function publishEntry(submissionId) {
 async function publishSelected() {
   if (!selectedReadyIds.value.length) return
   try {
-    await proxy.$modal.confirm(`确认发布选中的 ${selectedReadyIds.value.length} 条卡片吗？`)
+    await proxy.$modal.confirm(`Publish the ${selectedReadyIds.value.length} selected cards?`)
   } catch {
     return
   }
@@ -285,15 +284,15 @@ async function publishSelected() {
     const response = await publishSubmissionMediaBatch(selectedReadyIds.value)
     const result = response.data
     if (result.failedCount) {
-      const details = result.failures.slice(0, 5).map((item) => `${item.submissionId}: ${item.message}`).join('；')
-      const suffix = result.failedCount > 5 ? '；其余失败项请刷新后重试' : ''
-      proxy.$modal.msgWarning(`成功 ${result.publishedCount} 条，失败 ${result.failedCount} 条。${details}${suffix}`)
+      const details = result.failures.slice(0, 5).map((item) => `${item.submissionId}: ${item.message}`).join('; ')
+      const suffix = result.failedCount > 5 ? tx('; refresh and retry the remaining failures') : ''
+      proxy.$modal.msgWarning(`${result.publishedCount} published, ${result.failedCount} failed. ${details}${suffix}`)
     } else {
-      proxy.$modal.msgSuccess(`已成功发布 ${result.publishedCount} 条卡片`)
+      proxy.$modal.msgSuccess(`${result.publishedCount} cards published`)
     }
     await loadQueue()
   } catch (error) {
-    proxy.$modal.msgError(error?.message || '批量发布失败')
+    proxy.$modal.msgError(error?.message || tx('Batch publication failed'))
   } finally {
     batchPublishing.value = false
   }
@@ -301,19 +300,19 @@ async function publishSelected() {
 
 function mediaStateLabel(item) {
   if (item.hasPublishedFront && item.hasPublishedBack) {
-    return item.readyToPublish ? '可更新' : '已上线'
+    return item.readyToPublish ? tx('Update Ready') : tx('Live')
   }
-  if (item.readyToPublish) return '可发布'
-  if (item.hasStagedFront || item.hasStagedBack) return '缺一面'
-  return '缺图'
+  if (item.readyToPublish) return tx('Ready')
+  if (item.hasStagedFront || item.hasStagedBack) return tx('One Side Missing')
+  return tx('Images Missing')
 }
 
 function queueResult(item) {
   if (item.productType === 'merch_product' || item.productType === 'label_product') {
-    return item.merchDescription || 'Merch Product'
+    return item.merchDescription || tx('Merch Product')
   }
   if (item.productType === 'vintage_product') {
-    return item.vintageClassification || 'Vintage Card'
+    return item.vintageClassification || tx('Vintage Card')
   }
   const values = [item.finalGradeValue, item.finalGradeLabel].filter(
     (value) => value !== null && value !== undefined && String(value).trim() !== ''

@@ -5,12 +5,12 @@ import { parseTime } from './ruoyi'
  */
 export function formatDate(cellValue) {
   if (cellValue == null || cellValue == "") return ""
-  const date = new Date(cellValue) 
+  const date = new Date(cellValue)
   const year = date.getFullYear()
   const month = date.getMonth() + 1 < 10 ? '0' + (date.getMonth() + 1) : date.getMonth() + 1
-  const day = date.getDate() < 10 ? '0' + date.getDate() : date.getDate() 
-  const hours = date.getHours() < 10 ? '0' + date.getHours() : date.getHours() 
-  const minutes = date.getMinutes() < 10 ? '0' + date.getMinutes() : date.getMinutes() 
+  const day = date.getDate() < 10 ? '0' + date.getDate() : date.getDate()
+  const hours = date.getHours() < 10 ? '0' + date.getHours() : date.getHours()
+  const minutes = date.getMinutes() < 10 ? '0' + date.getMinutes() : date.getMinutes()
   const seconds = date.getSeconds() < 10 ? '0' + date.getSeconds() : date.getSeconds()
   return year + '-' + month + '-' + day + ' ' + hours + ':' + minutes + ':' + seconds
 }
@@ -32,14 +32,14 @@ export function formatTime(time, option) {
   const diff = (now - d) / 1000
 
   if (diff < 30) {
-    return '刚刚'
+    return tx('just now')
   } else if (diff < 3600) {
     // less 1 hour
-    return Math.ceil(diff / 60) + '分钟前'
+    return Math.ceil(diff / 60) + tx(' minutes ago')
   } else if (diff < 3600 * 24) {
-    return Math.ceil(diff / 3600) + '小时前'
+    return Math.ceil(diff / 3600) + tx(' hours ago')
   } else if (diff < 3600 * 24 * 2) {
-    return '1天前'
+    return tx('1 day ago')
   }
   if (option) {
     return parseTime(time, option)
@@ -47,13 +47,13 @@ export function formatTime(time, option) {
     return (
       d.getMonth() +
       1 +
-      '月' +
+      '/' +
       d.getDate() +
-      '日' +
+      ' ' +
       d.getHours() +
-      '时' +
+      ':' +
       d.getMinutes() +
-      '分'
+      ''
     )
   }
 }
@@ -330,7 +330,7 @@ export function makeMap(str, expectsLowerCase) {
     ? val => map[val.toLowerCase()]
     : val => map[val]
 }
- 
+
 export const exportDefault = 'export default '
 
 export const beautifierConf = {
@@ -387,4 +387,4 @@ export function camelCase(str) {
 export function isNumberStr(str) {
   return /^[+-]?(0|([1-9]\d*))(\.\d+)?$/g.test(str)
 }
- 
+

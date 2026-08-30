@@ -17,6 +17,7 @@ import com.ruoyi.common.core.text.Convert;
 import com.ruoyi.common.exception.DemoModeException;
 import com.ruoyi.common.exception.ServiceException;
 import com.ruoyi.common.utils.StringUtils;
+import com.ruoyi.common.utils.MessageUtils;
 import com.ruoyi.common.utils.html.EscapeUtil;
 
 /**
@@ -37,7 +38,7 @@ public class GlobalExceptionHandler
     {
         String requestURI = request.getRequestURI();
         log.error("请求地址'{}',权限校验失败'{}'", requestURI, e.getMessage());
-        return AjaxResult.error(HttpStatus.FORBIDDEN, "没有权限，请联系管理员授权");
+        return AjaxResult.error(HttpStatus.FORBIDDEN, MessageUtils.message("access.denied"));
     }
 
     /**
@@ -71,7 +72,7 @@ public class GlobalExceptionHandler
     {
         String requestURI = request.getRequestURI();
         log.error("请求路径中缺少必需的路径变量'{}',发生系统异常.", requestURI, e);
-        return AjaxResult.error(String.format("请求路径中缺少必需的路径变量[%s]", e.getVariableName()));
+        return AjaxResult.error(MessageUtils.message("request.path.variable.missing", e.getVariableName()));
     }
 
     /**
@@ -87,7 +88,12 @@ public class GlobalExceptionHandler
             value = EscapeUtil.clean(value);
         }
         log.error("请求参数类型不匹配'{}',发生系统异常.", requestURI, e);
-        return AjaxResult.error(String.format("请求参数类型不匹配，参数[%s]要求类型为：'%s'，但输入值为：'%s'", e.getName(), e.getRequiredType().getName(), value));
+        return AjaxResult.error(MessageUtils.message(
+            "request.parameter.type.mismatch",
+            e.getName(),
+            e.getRequiredType().getName(),
+            value
+        ));
     }
 
     /**
@@ -140,6 +146,6 @@ public class GlobalExceptionHandler
     @ExceptionHandler(DemoModeException.class)
     public AjaxResult handleDemoModeException(DemoModeException e)
     {
-        return AjaxResult.error("演示模式，不允许操作");
+        return AjaxResult.error(MessageUtils.message("demo.mode.readonly"));
     }
 }

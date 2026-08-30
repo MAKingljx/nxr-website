@@ -1,23 +1,23 @@
 <template>
   <div class="login-page">
     <div class="login-shell">
-      <section class="brand-stage" aria-label="NXR Grading">
+      <section class="brand-stage" :aria-label="$tx('NXR Grading')">
         <div class="brand-lockup">
-          <img :src="nxrLogo" alt="NXR" class="brand-logo" />
+          <img :src="nxrLogo" :alt="$tx('NXR')" class="brand-logo" />
           <div>
-            <strong>NXR GRADING</strong>
+            <strong>{{ $tx('NXR GRADING') }}</strong>
           </div>
         </div>
       </section>
 
       <section class="login-panel" aria-labelledby="login-title">
         <header class="login-heading">
-          <h2 id="login-title">管理员登录</h2>
+          <h2 id="login-title">{{ $tx('Administrator Sign In') }}</h2>
         </header>
 
         <el-form ref="loginRef" :model="loginForm" :rules="loginRules" class="login-form">
           <div class="field-group">
-            <label class="field-label" for="login-username">账号</label>
+            <label class="field-label" for="login-username">{{ $tx('Username') }}</label>
             <el-form-item prop="username">
               <el-input
                 id="login-username"
@@ -25,7 +25,7 @@
                 type="text"
                 size="large"
                 autocomplete="username"
-                placeholder="请输入账号"
+                :placeholder="$tx('Enter your username')"
                 clearable
               >
                 <template #prefix>
@@ -36,7 +36,7 @@
           </div>
 
           <div class="field-group">
-            <label class="field-label" for="login-password">密码</label>
+            <label class="field-label" for="login-password">{{ $tx('Password') }}</label>
             <el-form-item prop="password">
               <el-input
                 id="login-password"
@@ -44,7 +44,7 @@
                 type="password"
                 size="large"
                 autocomplete="current-password"
-                placeholder="请输入密码"
+                :placeholder="$tx('Enter your password')"
                 show-password
                 @keyup.enter="handleLogin"
               >
@@ -56,7 +56,7 @@
           </div>
 
           <div v-if="captchaEnabled" class="field-group">
-            <label class="field-label" for="login-code">验证码</label>
+            <label class="field-label" for="login-code">{{ $tx('Verification Code') }}</label>
             <el-form-item prop="code">
               <div class="captcha-row">
                 <el-input
@@ -64,23 +64,23 @@
                   v-model="loginForm.code"
                   size="large"
                   autocomplete="off"
-                  placeholder="请输入验证码"
+                  :placeholder="$tx('Enter the verification code')"
                   @keyup.enter="handleLogin"
                 >
                   <template #prefix>
                     <svg-icon icon-class="validCode" class="input-icon" />
                   </template>
                 </el-input>
-                <button class="captcha-button" type="button" aria-label="刷新验证码" @click="getCode">
-                  <img :src="codeUrl" alt="验证码" />
+                <button class="captcha-button" type="button" :aria-label="$tx('Refresh verification code')" @click="getCode">
+                  <img :src="codeUrl" :alt="$tx('Verification code')" />
                 </button>
               </div>
             </el-form-item>
           </div>
 
           <div class="form-options">
-            <el-checkbox v-model="loginForm.rememberMe">记住密码</el-checkbox>
-            <router-link v-if="register" class="register-link" :to="'/register'">立即注册</router-link>
+            <el-checkbox v-model="loginForm.rememberMe">{{ $tx('Remember me') }}</el-checkbox>
+            <router-link v-if="register" class="register-link" :to="'/register'">{{ $tx('Create account') }}</router-link>
           </div>
 
           <el-form-item class="submit-item">
@@ -91,7 +91,7 @@
               class="login-button"
               @click.prevent="handleLogin"
             >
-              <span>{{ loading ? "登录中..." : "登录" }}</span>
+              <span>{{ loading ? "Signing in..." : "Sign In" }}</span>
               <el-icon v-if="!loading"><ArrowRight /></el-icon>
             </el-button>
           </el-form-item>
@@ -127,9 +127,9 @@ const loginForm = ref({
 })
 
 const loginRules = {
-  username: [{ required: true, trigger: "blur", message: "请输入您的账号" }],
-  password: [{ required: true, trigger: "blur", message: "请输入您的密码" }],
-  code: [{ required: true, trigger: "change", message: "请输入验证码" }]
+  username: [{ required: true, trigger: "blur", message: tx('Enter your username') }],
+  password: [{ required: true, trigger: "blur", message: tx('Enter your password') }],
+  code: [{ required: true, trigger: "change", message: tx('Enter the verification code') }]
 }
 
 const codeUrl = ref("")

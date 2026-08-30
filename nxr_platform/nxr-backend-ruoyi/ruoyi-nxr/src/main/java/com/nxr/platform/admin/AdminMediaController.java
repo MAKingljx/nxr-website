@@ -44,6 +44,16 @@ public class AdminMediaController {
         return AjaxResult.success(adminMediaService.importFolder(imageFiles));
     }
 
+    @PreAuthorize("@ss.hasPermi('nxr:media:import')")
+    @Log(title = "录入媒体上传", businessType = BusinessType.IMPORT)
+    @PostMapping("/submissions/{submissionId}/staged")
+    public AjaxResult importSubmissionMedia(
+        @PathVariable long submissionId,
+        @RequestPart(name = "image_files", required = false) List<MultipartFile> imageFiles
+    ) {
+        return AjaxResult.success(adminMediaService.importSubmissionMedia(submissionId, imageFiles));
+    }
+
     @PreAuthorize("@ss.hasPermi('nxr:media:publish')")
     @Log(title = "媒体发布", businessType = BusinessType.UPDATE)
     @PostMapping("/submissions/{submissionId}/publish")

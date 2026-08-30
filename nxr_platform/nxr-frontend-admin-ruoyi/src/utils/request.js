@@ -6,6 +6,7 @@ import { tansParams, blobValidate } from '@/utils/ruoyi'
 import cache from '@/plugins/cache'
 import { saveAs } from 'file-saver'
 import useUserStore from '@/store/modules/user'
+import { activeLocale, localizeBackendMessage, tx } from '@/i18n'
 
 let downloadLoadingInstance
 // 是否显示重新登录
@@ -22,6 +23,8 @@ const service = axios.create({
 
 // request拦截器
 service.interceptors.request.use(config => {
+  const locale = activeLocale()
+  config.headers['Accept-Language'] = locale
   // 是否需要设置 token
   const isToken = (config.headers || {}).isToken === false
   // 是否需要防止数据重复提交
@@ -47,7 +50,7 @@ service.interceptors.request.use(config => {
     const requestSize = Object.keys(JSON.stringify(requestObj)).length // 请求数据大小
     const limitSize = 5 * 1024 * 1024 // 限制存放数据5M
     if (requestSize >= limitSize) {
-      console.warn(`[${config.url}]: ` + '请求数据大小超出允许的5M限制，无法进行防重复提交验证。')
+      console.warn(`[${config.url}]: Request data exceeds 5 MB; duplicate-submit protection was skipped.`)
       return config
     }
     const sessionObj = cache.session.getJSON('sessionObj')
@@ -58,7 +61,7 @@ service.interceptors.request.use(config => {
       const s_data = sessionObj.data              // 请求数据
       const s_time = sessionObj.time              // 请求时间
       if (s_data === requestObj.data && requestObj.time - s_time < interval && s_url === requestObj.url) {
-        const message = '数据正在处理，请勿重复提交'
+        const message = 'This request is already being processed. Do not submit it again.'
         console.warn(`[${s_url}]: ` + message)
         return Promise.reject(new Error(message))
       } else {
@@ -77,7 +80,7 @@ service.interceptors.response.use(res => {
     // 未设置状态码则默认成功状态
     const code = res.data.code || 200
     // 获取错误信息
-    const msg = errorCode[code] || res.data.msg || errorCode['default']
+    const msg = localizeBackendMessage(errorCode[code] || res.data.msg || errorCode['default'])
     // 二进制数据则直接返回
     if (res.request.responseType ===  'blob' || res.request.responseType ===  'arraybuffer') {
       return res.data
@@ -85,7 +88,7 @@ service.interceptors.response.use(res => {
     if (code === 401) {
       if (!isRelogin.show) {
         isRelogin.show = true
-        ElMessageBox.confirm('登录状态已过期，您可以继续留在该页面，或者重新登录', '系统提示', { confirmButtonText: '重新登录', cancelButtonText: '取消', type: 'warning' }).then(() => {
+        ElMessageBox.confirm(tx('Your session has expired. Sign in again to continue.'), tx('Session Expired'), { confirmButtonText: tx('Sign In'), cancelButtonText: tx('Cancel'), type: 'warning' }).then(() => {
           isRelogin.show = false
           useUserStore().logOut().then(() => {
             location.href = `${import.meta.env.BASE_URL}index`
@@ -94,7 +97,7 @@ service.interceptors.response.use(res => {
         isRelogin.show = false
       })
     }
-      return Promise.reject('无效的会话，或者会话已过期，请重新登录。')
+      return Promise.reject(tx('The session is invalid or has expired. Sign in again.'))
     } else if (code === 500) {
       ElMessage({ message: msg, type: 'error' })
       return Promise.reject(new Error(msg))
@@ -112,13 +115,14 @@ service.interceptors.response.use(res => {
     console.log('err' + error)
     let { message } = error
     if (message == "Network Error") {
-      message = "后端接口连接异常"
+      message = tx('Unable to connect to the backend service')
     } else if (message.includes("timeout")) {
-      message = "系统接口请求超时"
+      message = tx('The request timed out')
     } else if (message.includes("Request failed with status code")) {
       // NXR 业务接口通过真实 HTTP 状态码返回错误详情（message 字段）
-      message = error.response?.data?.message || ("系统接口" + message.slice(-3) + "异常")
+      message = error.response?.data?.message || error.response?.data?.msg || ("Backend request failed with status " + message.slice(-3))
     }
+    message = localizeBackendMessage(message)
     ElMessage({ message: message, type: 'error', duration: 5 * 1000 })
     return Promise.reject(error)
   }
@@ -126,7 +130,7 @@ service.interceptors.response.use(res => {
 
 // 通用下载方法
 export function download(url, params, filename, config) {
-  downloadLoadingInstance = ElLoading.service({ text: "正在下载数据，请稍候", background: "rgba(0, 0, 0, 0.7)", })
+  downloadLoadingInstance = ElLoading.service({ text: "Downloading data...", background: "rgba(0, 0, 0, 0.7)", })
   return service.post(url, params, {
     transformRequest: [(params) => { return tansParams(params) }],
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -140,13 +144,13 @@ export function download(url, params, filename, config) {
     } else {
       const resText = await data.text()
       const rspObj = JSON.parse(resText)
-      const errMsg = errorCode[rspObj.code] || rspObj.msg || errorCode['default']
+      const errMsg = localizeBackendMessage(errorCode[rspObj.code] || rspObj.msg || errorCode['default'])
       ElMessage.error(errMsg)
     }
     downloadLoadingInstance.close()
   }).catch((r) => {
     console.error(r)
-    ElMessage.error('下载文件出现错误，请联系管理员！')
+    ElMessage.error('The download failed. Contact an administrator.')
     downloadLoadingInstance.close()
   })
 }

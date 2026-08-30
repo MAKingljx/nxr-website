@@ -3,20 +3,18 @@
     <section v-if="canViewWaitlist" class="waitlist-panel">
       <div class="waitlist-panel__top">
         <span class="waitlist-panel__icon"><el-icon><Clock /></el-icon></span>
-        <span>候补名单</span>
+        <span>{{ $tx('Waitlist') }}</span>
       </div>
       <strong>{{ formattedWaitlist }}</strong>
-      <p>待跟进的候补提交者</p>
-      <el-button class="waitlist-panel__button" @click="$emit('navigate', '/nxr/waitlist')">
-        查看名单
-        <el-icon class="el-icon--right"><ArrowRight /></el-icon>
+      <p>{{ $tx('Waitlist submissions to follow up') }}</p>
+      <el-button class="waitlist-panel__button" @click="$emit('navigate', '/nxr/waitlist')"> {{ $tx('View Waitlist') }} <el-icon class="el-icon--right"><ArrowRight /></el-icon>
       </el-button>
     </section>
 
     <section class="quick-panel">
       <header>
-        <p>QUICK ACTIONS</p>
-        <h2>快捷操作</h2>
+        <p>{{ $tx('QUICK ACTIONS') }}</p>
+        <h2>{{ $tx('Quick Actions') }}</h2>
       </header>
       <button
         v-for="action in visibleActions"
@@ -46,15 +44,15 @@ const props = defineProps({
 
 defineEmits(['navigate'])
 
-const formattedWaitlist = computed(() => new Intl.NumberFormat('zh-CN').format(props.waitlistCount || 0))
+const formattedWaitlist = computed(() => new Intl.NumberFormat('en-US').format(props.waitlistCount || 0))
 const canViewWaitlist = computed(() => auth.hasPermi('nxr:waitlist:list'))
 
 const actions = [
-  { label: '新建卡牌', detail: '创建一条新的评级资料', path: '/nxr/cards/new-entry?mode=create', icon: Plus, permission: 'nxr:entry:add' },
-  { label: '卡图上传', detail: '导入正反面图片并发布证书', path: '/nxr/upload', icon: UploadFilled, permission: 'nxr:media:list' },
-  { label: '订单管理', detail: '处理送评订单、付款与物流', path: '/nxr/submissions/orders', icon: ShoppingBag, permission: 'nxr:order:list' },
-  { label: '客户管理', detail: '查看账号与持卡记录', path: '/nxr/customers', icon: User, permission: 'nxr:customer:list' },
-  { label: '品牌设置', detail: '维护品牌与显示名称', path: '/nxr/settings/brands', icon: Collection, permission: 'nxr:brand:list' }
+  { label: tx('New Card'), detail: tx('Create a new grading record'), path: '/nxr/cards/new-entry?mode=create', icon: Plus, permission: 'nxr:entry:add' },
+  { label: tx('Card Image Upload'), detail: tx('Import front/back images and publish certificates'), path: '/nxr/upload', icon: UploadFilled, permission: 'nxr:media:list' },
+  { label: tx('Order Management'), detail: tx('Handle grading orders, payments, and logistics'), path: '/nxr/submissions/orders', icon: ShoppingBag, permission: 'nxr:order:list' },
+  { label: tx('Customer Management'), detail: tx('Review accounts and card ownership'), path: '/nxr/customers', icon: User, permission: 'nxr:customer:list' },
+  { label: tx('Brand Settings'), detail: tx('Maintain brand names and aliases'), path: '/nxr/settings/brands', icon: Collection, permission: 'nxr:brand:list' }
 ]
 
 const visibleActions = computed(() => actions.filter((action) => auth.hasPermi(action.permission)))

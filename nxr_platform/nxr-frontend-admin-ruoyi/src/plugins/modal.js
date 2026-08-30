@@ -21,19 +21,19 @@ export default {
   },
   // 弹出提示
   alert(content) {
-    ElMessageBox.alert(content, "系统提示")
+    ElMessageBox.alert(content, tx('Notice'))
   },
   // 错误提示
   alertError(content) {
-    ElMessageBox.alert(content, "系统提示", { type: 'error' })
+    ElMessageBox.alert(content, tx('Error'), { type: 'error' })
   },
   // 成功提示
   alertSuccess(content) {
-    ElMessageBox.alert(content, "系统提示", { type: 'success' })
+    ElMessageBox.alert(content, tx('Success'), { type: 'success' })
   },
   // 警告提示
   alertWarning(content) {
-    ElMessageBox.alert(content, "系统提示", { type: 'warning' })
+    ElMessageBox.alert(content, tx('Warning'), { type: 'warning' })
   },
   // 通知提示
   notify(content) {
@@ -53,17 +53,17 @@ export default {
   },
   // 确认窗体
   confirm(content) {
-    return ElMessageBox.confirm(content, "系统提示", {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
+    return ElMessageBox.confirm(content, tx('Confirmation'), {
+      confirmButtonText: tx('Confirm'),
+      cancelButtonText: tx('Cancel'),
       type: "warning",
     })
   },
   // 提交内容
   prompt(content) {
-    return ElMessageBox.prompt(content, "系统提示", {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
+    return ElMessageBox.prompt(content, tx('Input Required'), {
+      confirmButtonText: tx('Confirm'),
+      cancelButtonText: tx('Cancel'),
       type: "warning",
     })
   },

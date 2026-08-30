@@ -1,9 +1,9 @@
 <template>
   <main class="nxr-workspace nxr-waitlist-workspace">
     <nxr-page-header
-      kicker="CUSTOMER INTAKE"
-      title="候补名单"
-      :summary="`共 ${total} 条候补记录，可按邮箱查询确认状态`"
+      :kicker="$tx('CUSTOMER INTAKE')"
+      :title="$tx('Waitlist')"
+      :summary="$tx('{count} waitlist records · search by email to check confirmation status', { count: total })"
     />
 
     <nxr-server-data-workbench
@@ -14,9 +14,9 @@
       :page="pageParams.page"
       :page-size="pageParams.pageSize"
       :show-reset="Boolean(query)"
-      empty-title="没有候补记录"
-      empty-description="请调整邮箱搜索条件后重试。"
-      aria-label="候补名单数据列表"
+      :empty-title="$tx('No waitlist records')"
+      :empty-description="$tx('Adjust the email search and try again.')"
+      :aria-label="$tx('Waitlist records')"
       @query="handleQuery"
       @reset="resetQuery"
       @retry="getList"
@@ -24,31 +24,31 @@
     >
       <template #filters>
         <div class="waitlist-filter">
-          <label for="waitlist-email-query">邮箱</label>
+          <label for="waitlist-email-query">{{ $tx('Email') }}</label>
         <el-input
           id="waitlist-email-query"
           v-model="query"
-          placeholder="搜索邮箱"
+          :placeholder="$tx('Search email')"
           clearable
           @clear="handleQuery"
         />
         </div>
       </template>
       <template #filter-actions>
-        <el-button type="primary" icon="Search" :loading="loading" native-type="submit">搜索</el-button>
-        <el-button v-if="query" icon="Refresh" :disabled="loading" @click="resetQuery">重置</el-button>
+        <el-button type="primary" icon="Search" :loading="loading" native-type="submit">{{ $tx('Search') }}</el-button>
+        <el-button v-if="query" icon="Refresh" :disabled="loading" @click="resetQuery">{{ $tx('Reset') }}</el-button>
       </template>
 
       <el-table :data="rows">
-      <el-table-column label="ID" prop="id" width="90" align="center" />
-      <el-table-column label="邮箱" prop="email" min-width="240" show-overflow-tooltip />
-      <el-table-column label="来源" prop="sourceCode" width="120" align="center" />
-      <el-table-column label="状态" width="120" align="center">
+      <el-table-column :label="$tx('ID')" prop="id" width="90" align="center" />
+      <el-table-column :label="$tx('Email')" prop="email" min-width="240" show-overflow-tooltip />
+      <el-table-column :label="$tx('Source')" prop="sourceCode" width="120" align="center" />
+      <el-table-column :label="$tx('Status')" width="120" align="center">
         <template #default="scope">
           <nxr-status-tag :code="scope.row.statusCode" domain="waitlist" />
         </template>
       </el-table-column>
-      <el-table-column label="加入时间" prop="createdAt" width="200" show-overflow-tooltip />
+      <el-table-column :label="$tx('Joined At')" prop="createdAt" width="200" show-overflow-tooltip />
       </el-table>
     </nxr-server-data-workbench>
   </main>
@@ -78,7 +78,7 @@ function getList() {
       pageParams.pageSize = res.data.pageSize
     })
     .catch(() => {
-      loadError.value = '暂时无法读取候补名单，请稍后重试。'
+      loadError.value = tx('The waitlist is temporarily unavailable. Try again shortly.')
     })
     .finally(() => {
       loading.value = false

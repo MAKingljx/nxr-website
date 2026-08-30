@@ -1,20 +1,20 @@
 const STATUS_TONES = new Set(['primary', 'success', 'warning', 'danger', 'neutral'])
 
 const COMMON_STATUS_MAP = Object.freeze({
-  active: { label: '启用', tone: 'success' },
-  inactive: { label: '停用', tone: 'neutral' }
+  active: { label: tx('Active'), tone: 'success' },
+  inactive: { label: tx('Inactive'), tone: 'neutral' }
 })
 
 const DOMAIN_STATUS_MAP = Object.freeze({
   entries: Object.freeze({
-    pending: { label: '待处理', tone: 'warning' },
-    review: { label: '审核中', tone: 'primary' },
-    approved: { label: '已通过', tone: 'success' },
-    published: { label: '已发布', tone: 'success' }
+    pending: { label: tx('Pending'), tone: 'warning' },
+    review: { label: tx('In Review'), tone: 'primary' },
+    approved: { label: tx('Approved'), tone: 'success' },
+    published: { label: tx('Published'), tone: 'success' }
   }),
   waitlist: Object.freeze({
-    pending: { label: '待确认', tone: 'warning' },
-    confirmed: { label: '已确认', tone: 'success' }
+    pending: { label: tx('Pending'), tone: 'warning' },
+    confirmed: { label: tx('Confirmed'), tone: 'success' }
   }),
   general: COMMON_STATUS_MAP
 })

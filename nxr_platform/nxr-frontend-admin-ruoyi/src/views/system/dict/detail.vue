@@ -4,7 +4,7 @@
     <template #header>
       <div class="drawer-head">
         <el-icon style="color:#5b9bd5;margin-right:8px;"><List /></el-icon>
-        <span class="drawer-head-name">{{ row.dictName }}</span>
+        <span class="drawer-head-name">{{ dictionaryName }}</span>
         <span class="drawer-head-type">{{ row.dictType }}</span>
       </div>
     </template>
@@ -13,13 +13,13 @@
       <!-- 加载中 -->
       <div v-if="loading" class="drawer-loading">
         <el-icon class="is-loading"><Loading /></el-icon>
-        <span>加载中...</span>
+        <span>{{ $tx('Loading...') }}</span>
       </div>
 
       <!-- 空数据 -->
       <div v-else-if="!dataList.length" class="drawer-empty">
         <el-icon style="font-size:36px;"><Document /></el-icon>
-        <div>暂无字典数据</div>
+        <div>{{ $tx('No dictionary data') }}</div>
       </div>
 
       <template v-else>
@@ -28,19 +28,19 @@
           <el-col :span="disabledCount > 0 ? 8 : 12">
             <div class="stat-card">
               <div class="stat-num">{{ dataList.length }}</div>
-              <div class="stat-label">共计条目</div>
+              <div class="stat-label">{{ $tx('Total') }}</div>
             </div>
           </el-col>
           <el-col :span="disabledCount > 0 ? 8 : 12">
             <div class="stat-card">
               <div class="stat-num success">{{ normalCount }}</div>
-              <div class="stat-label">正常</div>
+              <div class="stat-label">{{ $tx('Active') }}</div>
             </div>
           </el-col>
           <el-col v-if="disabledCount > 0" :span="8">
             <div class="stat-card">
               <div class="stat-num danger">{{ disabledCount }}</div>
-              <div class="stat-label">停用</div>
+              <div class="stat-label">{{ $tx('Disabled') }}</div>
             </div>
           </el-col>
         </el-row>
@@ -48,21 +48,21 @@
         <!-- 数据列表 -->
         <div v-for="item in dataList" :key="item.dictCode" class="dict-item">
           <div class="dict-cell">
-            <div class="dict-cell-key">标签</div>
+            <div class="dict-cell-key">{{ $tx('Label') }}</div>
             <div class="dict-cell-val">
               <el-tag v-if="item.listClass && item.listClass !== 'default'" :type="item.listClass === 'primary' ? undefined : item.listClass" size="small">{{ item.dictLabel }}</el-tag>
               <span v-else>{{ item.dictLabel }}</span>
             </div>
           </div>
           <div class="dict-cell">
-            <div class="dict-cell-key">键值</div>
+            <div class="dict-cell-key">{{ $tx('Value') }}</div>
             <div class="dict-cell-val">{{ item.dictValue }}</div>
           </div>
           <div class="dict-cell">
-            <div class="dict-cell-key">状态</div>
+            <div class="dict-cell-key">{{ $tx('Status') }}</div>
             <div class="dict-cell-val">
               <el-tag :type="item.status === '0' ? 'success' : 'danger'" size="small">
-                {{ item.status === '0' ? '正常' : '停用' }}
+                {{ item.status === '0' ? 'Active' : 'Disabled' }}
               </el-tag>
             </div>
           </div>
@@ -87,6 +87,13 @@ const dataList = ref([])
 
 const normalCount = computed(() => dataList.value.filter(r => r.status === '0').length)
 const disabledCount = computed(() => dataList.value.filter(r => r.status !== '0').length)
+const dictionaryName = computed(() => ({
+  nxr_sports_type: 'Sports Type',
+  nxr_card_category: 'Card Category',
+  nxr_product_type: 'Product Type',
+  nxr_vintage_classification: 'Vintage Classification',
+  nxr_language: 'Card Language'
+}[props.row?.dictType] || props.row?.dictName || 'Dictionary Data'))
 
 watch(() => props.visible, (val) => {
   if (val) {

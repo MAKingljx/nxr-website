@@ -17,11 +17,11 @@ const pwdChrType = ref(cache.session.get('pwrChrtype') || '0')
 
 // 各类型对应的正则、错误提示
 const PWD_RULES = {
-  '0': { pattern: /^[^<>"'|\\]+$/, message: '密码不能包含非法字符：< > " \' \\ |' },
-  '1': { pattern: /^[0-9]+$/, message: '密码只能为数字（0-9）' },
-  '2': { pattern: /^[a-zA-Z]+$/, message: '密码只能为英文字母（a-z、A-Z）' },
-  '3': { pattern: /^(?=.*[a-zA-Z])(?=.*[0-9])[a-zA-Z0-9]+$/, message: '密码必须同时包含字母和数字' },
-  '4': { pattern: /^(?=.*[A-Za-z])(?=.*\d)(?=.*[~!@#$%^&*()\-=_+])[A-Za-z\d~!@#$%^&*()\-=_+]+$/, message: '密码必须同时包含字母、数字和特殊字符（~!@#$%^&*()-=_+）' }
+  '0': { pattern: /^[^<>"'|\\]+$/, message: tx('Password cannot contain < > " \' \\ or |') },
+  '1': { pattern: /^[0-9]+$/, message: tx('Password may contain digits only (0-9)') },
+  '2': { pattern: /^[a-zA-Z]+$/, message: tx('Password may contain letters only (a-z, A-Z)') },
+  '3': { pattern: /^(?=.*[a-zA-Z])(?=.*[0-9])[a-zA-Z0-9]+$/, message: tx('Password must contain both letters and digits') },
+  '4': { pattern: /^(?=.*[A-Za-z])(?=.*\d)(?=.*[~!@#$%^&*()\-=_+])[A-Za-z\d~!@#$%^&*()\-=_+]+$/, message: tx('Password must contain letters, digits, and special characters (~!@#$%^&*()-=_+)') }
 }
 
 export function usePasswordRule() {
@@ -29,8 +29,8 @@ export function usePasswordRule() {
   const pwdValidator = computed(() => {
     const rule = PWD_RULES[pwdChrType.value] || PWD_RULES['0']
     return [
-      { required: true, message: '密码不能为空', trigger: 'blur' },
-      { min: 6, max: 20, message: '密码长度必须介于 6 和 20 之间', trigger: 'blur' },
+      { required: true, message: tx('Password is required'), trigger: 'blur' },
+      { min: 6, max: 20, message: tx('Password must contain 6 to 20 characters'), trigger: 'blur' },
       { pattern: rule.pattern, message: rule.message, trigger: 'blur' }
     ]
   })
@@ -38,7 +38,7 @@ export function usePasswordRule() {
   const pwdPromptValidator = (value) => {
     const rule = PWD_RULES['0']
     if (!value || value.length < 6 || value.length > 20) {
-      return '密码长度必须介于 6 和 20 之间'
+      return tx('Password must contain 6 to 20 characters')
     }
     if (!rule.pattern.test(value)) {
       return rule.message
@@ -48,8 +48,8 @@ export function usePasswordRule() {
   const infoPwdValidator = computed(() => {
     const rule = PWD_RULES[pwdChrType.value] || PWD_RULES['0']
     return [
-      { required: true, message: '新密码不能为空', trigger: 'blur' },
-      { min: 6, max: 20, message: '新密码长度必须介于 6 和 20 之间', trigger: 'blur' },
+      { required: true, message: tx('New password is required'), trigger: 'blur' },
+      { min: 6, max: 20, message: tx('New password must contain 6 to 20 characters'), trigger: 'blur' },
       { pattern: rule.pattern, message: rule.message, trigger: 'blur' }
     ]
   })
@@ -57,8 +57,8 @@ export function usePasswordRule() {
   const registerPwdValidator = computed(() => {
     const rule = PWD_RULES['0']
     return [
-      { required: true, message: '请输入您的密码', trigger: 'blur' },
-      { min: 6, max: 20, message: '用户密码长度必须介于 6 和 20 之间', trigger: 'blur' },
+      { required: true, message: tx('Enter your password'), trigger: 'blur' },
+      { min: 6, max: 20, message: tx('Password must contain 6 to 20 characters'), trigger: 'blur' },
       { pattern: rule.pattern, message: rule.message, trigger: 'blur' }
     ]
   })

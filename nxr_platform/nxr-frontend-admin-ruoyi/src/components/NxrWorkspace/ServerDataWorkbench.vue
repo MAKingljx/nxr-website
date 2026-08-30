@@ -64,7 +64,7 @@ defineProps({
   pageSize: { type: Number, default: 20 },
   pageSizeOptions: { type: Array, default: () => [10, 20, 50] },
   showReset: { type: Boolean, default: true },
-  ariaLabel: { type: String, default: '服务端数据列表' },
+  ariaLabel: { type: String, default: tx('Server data list') },
   flush: { type: Boolean, default: true }
 })
 

@@ -38,32 +38,31 @@
       </span>
       <template #dropdown>
         <el-dropdown-menu class="tags-dropdown-menu">
-          <el-dropdown-item v-if="!isAffix(selectedDropdownTag)" command="close"><close style="width: 1em; height: 1em;" />关闭当前</el-dropdown-item>
-          <el-dropdown-item command="closeOthers"><circle-close style="width: 1em; height: 1em;" />关闭其他</el-dropdown-item>
-          <el-dropdown-item command="closeLeft" :disabled="isFirstView()"><back style="width: 1em; height: 1em;" />关闭左侧</el-dropdown-item>
-          <el-dropdown-item command="closeRight" :disabled="isLastView()"><right style="width: 1em; height: 1em;" />关闭右侧</el-dropdown-item>
-          <el-dropdown-item command="closeAll"><circle-close style="width: 1em; height: 1em;" />全部关闭</el-dropdown-item>
+          <el-dropdown-item v-if="!isAffix(selectedDropdownTag)" command="close"><close style="width: 1em; height: 1em;" />{{ $tx('Close Current') }}</el-dropdown-item>
+          <el-dropdown-item command="closeOthers"><circle-close style="width: 1em; height: 1em;" />{{ $tx('Close Others') }}</el-dropdown-item>
+          <el-dropdown-item command="closeLeft" :disabled="isFirstView()"><back style="width: 1em; height: 1em;" />{{ $tx('Close Left') }}</el-dropdown-item>
+          <el-dropdown-item command="closeRight" :disabled="isLastView()"><right style="width: 1em; height: 1em;" />{{ $tx('Close Right') }}</el-dropdown-item>
+          <el-dropdown-item command="closeAll"><circle-close style="width: 1em; height: 1em;" />{{ $tx('Close All') }}</el-dropdown-item>
           <el-dropdown-item command="fullscreen" divided>
-            <template v-if="!isFullscreen"><full-screen style="width: 1em; height: 1em;" />全屏显示</template>
-            <template v-else><close style="width: 1em; height: 1em;" />退出全屏</template>
+            <template v-if="!isFullscreen"><full-screen style="width: 1em; height: 1em;" />{{ $tx('Full Screen') }}</template>
+            <template v-else><close style="width: 1em; height: 1em;" />{{ $tx('Exit Full Screen') }}</template>
           </el-dropdown-item>
         </el-dropdown-menu>
       </template>
     </el-dropdown>
 
     <!-- 刷新按钮 -->
-    <span class="tags-action-btn tags-refresh-btn" title="刷新页面" @click="refreshSelectedTag(selectedDropdownTag)">
-      <el-icon><refresh-right/></el-icon> 刷新
-    </span>
+    <span class="tags-action-btn tags-refresh-btn" :title="$tx('Refresh page')" @click="refreshSelectedTag(selectedDropdownTag)">
+      <el-icon><refresh-right/></el-icon> {{ $tx('Refresh') }} </span>
 
     <!-- 右键上下文菜单 -->
     <ul v-show="visible" :style="{ left: left + 'px', top: top + 'px' }" class="contextmenu">
-      <li @click="refreshSelectedTag(selectedTag)"><refresh-right style="width: 1em; height: 1em;" />刷新页面</li>
-      <li v-if="!isAffix(selectedTag)" @click="closeSelectedTag(selectedTag)"><close style="width: 1em; height: 1em;" />关闭当前</li>
-      <li @click="closeOthersTags"><circle-close style="width: 1em; height: 1em;" />关闭其他</li>
-      <li v-if="!isFirstView()" @click="closeLeftTags"><back style="width: 1em; height: 1em;" />关闭左侧</li>
-      <li v-if="!isLastView()" @click="closeRightTags"><right style="width: 1em; height: 1em;" />关闭右侧</li>
-      <li @click="closeAllTags(selectedTag)"><circle-close style="width: 1em; height: 1em;" />全部关闭</li>
+      <li @click="refreshSelectedTag(selectedTag)"><refresh-right style="width: 1em; height: 1em;" />{{ $tx('Refresh Page') }}</li>
+      <li v-if="!isAffix(selectedTag)" @click="closeSelectedTag(selectedTag)"><close style="width: 1em; height: 1em;" />{{ $tx('Close Current') }}</li>
+      <li @click="closeOthersTags"><circle-close style="width: 1em; height: 1em;" />{{ $tx('Close Others') }}</li>
+      <li v-if="!isFirstView()" @click="closeLeftTags"><back style="width: 1em; height: 1em;" />{{ $tx('Close Left') }}</li>
+      <li v-if="!isLastView()" @click="closeRightTags"><right style="width: 1em; height: 1em;" />{{ $tx('Close Right') }}</li>
+      <li @click="closeAllTags(selectedTag)"><circle-close style="width: 1em; height: 1em;" />{{ $tx('Close All') }}</li>
     </ul>
   </div>
 </template>
@@ -648,7 +647,7 @@ $tags-bar-height: 34px;
       border-radius: 50%;
       transition: all 0.3s cubic-bezier(0.645, 0.045, 0.355, 1);
       cursor: pointer;
-      
+
       .el-icon-close {
         width: 1em;
         height: 1em;
@@ -658,10 +657,10 @@ $tags-bar-height: 34px;
         align-items: center;
         justify-content: center;
       }
-      
+
       &:hover {
         background-color: var(--tags-close-hover, #b4bccc);
-        
+
         .el-icon-close {
           color: #fff;
         }

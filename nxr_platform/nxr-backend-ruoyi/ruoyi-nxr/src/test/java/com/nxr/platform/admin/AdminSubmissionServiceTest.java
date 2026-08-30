@@ -148,6 +148,31 @@ class AdminSubmissionServiceTest {
     }
 
     @Test
+    void populationCalculatorSupportsAllProductTypesAndIncompleteVintageDefaultsToOne() {
+        AdminSubmissionService.PopulationCalculationResponse graded = service.calculatePopulation(
+            populationRequest("graded_card", null, "Mint 9")
+        );
+        AdminSubmissionService.PopulationCalculationResponse merch = service.calculatePopulation(
+            populationRequest("merch_product", null, null)
+        );
+        AdminSubmissionService.PopulationCalculationResponse incompleteVintage = service.calculatePopulation(
+            populationRequest("vintage_product", null, null)
+        );
+
+        addVintageClassification("Archive");
+        AdminSubmissionService.PopulationCalculationResponse vintage = service.calculatePopulation(
+            populationRequest("vintage_product", "archive", null)
+        );
+
+        assertThat(graded.populationValue()).isEqualTo(1);
+        assertThat(merch.populationValue()).isEqualTo(1);
+        assertThat(vintage.populationValue()).isEqualTo(1);
+        assertThat(incompleteVintage.populationValue()).isEqualTo(1);
+        assertThat(incompleteVintage.calculation()).isEqualTo("Incomplete data for POP calculation");
+        assertThat(incompleteVintage.details().existingCount()).isZero();
+    }
+
+    @Test
     void historicalLabelRowsParticipateInMerchMatchingAndPopulation() {
         jdbcTemplate.update(
             """
@@ -176,6 +201,46 @@ class AdminSubmissionServiceTest {
         assertThat(created.populationValue()).isEqualTo(2);
         assertThat(match.found()).isTrue();
         assertThat(match.cardName()).isEqualTo("Test Card");
+        assertThat(match.merchDescription()).isEqualTo("Legacy description");
+    }
+
+    @Test
+    void listFiltersMatchPythonAdminFieldsAndReturnEnteredBy() {
+        service.createSubmission(
+            request("5703018208", "graded_card", null, "sports_card", new BigDecimal("9.0"))
+        );
+        service.createSubmission(
+            request("5703018209", "merch_product", null, "trading_card", null)
+        );
+
+        AdminSubmissionService.SubmissionListResponse result = service.listSubmissions(
+            new AdminSubmissionService.SubmissionListFilter(
+                1,
+                25,
+                "pending",
+                null,
+                "5703018208",
+                "Test",
+                "sports_card",
+                "graded_card",
+                "poke",
+                "9",
+                "Base",
+                "English",
+                "NXR Admin",
+                "cert_id",
+                "asc"
+            )
+        );
+
+        assertThat(result.total()).isOne();
+        assertThat(result.pageSize()).isEqualTo(25);
+        assertThat(result.items()).singleElement().satisfies(item -> {
+            assertThat(item.certId()).isEqualTo("5703018208");
+            assertThat(item.productType()).isEqualTo("graded_card");
+            assertThat(item.enteredBy()).isEqualTo("admin");
+            assertThat(item.finalGradeValue()).isEqualByComparingTo("9.0");
+        });
     }
 
     private AdminSubmissionService.MutateSubmissionRequest request(
@@ -214,6 +279,34 @@ class AdminSubmissionServiceTest {
             score,
             "test",
             1L
+        );
+    }
+
+    private AdminSubmissionService.PopulationCalculationRequest populationRequest(
+        String productType,
+        String vintageClassification,
+        String finalGradeLabel
+    ) {
+        return new AdminSubmissionService.PopulationCalculationRequest(
+            productType,
+            "trading_card",
+            "Test Card",
+            "Base Set",
+            "4/102",
+            "EN",
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            vintageClassification,
+            finalGradeLabel,
+            null,
+            null,
+            null,
+            null,
+            null
         );
     }
 
@@ -302,6 +395,18 @@ class AdminSubmissionServiceTest {
                 is_active TINYINT NOT NULL DEFAULT 1
             )
             """
+        );
+        jdbcTemplate.execute(
+            """
+            CREATE TABLE sys_user (
+                user_id BIGINT PRIMARY KEY,
+                user_name VARCHAR(64),
+                nick_name VARCHAR(64)
+            )
+            """
+        );
+        jdbcTemplate.update(
+            "INSERT INTO sys_user (user_id, user_name, nick_name) VALUES (1, 'admin', 'NXR Admin')"
         );
         jdbcTemplate.execute(
             """

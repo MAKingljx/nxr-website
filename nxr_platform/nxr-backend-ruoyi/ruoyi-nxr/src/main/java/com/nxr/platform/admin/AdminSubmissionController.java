@@ -41,9 +41,38 @@ public class AdminSubmissionController {
         @RequestParam(defaultValue = "1") int page,
         @RequestParam(defaultValue = "10") int pageSize,
         @RequestParam(required = false) String status,
-        @RequestParam(required = false) String query
+        @RequestParam(required = false) String query,
+        @RequestParam(required = false) String certId,
+        @RequestParam(required = false) String cardName,
+        @RequestParam(required = false) String cardCategory,
+        @RequestParam(required = false) String productType,
+        @RequestParam(required = false) String brand,
+        @RequestParam(required = false) String finalGrade,
+        @RequestParam(required = false) String setName,
+        @RequestParam(required = false) String language,
+        @RequestParam(required = false) String enteredBy,
+        @RequestParam(defaultValue = "entry_date") String sortBy,
+        @RequestParam(defaultValue = "desc") String sortOrder
     ) {
-        return AjaxResult.success(adminSubmissionService.listSubmissions(page, pageSize, status, query));
+        return AjaxResult.success(adminSubmissionService.listSubmissions(
+            new AdminSubmissionService.SubmissionListFilter(
+                page,
+                pageSize,
+                status,
+                query,
+                certId,
+                cardName,
+                cardCategory,
+                productType,
+                brand,
+                finalGrade,
+                setName,
+                language,
+                enteredBy,
+                sortBy,
+                sortOrder
+            )
+        ));
     }
 
     @PreAuthorize("@ss.hasAnyPermi('nxr:entry:list,nxr:entry:add')")

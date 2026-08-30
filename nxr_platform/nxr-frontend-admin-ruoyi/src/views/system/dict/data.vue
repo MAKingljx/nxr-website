@@ -1,38 +1,38 @@
 <template>
    <div class="app-container">
       <el-form :model="queryParams" ref="queryRef" :inline="true" v-show="showSearch">
-         <el-form-item label="字典名称" prop="dictType">
+         <el-form-item :label="$tx('Dictionary Name')" prop="dictType">
             <el-select v-model="queryParams.dictType" style="width: 200px">
                <el-option
                   v-for="item in typeOptions"
                   :key="item.dictId"
-                  :label="item.dictName"
+                  :label="displayDictionaryName(item)"
                   :value="item.dictType"
                />
             </el-select>
          </el-form-item>
-         <el-form-item label="字典标签" prop="dictLabel">
+         <el-form-item :label="$tx('Data Label')" prop="dictLabel">
             <el-input
                v-model="queryParams.dictLabel"
-               placeholder="请输入字典标签"
+               :placeholder="$tx('Enter data label')"
                clearable
                style="width: 200px"
                @keyup.enter="handleQuery"
             />
          </el-form-item>
-         <el-form-item label="状态" prop="status">
-            <el-select v-model="queryParams.status" placeholder="数据状态" clearable style="width: 200px">
+         <el-form-item :label="$tx('Status')" prop="status">
+            <el-select v-model="queryParams.status" :placeholder="$tx('All statuses')" clearable style="width: 200px">
                <el-option
-                  v-for="dict in sys_normal_disable"
-                  :key="dict.value"
-                  :label="dict.label"
-                  :value="dict.value"
+                  v-for="option in statusOptions"
+                  :key="option.value"
+                  :label="option.label"
+                  :value="option.value"
                />
             </el-select>
          </el-form-item>
          <el-form-item>
-            <el-button type="primary" icon="Search" @click="handleQuery">搜索</el-button>
-            <el-button icon="Refresh" @click="resetQuery">重置</el-button>
+            <el-button type="primary" icon="Search" @click="handleQuery">{{ $tx('Search') }}</el-button>
+            <el-button icon="Refresh" @click="resetQuery">{{ $tx('Reset') }}</el-button>
          </el-form-item>
       </el-form>
 
@@ -44,7 +44,7 @@
                icon="Plus"
                @click="handleAdd"
                v-hasPermi="['system:dict:add']"
-            >新增</el-button>
+            >{{ $tx('Add') }}</el-button>
          </el-col>
          <el-col :span="1.5">
             <el-button
@@ -54,7 +54,7 @@
                :disabled="single"
                @click="handleUpdate"
                v-hasPermi="['system:dict:edit']"
-            >修改</el-button>
+            >{{ $tx('Edit') }}</el-button>
          </el-col>
          <el-col :span="1.5">
             <el-button
@@ -64,7 +64,7 @@
                :disabled="multiple"
                @click="handleDelete"
                v-hasPermi="['system:dict:remove']"
-            >删除</el-button>
+            >{{ $tx('Delete') }}</el-button>
          </el-col>
          <el-col :span="1.5">
             <el-button
@@ -73,7 +73,7 @@
                icon="Download"
                @click="handleExport"
                v-hasPermi="['system:dict:export']"
-            >导出</el-button>
+            >{{ $tx('Export') }}</el-button>
          </el-col>
          <el-col :span="1.5">
             <el-button
@@ -81,37 +81,37 @@
                plain
                icon="Close"
                @click="handleClose"
-            >关闭</el-button>
+            >{{ $tx('Close') }}</el-button>
          </el-col>
          <right-toolbar v-model:showSearch="showSearch" @queryTable="getList"></right-toolbar>
       </el-row>
 
       <el-table v-loading="loading" :data="dataList" @selection-change="handleSelectionChange">
          <el-table-column type="selection" width="55" align="center" />
-         <el-table-column label="字典编码" align="center" prop="dictCode" />
-         <el-table-column label="字典标签" align="center" prop="dictLabel">
+         <el-table-column :label="$tx('Data ID')" align="center" prop="dictCode" />
+         <el-table-column :label="$tx('Data Label')" align="center" prop="dictLabel">
             <template #default="scope">
                <span v-if="(scope.row.listClass == '' || scope.row.listClass == 'default') && (scope.row.cssClass == '' || scope.row.cssClass == null)">{{ scope.row.dictLabel }}</span>
                <el-tag v-else :type="scope.row.listClass == 'primary' ? '' : scope.row.listClass" :class="scope.row.cssClass">{{ scope.row.dictLabel }}</el-tag>
             </template>
          </el-table-column>
-         <el-table-column label="字典键值" align="center" prop="dictValue" />
-         <el-table-column label="字典排序" align="center" prop="dictSort" />
-         <el-table-column label="状态" align="center" prop="status">
+         <el-table-column :label="$tx('Data Value')" align="center" prop="dictValue" />
+         <el-table-column :label="$tx('Sort Order')" align="center" prop="dictSort" />
+         <el-table-column :label="$tx('Status')" align="center" prop="status">
             <template #default="scope">
-               <dict-tag :options="sys_normal_disable" :value="scope.row.status" />
+               <dict-tag :options="statusOptions" :value="scope.row.status" />
             </template>
          </el-table-column>
-         <el-table-column label="备注" align="center" prop="remark" :show-overflow-tooltip="true" />
-         <el-table-column label="创建时间" align="center" prop="createTime" width="180">
+         <el-table-column :label="$tx('Notes')" align="center" prop="remark" :show-overflow-tooltip="true" />
+         <el-table-column :label="$tx('Created At')" align="center" prop="createTime" width="180">
             <template #default="scope">
                <span>{{ parseTime(scope.row.createTime) }}</span>
             </template>
          </el-table-column>
-         <el-table-column label="操作" align="center" width="160" class-name="small-padding fixed-width">
+         <el-table-column :label="$tx('Actions')" align="center" width="160" class-name="small-padding fixed-width">
             <template #default="scope">
-               <el-button link type="primary" icon="Edit" @click="handleUpdate(scope.row)" v-hasPermi="['system:dict:edit']">修改</el-button>
-               <el-button link type="primary" icon="Delete" @click="handleDelete(scope.row)" v-hasPermi="['system:dict:remove']">删除</el-button>
+               <el-button link type="primary" icon="Edit" @click="handleUpdate(scope.row)" v-hasPermi="['system:dict:edit']">{{ $tx('Edit') }}</el-button>
+               <el-button link type="primary" icon="Delete" @click="handleDelete(scope.row)" v-hasPermi="['system:dict:remove']">{{ $tx('Delete') }}</el-button>
             </template>
          </el-table-column>
       </el-table>
@@ -127,22 +127,22 @@
       <!-- 添加或修改参数配置对话框 -->
       <el-dialog :title="title" v-model="open" width="500px" append-to-body>
          <el-form ref="dataRef" :model="form" :rules="rules" label-width="80px">
-            <el-form-item label="字典类型">
+            <el-form-item :label="$tx('Dictionary Type')">
                <el-input v-model="form.dictType" :disabled="true" />
             </el-form-item>
-            <el-form-item label="数据标签" prop="dictLabel">
-               <el-input v-model="form.dictLabel" placeholder="请输入数据标签" />
+            <el-form-item :label="$tx('Data Label')" prop="dictLabel">
+               <el-input v-model="form.dictLabel" :placeholder="$tx('Enter data label')" />
             </el-form-item>
-            <el-form-item label="数据键值" prop="dictValue">
-               <el-input v-model="form.dictValue" placeholder="请输入数据键值" />
+            <el-form-item :label="$tx('Data Value')" prop="dictValue">
+               <el-input v-model="form.dictValue" :placeholder="$tx('Enter data value')" />
             </el-form-item>
-            <el-form-item label="样式属性" prop="cssClass">
-               <el-input v-model="form.cssClass" placeholder="请输入样式属性" />
+            <el-form-item :label="$tx('CSS Class')" prop="cssClass">
+               <el-input v-model="form.cssClass" :placeholder="$tx('Optional CSS class')" />
             </el-form-item>
-            <el-form-item label="显示排序" prop="dictSort">
+            <el-form-item :label="$tx('Sort Order')" prop="dictSort">
                <el-input-number v-model="form.dictSort" controls-position="right" :min="0" />
             </el-form-item>
-            <el-form-item label="回显样式" prop="listClass">
+            <el-form-item :label="$tx('Tag Style')" prop="listClass">
                <el-select v-model="form.listClass">
                   <el-option
                      v-for="item in listClassOptions"
@@ -152,23 +152,23 @@
                   ></el-option>
                </el-select>
             </el-form-item>
-            <el-form-item label="状态" prop="status">
+            <el-form-item :label="$tx('Status')" prop="status">
                <el-radio-group v-model="form.status">
                   <el-radio
-                     v-for="dict in sys_normal_disable"
-                     :key="dict.value"
-                     :value="dict.value"
-                  >{{ dict.label }}</el-radio>
+                     v-for="option in statusOptions"
+                     :key="option.value"
+                     :value="option.value"
+                  >{{ option.label }}</el-radio>
                </el-radio-group>
             </el-form-item>
-            <el-form-item label="备注" prop="remark">
-               <el-input v-model="form.remark" type="textarea" placeholder="请输入内容"></el-input>
+            <el-form-item :label="$tx('Notes')" prop="remark">
+               <el-input v-model="form.remark" type="textarea" :placeholder="$tx('Enter notes')"></el-input>
             </el-form-item>
          </el-form>
          <template #footer>
             <div class="dialog-footer">
-               <el-button type="primary" @click="submitForm">确 定</el-button>
-               <el-button @click="cancel">取 消</el-button>
+               <el-button type="primary" @click="submitForm">{{ $tx('Save') }}</el-button>
+               <el-button @click="cancel">{{ $tx('Cancel') }}</el-button>
             </div>
          </template>
       </el-dialog>
@@ -181,7 +181,21 @@ import { optionselect as getDictOptionselect, getType } from "@/api/system/dict/
 import { listData, getData, delData, addData, updateData } from "@/api/system/dict/data"
 
 const { proxy } = getCurrentInstance()
-const { sys_normal_disable } = useDict("sys_normal_disable")
+const statusOptions = [
+  { value: '0', label: tx('Active'), elTagType: 'success' },
+  { value: '1', label: tx('Disabled'), elTagType: 'danger' }
+]
+const dictionaryNameMap = {
+  nxr_sports_type: 'Sports Type',
+  nxr_card_category: 'Card Category',
+  nxr_product_type: 'Product Type',
+  nxr_vintage_classification: 'Vintage Classification',
+  nxr_language: 'Card Language'
+}
+
+function displayDictionaryName(item) {
+  return tx(dictionaryNameMap[item?.dictType] || item?.dictName || '-')
+}
 
 const dataList = ref([])
 const open = ref(false)
@@ -197,12 +211,12 @@ const typeOptions = ref([])
 const route = useRoute()
 // 数据标签回显样式
 const listClassOptions = ref([
-  { value: "default", label: "默认" }, 
-  { value: "primary", label: "主要" }, 
-  { value: "success", label: "成功" },
-  { value: "info", label: "信息" },
-  { value: "warning", label: "警告" },
-  { value: "danger", label: "危险" }
+  { value: "default", label: tx('Default') },
+  { value: "primary", label: tx('Primary') },
+  { value: "success", label: tx('Success') },
+  { value: "info", label: tx('Info') },
+  { value: "warning", label: tx('Warning') },
+  { value: "danger", label: tx('Danger') }
 ])
 
 const data = reactive({
@@ -215,9 +229,9 @@ const data = reactive({
     status: undefined
   },
   rules: {
-    dictLabel: [{ required: true, message: "数据标签不能为空", trigger: "blur" }],
-    dictValue: [{ required: true, message: "数据键值不能为空", trigger: "blur" }],
-    dictSort: [{ required: true, message: "数据顺序不能为空", trigger: "blur" }]
+    dictLabel: [{ required: true, message: tx('Data label is required'), trigger: "blur" }],
+    dictValue: [{ required: true, message: tx('Data value is required'), trigger: "blur" }],
+    dictSort: [{ required: true, message: tx('Sort order is required'), trigger: "blur" }]
   }
 })
 
@@ -293,7 +307,7 @@ function resetQuery() {
 function handleAdd() {
   reset()
   open.value = true
-  title.value = "添加字典数据"
+  title.value = tx('Add Dictionary Data')
   form.value.dictType = queryParams.value.dictType
 }
 
@@ -311,7 +325,7 @@ function handleUpdate(row) {
   getData(dictCode).then(response => {
     form.value = response.data
     open.value = true
-    title.value = "修改字典数据"
+    title.value = tx('Edit Dictionary Data')
   })
 }
 
@@ -322,14 +336,14 @@ function submitForm() {
       if (form.value.dictCode != undefined) {
         updateData(form.value).then(response => {
           useDictStore().removeDict(queryParams.value.dictType)
-          proxy.$modal.msgSuccess("修改成功")
+          proxy.$modal.msgSuccess(tx('Dictionary data updated'))
           open.value = false
           getList()
         })
       } else {
         addData(form.value).then(response => {
           useDictStore().removeDict(queryParams.value.dictType)
-          proxy.$modal.msgSuccess("新增成功")
+          proxy.$modal.msgSuccess(tx('Dictionary data created'))
           open.value = false
           getList()
         })
@@ -341,11 +355,11 @@ function submitForm() {
 /** 删除按钮操作 */
 function handleDelete(row) {
   const dictCodes = row.dictCode || ids.value
-  proxy.$modal.confirm('是否确认删除字典编码为"' + dictCodes + '"的数据项？').then(function() {
+  proxy.$modal.confirm('Delete dictionary data ID(s) "' + dictCodes + '"?').then(function() {
     return delData(dictCodes)
   }).then(() => {
     getList()
-    proxy.$modal.msgSuccess("删除成功")
+    proxy.$modal.msgSuccess(tx('Dictionary data deleted'))
     useDictStore().removeDict(queryParams.value.dictType)
   }).catch(() => {})
 }

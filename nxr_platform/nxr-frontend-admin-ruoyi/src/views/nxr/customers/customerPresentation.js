@@ -15,31 +15,31 @@ export function avatarColor(id) {
 }
 
 export function formatGrade(card) {
-  if (card.productType === 'merch_product' || card.productType === 'label_product') return 'Merch Product'
-  if (card.productType === 'vintage_product') return card.vintageClassification || 'Vintage Card'
+  if (card.productType === 'merch_product' || card.productType === 'label_product') return tx('Merch Product')
+  if (card.productType === 'vintage_product') return card.vintageClassification || tx('Vintage Card')
   if (card.finalGradeValue === null || card.finalGradeValue === undefined) return '-'
   return `${Number(card.finalGradeValue).toFixed(1)} ${card.finalGradeLabel || ''}`.trim()
 }
 
 export function ownershipLabel(status) {
-  return ({ active: '持有中', released: '已释放', transferred: '已转让' })[status] || status || '-'
+  return ({ active: tx('Owned'), released: tx('Released'), transferred: tx('Transferred') })[status] || status || '-'
 }
 
 export function eventLabel(type) {
-  return ({ bound: '首次绑定', transferred: '卡片转让', released: '解除绑定' })[type] || type || '流转记录'
+  return ({ bound: tx('First Bound'), transferred: tx('Card Transferred'), released: tx('Ownership Released') })[type] || type || tx('Ownership Event')
 }
 
 export function transferLabel(event) {
-  const from = event.fromDisplayName || '未绑定'
-  const to = event.toDisplayName || '未绑定'
+  const from = event.fromDisplayName || tx('Unassigned')
+  const to = event.toDisplayName || tx('Unassigned')
   return `${from} → ${to}`
 }
 
 export function orderStatusLabel(status) {
   return ({
-    draft: '待提交', awaiting_payment: '待付款', payment_review: '付款审核',
-    inbound_shipped: '寄送中', received: '已收件', grading: '评级中',
-    completed: '已完成', return_shipped: '回寄中', delivered: '已送达', cancelled: '已取消'
+    draft: tx('Draft'), awaiting_payment: tx('Awaiting Payment'), payment_review: tx('Payment Review'),
+    inbound_shipped: tx('Inbound Shipping'), received: tx('Received'), grading: tx('Grading'),
+    completed: tx('Completed'), return_shipped: tx('Return Shipping'), delivered: tx('Delivered'), cancelled: tx('Cancelled')
   })[status] || status || '-'
 }
 

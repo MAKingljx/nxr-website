@@ -1,10 +1,10 @@
 <template>
   <main class="nxr-workspace nxr-dashboard">
-    <nxr-page-header kicker="NXR OPERATIONS" title="运营总览" :summary="workloadSummary">
+    <nxr-page-header :kicker="$tx('NXR OPERATIONS')" :title="$tx('Operations Dashboard')" :summary="workloadSummary">
       <template #actions>
         <span class="dashboard-date">{{ todayLabel }}</span>
-        <el-tooltip v-if="canViewDashboard" content="刷新数据" placement="bottom">
-          <el-button :icon="Refresh" circle :loading="loading" aria-label="刷新数据" @click="loadDashboard" />
+        <el-tooltip v-if="canViewDashboard" :content="$tx('Refresh data')" placement="bottom">
+          <el-button :icon="Refresh" circle :loading="loading" :aria-label="$tx('Refresh data')" @click="loadDashboard" />
         </el-tooltip>
       </template>
     </nxr-page-header>
@@ -13,39 +13,39 @@
       <el-alert
         v-if="loadError"
         class="dashboard-alert"
-        title="暂时无法读取运营数据"
+        :title="$tx('Operations data is temporarily unavailable')"
         type="error"
         :closable="false"
         show-icon
       >
         <template #default>
-          <el-button link type="danger" @click="loadDashboard">重新加载</el-button>
+          <el-button link type="danger" @click="loadDashboard">{{ $tx('Reload') }}</el-button>
         </template>
       </el-alert>
 
-      <section class="metric-grid" aria-label="核心运营指标">
+      <section class="metric-grid" :aria-label="$tx('Core operations metrics')">
         <dashboard-metric-card
-          label="总录入"
+          :label="$tx('Total Entries')"
           :value="dashboard.totalSubmissions"
-          detail="系统累计评级资料"
+          :detail="$tx('All grading records')"
           :icon="Files"
         />
         <dashboard-metric-card
-          label="待审批"
+          :label="$tx('Pending Review')"
           :value="dashboard.pendingReview"
-          detail="需要评级人员处理"
+          :detail="$tx('Awaiting reviewer action')"
           :icon="DocumentChecked"
         />
         <dashboard-metric-card
-          label="待发布"
+          :label="$tx('Ready to Publish')"
           :value="dashboard.approvedReady"
-          detail="已审批，等待证书发布"
+          :detail="$tx('Approved certificates awaiting publication')"
           :icon="UploadFilled"
         />
         <dashboard-metric-card
-          label="已发布证书"
+          :label="$tx('Published Certificates')"
           :value="dashboard.publishedCertificates"
-          :detail="`发布率 ${publishedRate}`"
+          :detail="$tx('Publication rate {rate}', { rate: publishedRate })"
           :icon="Medal"
         />
       </section>
@@ -71,11 +71,11 @@
 
       <footer class="dashboard-footer">
         <span class="status-dot" :class="{ 'status-dot--error': loadError }"></span>
-        {{ loadError ? '数据连接异常' : `数据已更新 ${updatedAt}` }}
+        {{ loadError ? $tx('Data connection error') : $tx('Data updated {time}', { time: updatedAt }) }}
       </footer>
     </template>
 
-    <el-empty v-else description="当前账号没有运营总览权限，请从左侧菜单进入可用功能" />
+    <el-empty v-else :description="$tx('This account cannot view the dashboard. Use the navigation to open an available feature.')" />
   </main>
 </template>
 
@@ -110,19 +110,23 @@ const publishedRate = computed(() => {
   return `${rate.toFixed(1)}%`
 })
 const workloadSummary = computed(() => {
-  if (!canViewDashboard) return '请从左侧菜单进入当前账号可用的管理功能'
-  if (loadError.value) return '运营数据加载失败，请稍后重试'
-  if (!pendingWork.value) return '当前没有待审批或待发布项目'
-  return `待审批 ${formatNumber(dashboard.value.pendingReview)} 项，待发布 ${formatNumber(dashboard.value.approvedReady)} 项`
+  if (!canViewDashboard) return tx('Use the navigation to open a feature available to this account')
+  if (loadError.value) return tx('Operations data failed to load. Try again shortly.')
+  if (!pendingWork.value) return tx('No entries are waiting for review or publication')
+  return tx('{pending} pending review · {ready} ready to publish', {
+    pending: formatNumber(dashboard.value.pendingReview),
+    ready: formatNumber(dashboard.value.approvedReady)
+  })
 })
-const todayLabel = new Intl.DateTimeFormat('zh-CN', {
+const activeDocumentLocale = document.documentElement.lang || 'en'
+const todayLabel = new Intl.DateTimeFormat(activeDocumentLocale, {
   month: 'long',
   day: 'numeric',
   weekday: 'short'
 }).format(new Date())
 
 function formatNumber(value) {
-  return new Intl.NumberFormat('zh-CN').format(value || 0)
+  return new Intl.NumberFormat(activeDocumentLocale).format(value || 0)
 }
 
 function navigate(path) {
@@ -135,7 +139,7 @@ async function loadDashboard() {
   try {
     const response = await fetchDashboard()
     dashboard.value = { ...dashboard.value, ...response.data }
-    updatedAt.value = new Intl.DateTimeFormat('zh-CN', {
+    updatedAt.value = new Intl.DateTimeFormat(activeDocumentLocale, {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',

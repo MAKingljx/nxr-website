@@ -15,7 +15,7 @@
         size="large"
         @input="querySearch"
         prefix-icon="Search"
-        placeholder="菜单搜索，支持标题、URL模糊查询"
+        :placeholder="$tx('Search menus by title or URL')"
         clearable
         @keyup.enter="selectActiveResult"
         @keydown.up.prevent="navigateResult('up')"
@@ -24,8 +24,7 @@
       </el-input>
 
       <div class="result-count" v-if="search && options.length > 0">
-        找到 <strong>{{ options.length }}</strong> 个结果
-      </div>
+        <strong>{{ options.length }}</strong> {{ $tx('results') }} </div>
 
       <div class="result-wrap">
         <el-scrollbar>
@@ -54,8 +53,8 @@
 
           <div class="empty-state" v-else-if="search && options.length === 0">
             <el-icon class="empty-icon"><Search /></el-icon>
-            <p class="empty-text">未找到 "<strong>{{ search }}</strong>" 相关菜单</p>
-            <p class="empty-tip">试试其他关键词或路径</p>
+            <p class="empty-text">{{ $tx('No menus found for "') }}<strong>{{ search }}</strong>"</p>
+            <p class="empty-tip">{{ $tx('Try another keyword or path') }}</p>
           </div>
 
         </el-scrollbar>
@@ -63,14 +62,11 @@
 
       <div class="search-footer">
         <span class="shortcut-item">
-          <kbd>↑</kbd><kbd>↓</kbd> 切换
-        </span>
+          <kbd>↑</kbd><kbd>↓</kbd> {{ $tx('Navigate') }} </span>
         <span class="shortcut-item">
-          <kbd>↵</kbd> 选择
-        </span>
+          <kbd>↵</kbd> {{ $tx('Select') }} </span>
         <span class="shortcut-item">
-          <kbd>Esc</kbd> 关闭
-        </span>
+          <kbd>{{ $tx('Esc') }}</kbd> {{ $tx('Close') }} </span>
       </div>
     </el-dialog>
   </div>

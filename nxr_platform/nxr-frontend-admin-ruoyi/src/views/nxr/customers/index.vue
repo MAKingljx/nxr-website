@@ -1,13 +1,13 @@
 <template>
   <main class="nxr-workspace customer-workspace">
     <nxr-page-header
-      kicker="COLLECTOR ACCOUNTS"
-      title="客户管理"
-      :summary="`共 ${formatNumber(total)} 位用户`"
+      :kicker="$tx('COLLECTOR ACCOUNTS')"
+      :title="$tx('Customer Management')"
+      :summary="$tx('{count} customers', { count: formatNumber(total) })"
     >
       <template #actions>
-        <el-tooltip content="刷新用户列表" placement="bottom">
-          <el-button :icon="Refresh" circle :loading="loading" aria-label="刷新用户列表" @click="loadCustomers" />
+        <el-tooltip :content="$tx('Refresh customers')" placement="bottom">
+          <el-button :icon="Refresh" circle :loading="loading" :aria-label="$tx('Refresh customers')" @click="loadCustomers" />
         </el-tooltip>
       </template>
     </nxr-page-header>
@@ -20,9 +20,9 @@
       :page="queryParams.page"
       :page-size="queryParams.pageSize"
       :show-reset="hasQuery"
-      empty-title="没有找到用户"
-      empty-description="请调整状态或搜索条件后重试。"
-      aria-label="用户数据列表"
+      :empty-title="$tx('No customers found')"
+      :empty-description="$tx('Adjust the status or search criteria and try again.')"
+      :aria-label="$tx('Customer list')"
       @query="loadCustomers(true)"
       @reset="resetQuery"
       @retry="loadCustomers"
@@ -35,15 +35,15 @@
             v-model="queryParams.query"
             :prefix-icon="Search"
             clearable
-            placeholder="搜索昵称、邮箱或手机"
-            aria-label="搜索昵称、邮箱或手机"
+            :placeholder="$tx('Search name, email, or phone')"
+            :aria-label="$tx('Search name, email, or phone')"
             @clear="loadCustomers(true)"
           />
         </div>
       </template>
       <template #filter-actions>
-        <el-button type="primary" :icon="Search" :loading="loading" native-type="submit">搜索</el-button>
-        <el-button v-if="hasQuery" :icon="RefreshLeft" :disabled="loading" @click="resetQuery">重置</el-button>
+        <el-button type="primary" :icon="Search" :loading="loading" native-type="submit">{{ $tx('Search') }}</el-button>
+        <el-button v-if="hasQuery" :icon="RefreshLeft" :disabled="loading" @click="resetQuery">{{ $tx('Reset') }}</el-button>
       </template>
 
       <customer-directory
@@ -91,9 +91,9 @@ const revokingSessions = ref(false)
 const queryParams = reactive({ page: 1, pageSize: 20, status: '', query: '' })
 
 const statusOptions = [
-  { label: '全部用户', value: '' },
-  { label: '正常', value: 'active' },
-  { label: '已停用', value: 'inactive' }
+  { label: tx('All Customers'), value: '' },
+  { label: tx('Active'), value: 'active' },
+  { label: tx('Inactive'), value: 'inactive' }
 ]
 const canManage = auth.hasPermi('nxr:customer:manage')
 const hasQuery = computed(() => Boolean(queryParams.status || queryParams.query))
@@ -109,7 +109,7 @@ async function loadCustomers(resetPage = false) {
     queryParams.page = response.data.page
     queryParams.pageSize = response.data.pageSize
   } catch {
-    loadError.value = '暂时无法读取用户数据，请稍后重试。'
+    loadError.value = tx('Customer data is temporarily unavailable. Try again shortly.')
   } finally {
     loading.value = false
   }
@@ -141,15 +141,15 @@ async function openDetail(customerId) {
 
 function confirmStatus(customer) {
   const nextActive = !customer.active
-  const action = nextActive ? '恢复' : '停用'
+  const action = nextActive ? tx('reactivated') : tx('deactivated')
   const warning = nextActive
-    ? '确认恢复该用户账号？'
-    : '确认停用该用户账号？当前登录会话将退出，持卡和订单记录不会删除。'
+    ? tx('Reactivate this customer account?')
+    : tx('Deactivate this customer account? Active sessions will be signed out; card and order records will remain.')
   proxy.$modal.confirm(warning).then(async () => {
     statusChangingId.value = customer.id
     const response = await updateCustomerStatus(customer.id, nextActive)
     if (detail.value?.customer.id === customer.id) detail.value = response.data
-    proxy.$modal.msgSuccess(`账号已${action}`)
+    proxy.$modal.msgSuccess(tx('Account {action}', { action }))
     await loadCustomers()
   }).catch(() => {}).finally(() => {
     statusChangingId.value = null
@@ -158,11 +158,11 @@ function confirmStatus(customer) {
 
 function confirmRevokeSessions() {
   if (!detail.value) return
-  proxy.$modal.confirm('确认让该用户在全部设备退出登录？账号、持卡和订单记录不会改变。').then(async () => {
+  proxy.$modal.confirm(tx('Sign this customer out on every device? The account, card, and order records will remain unchanged.')).then(async () => {
     revokingSessions.value = true
     const response = await revokeCustomerSessions(detail.value.customer.id)
     detail.value.customer.activeSessionCount = 0
-    proxy.$modal.msgSuccess(`已退出 ${response.data.revokedSessions} 个会话`)
+    proxy.$modal.msgSuccess(tx('{count} sessions revoked', { count: response.data.revokedSessions }))
     await loadCustomers()
   }).catch(() => {}).finally(() => {
     revokingSessions.value = false
@@ -171,19 +171,19 @@ function confirmRevokeSessions() {
 
 async function changeCustomerType(customer, accountTypeCode) {
   if (!customer || customer.accountTypeCode === accountTypeCode) return
-  const label = accountTypeCode === 'merchant' ? '商户' : '普通客户'
+  const label = accountTypeCode === 'merchant' ? tx('Merchant') : tx('Customer')
   try {
     const response = await updateCustomerType(customer.id, accountTypeCode)
     if (detail.value?.customer.id === customer.id) detail.value = response.data
-    proxy.$modal.msgSuccess(`账号类型已改为${label}`)
+    proxy.$modal.msgSuccess(tx('Account type changed to {type}', { type: label }))
     await loadCustomers()
   } catch {
-    proxy.$modal.msgError('账号类型更新失败')
+    proxy.$modal.msgError(tx('Failed to update account type'))
   }
 }
 
 function formatNumber(value) {
-  return new Intl.NumberFormat('zh-CN').format(value || 0)
+  return new Intl.NumberFormat(document.documentElement.lang || 'en').format(value || 0)
 }
 
 loadCustomers()

@@ -16,6 +16,17 @@ class AdminSubmissionControllerSecurityTest {
             int.class,
             int.class,
             String.class,
+            String.class,
+            String.class,
+            String.class,
+            String.class,
+            String.class,
+            String.class,
+            String.class,
+            String.class,
+            String.class,
+            String.class,
+            String.class,
             String.class
         );
 

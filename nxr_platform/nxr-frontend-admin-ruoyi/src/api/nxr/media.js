@@ -80,6 +80,21 @@ function sendMediaBatch(files, onBatchProgress) {
   })
 }
 
+export function importSubmissionMedia(submissionId, files) {
+  const formData = new FormData()
+  for (const file of files) {
+    formData.append('image_files', file)
+  }
+
+  return request({
+    url: `/api/admin/media/submissions/${submissionId}/staged`,
+    method: 'post',
+    data: formData,
+    headers: { 'Content-Type': 'multipart/form-data', repeatSubmit: false },
+    timeout: 1000 * 60 * 10
+  })
+}
+
 // 文件夹导入：分批上传并聚合结果，onProgress(percent, loadedBytes, totalBytes)
 export async function importMediaFolder(files, onProgress) {
   const batches = chunkMediaFiles(files)

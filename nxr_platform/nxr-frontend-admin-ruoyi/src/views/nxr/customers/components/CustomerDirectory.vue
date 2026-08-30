@@ -1,61 +1,61 @@
 <template>
   <section class="directory-table">
     <el-table v-loading="loading" :data="rows" row-key="id" class="desktop-user-table">
-      <el-table-column label="用户" min-width="280" fixed="left">
+      <el-table-column :label="$tx('Customer')" min-width="280" fixed="left">
         <template #default="scope">
           <button type="button" class="identity-cell" @click="$emit('open-detail', scope.row.id)">
             <el-avatar :size="38" :style="{ backgroundColor: avatarColor(scope.row.id) }">
               {{ avatarText(scope.row.displayName) }}
             </el-avatar>
             <span>
-              <strong>{{ scope.row.displayName || '未设置昵称' }}</strong>
+              <strong>{{ scope.row.displayName || $tx('Name not set') }}</strong>
               <small>{{ scope.row.email }}</small>
             </span>
           </button>
         </template>
       </el-table-column>
-      <el-table-column label="卡片" width="132" align="center">
+      <el-table-column :label="$tx('Cards')" width="132" align="center">
         <template #default="scope">
           <span class="count-value">{{ scope.row.activeCardCount }}</span>
-          <small class="count-label">当前 · {{ scope.row.ownershipCount }} 次历史</small>
+          <small class="count-label">{{ $tx('active ·') }} {{ scope.row.ownershipCount }} {{ $tx('events') }}</small>
         </template>
       </el-table-column>
-      <el-table-column label="订单" width="88" align="center">
+      <el-table-column :label="$tx('Orders')" width="88" align="center">
         <template #default="scope">
           <span class="count-value">{{ scope.row.orderCount }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="最近登录" min-width="165">
+      <el-table-column :label="$tx('Last Sign-in')" min-width="165">
         <template #default="scope">
-          <span class="date-value">{{ scope.row.lastLoginAt ? formatCustomerDate(scope.row.lastLoginAt) : '尚未登录' }}</span>
+          <span class="date-value">{{ scope.row.lastLoginAt ? formatCustomerDate(scope.row.lastLoginAt) : $tx('Never signed in') }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="108" align="center">
+      <el-table-column :label="$tx('Status')" width="108" align="center">
         <template #default="scope">
-          <el-tooltip v-if="canManage" :content="scope.row.active ? '账号正常' : '账号已停用'" placement="top">
+          <el-tooltip v-if="canManage" :content="scope.row.active ? $tx('Account active') : $tx('Account inactive')" placement="top">
             <el-switch
               :model-value="scope.row.active"
               :loading="statusChangingId === scope.row.id"
-              :aria-label="scope.row.active ? '停用账号' : '启用账号'"
+              :aria-label="scope.row.active ? $tx('Deactivate account') : $tx('Activate account')"
               @change="$emit('toggle-status', scope.row)"
             />
           </el-tooltip>
           <nxr-status-tag
             v-else
             :code="scope.row.active ? 'active' : 'inactive'"
-            :label="scope.row.active ? '正常' : '停用'"
+            :label="scope.row.active ? $tx('Active') : $tx('Inactive')"
           />
         </template>
       </el-table-column>
-      <el-table-column label="详情" width="72" align="center" fixed="right">
+      <el-table-column :label="$tx('Details')" width="72" align="center" fixed="right">
         <template #default="scope">
-          <el-tooltip content="查看用户详情" placement="top">
-            <el-button link type="primary" :icon="View" aria-label="查看用户详情" @click="$emit('open-detail', scope.row.id)" />
+          <el-tooltip :content="$tx('View customer details')" placement="top">
+            <el-button link type="primary" :icon="View" :aria-label="$tx('View customer details')" @click="$emit('open-detail', scope.row.id)" />
           </el-tooltip>
         </template>
       </el-table-column>
       <template #empty>
-        <el-empty description="没有找到符合条件的用户" :image-size="88" />
+        <el-empty :description="$tx('No matching customers')" :image-size="88" />
       </template>
     </el-table>
 
@@ -67,7 +67,7 @@
               {{ avatarText(customer.displayName) }}
             </el-avatar>
             <span>
-              <strong>{{ customer.displayName || '未设置昵称' }}</strong>
+              <strong>{{ customer.displayName || $tx('Name not set') }}</strong>
               <small>{{ customer.email }}</small>
             </span>
           </button>
@@ -75,31 +75,29 @@
             v-if="canManage"
             :model-value="customer.active"
             :loading="statusChangingId === customer.id"
-            :aria-label="customer.active ? '停用账号' : '启用账号'"
+            :aria-label="customer.active ? $tx('Deactivate account') : $tx('Activate account')"
             @change="$emit('toggle-status', customer)"
           />
           <nxr-status-tag
             v-else
             :code="customer.active ? 'active' : 'inactive'"
-            :label="customer.active ? '正常' : '停用'"
+            :label="customer.active ? $tx('Active') : $tx('Inactive')"
           />
         </header>
         <div class="mobile-user-metrics">
-          <span><strong>{{ customer.activeCardCount }}</strong>当前持卡</span>
-          <span><strong>{{ customer.orderCount }}</strong>送评订单</span>
-          <span><strong>{{ customer.lastLoginAt ? formatCustomerDate(customer.lastLoginAt) : '尚未登录' }}</strong>最近登录</span>
+          <span><strong>{{ customer.activeCardCount }}</strong>{{ $tx('Active Cards') }}</span>
+          <span><strong>{{ customer.orderCount }}</strong>{{ $tx('Grading Orders') }}</span>
+          <span><strong>{{ customer.lastLoginAt ? formatCustomerDate(customer.lastLoginAt) : $tx('Never') }}</strong>{{ $tx('Last Sign-in') }}</span>
         </div>
         <button
           type="button"
           class="mobile-detail-link"
-          :aria-label="`查看 ${customer.displayName || '用户'} 详情`"
+          :aria-label="$tx('View details for {name}', { name: customer.displayName || $tx('customer') })"
           @click="$emit('open-detail', customer.id)"
-        >
-          查看用户详情
-          <el-icon><ArrowRight /></el-icon>
+        > {{ $tx('View Customer Details') }} <el-icon><ArrowRight /></el-icon>
         </button>
       </article>
-      <el-empty v-if="!loading && !rows.length" description="没有找到符合条件的用户" :image-size="72" />
+      <el-empty v-if="!loading && !rows.length" :description="$tx('No matching customers')" :image-size="72" />
     </div>
   </section>
 </template>

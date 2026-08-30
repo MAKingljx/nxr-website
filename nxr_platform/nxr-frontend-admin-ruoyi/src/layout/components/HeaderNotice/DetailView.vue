@@ -1,20 +1,20 @@
 <template>
-  <el-drawer v-model="visible" title="公告详情" direction="rtl" size="50%" append-to-body :before-close="handleClose" class="notice-detail-drawer">
+  <el-drawer v-model="visible" :title="t('notices.details')" direction="rtl" size="50%" append-to-body :before-close="handleClose" class="notice-detail-drawer">
     <div v-loading="loading" class="notice-detail-drawer__body">
       <div v-if="!detail" class="notice-empty">
         <el-icon><Document /></el-icon>
-        <span>暂无数据</span>
+        <span>{{ t('common.noData') }}</span>
       </div>
       <div v-else class="notice-page">
         <div class="notice-type-wrap">
           <span v-if="detail.noticeType === '1'" class="notice-type-tag type-notify">
-            <el-icon><Bell /></el-icon> 通知
+            <el-icon><Bell /></el-icon> {{ t('notices.notice') }}
           </span>
           <span v-else-if="detail.noticeType === '2'" class="notice-type-tag type-announce">
-            <el-icon><Message /></el-icon> 公告
+            <el-icon><Message /></el-icon> {{ t('notices.announcement') }}
           </span>
           <span v-else class="notice-type-tag type-notify">
-            <el-icon><Document /></el-icon> 消息
+            <el-icon><Document /></el-icon> {{ t('notices.message') }}
           </span>
         </div>
 
@@ -31,7 +31,7 @@
           </span>
           <span class="meta-item">
             <span :class="['status-dot', isStatusNormal ? 'status-ok' : 'status-off']"></span>
-            <span>{{ isStatusNormal ? '正常' : '已关闭' }}</span>
+            <span>{{ isStatusNormal ? t('common.active') : t('common.closed') }}</span>
           </span>
         </div>
 
@@ -44,7 +44,7 @@
         <div class="notice-body">
           <div v-if="hasContent" class="notice-content" v-html="detail.noticeContent" />
           <div v-else class="notice-empty notice-empty--inner">
-            <el-icon><Document /></el-icon> 暂无内容
+            <el-icon><Document /></el-icon> {{ t('common.noContent') }}
           </div>
         </div>
       </div>
@@ -53,11 +53,13 @@
 </template>
 
 <script setup>
+import { useI18n } from 'vue-i18n'
 import { getNotice } from '@/api/system/notice'
 
 const visible = ref(false)
 const loading = ref(false)
 const detail = ref(null)
+const { t } = useI18n()
 
 const isStatusNormal = computed(() => {
   const status = detail.value && detail.value.status

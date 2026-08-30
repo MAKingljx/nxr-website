@@ -2,28 +2,26 @@
   <section class="dashboard-panel recent-panel">
     <header class="panel-header">
       <div>
-        <p class="panel-kicker">CERTIFICATES</p>
-        <h2>最近发布</h2>
+        <p class="panel-kicker">{{ $tx('CERTIFICATES') }}</p>
+        <h2>{{ $tx('Recently Published') }}</h2>
       </div>
-      <el-button link type="primary" @click="$emit('view-all')">
-        查看全部
-        <el-icon class="el-icon--right"><ArrowRight /></el-icon>
+      <el-button link type="primary" @click="$emit('view-all')"> {{ $tx('View All') }} <el-icon class="el-icon--right"><ArrowRight /></el-icon>
       </el-button>
     </header>
 
     <el-table v-loading="loading" :data="rows" class="recent-table" height="330">
-      <el-table-column label="证书" min-width="150">
+      <el-table-column :label="$tx('Certificate')" min-width="150">
         <template #default="scope">
           <span class="cert-id">{{ scope.row.certId }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="卡片" min-width="240" show-overflow-tooltip>
+      <el-table-column :label="$tx('Card')" min-width="240" show-overflow-tooltip>
         <template #default="scope">
           <strong class="card-name">{{ scope.row.cardName }}</strong>
-          <span class="card-brand">{{ scope.row.brandName || '未设置品牌' }}</span>
+          <span class="card-brand">{{ scope.row.brandName || $tx('Brand not set') }}</span>
         </template>
       </el-table-column>
-      <el-table-column label="结果" width="180" align="right">
+      <el-table-column :label="$tx('Result')" width="180" align="right">
         <template #default="scope">
           <span class="grade-badge">
             <strong>{{ resultPrimary(scope.row) }}</strong>
@@ -32,7 +30,7 @@
         </template>
       </el-table-column>
       <template #empty>
-        <el-empty description="暂无已发布证书" :image-size="72" />
+        <el-empty :description="$tx('No published certificates yet')" :image-size="72" />
       </template>
     </el-table>
   </section>
@@ -52,14 +50,14 @@ function displayGrade(value) {
 }
 
 function resultPrimary(row) {
-  if (row.productType === 'merch_product' || row.productType === 'label_product') return 'Merch'
-  if (row.productType === 'vintage_product') return 'Vintage'
+  if (row.productType === 'merch_product' || row.productType === 'label_product') return tx('Merch')
+  if (row.productType === 'vintage_product') return tx('Vintage')
   return displayGrade(row.finalGradeValue)
 }
 
 function resultSecondary(row) {
-  if (row.productType === 'merch_product' || row.productType === 'label_product') return row.merchDescription || 'Merch Product'
-  if (row.productType === 'vintage_product') return row.vintageClassification || 'Vintage Card'
+  if (row.productType === 'merch_product' || row.productType === 'label_product') return row.merchDescription || tx('Merch Product')
+  if (row.productType === 'vintage_product') return row.vintageClassification || tx('Vintage Card')
   return row.finalGradeLabel || ''
 }
 

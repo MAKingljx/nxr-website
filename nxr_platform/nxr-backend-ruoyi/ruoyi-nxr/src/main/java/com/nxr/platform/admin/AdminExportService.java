@@ -26,6 +26,17 @@ public class AdminExportService {
 
     private static final Pattern CERT_ID_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{3,64}$");
     private static final DateTimeFormatter FILENAME_TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
+    private static final String EXPORT_FILTER_ALL = "all";
+    private static final String EXPORT_FILTER_GRADE_PREFIX = "grade:";
+    private static final String EXPORT_FILTER_MERCH = ProductTypePolicy.MERCH_PRODUCT;
+    private static final String EXPORT_FILTER_VINTAGE_PREFIX = ProductTypePolicy.VINTAGE_PRODUCT + ":";
+    private static final String PRODUCT_TYPE_SQL = ProductTypePolicy.canonicalSql("s.product_type_code");
+    private static final Map<String, String> VINTAGE_CLASSIFICATIONS = Map.of(
+        "pristine", "Pristine",
+        "nova", "Nova",
+        "legacy", "Legacy",
+        "helix", "Helix"
+    );
 
     private final JdbcClient jdbcClient;
     private final Path exportRoot;
@@ -48,7 +59,7 @@ public class AdminExportService {
             total > 0 && filter.invalidCertIds().isEmpty() && missingCertIds.isEmpty(),
             total,
             20,
-            filter.gradeFilter() == null ? "all" : filter.gradeFilter(),
+            filter.selection(),
             filter.certIds(),
             filter.invalidCertIds(),
             missingCertIds,
@@ -92,7 +103,7 @@ public class AdminExportService {
                 )
                 .param("filename", filename)
                 .param("filterLabel", filterLabel(filter))
-                .param("gradeFilter", filter.gradeFilter())
+                .param("gradeFilter", filter.selection())
                 .param("certIds", String.join(",", filter.certIds()))
                 .param("recordCount", rows.size())
                 .param("fileSizeBytes", fileSize)
@@ -282,16 +293,34 @@ public class AdminExportService {
     private QueryParts buildWhereClause(ExportFilter filter) {
         Map<String, Object> params = new LinkedHashMap<>();
         StringBuilder where = new StringBuilder("WHERE s.status_code IN ('approved', 'published')");
-        if (filter.gradeFilter() != null) {
-            where.append(" AND UPPER(g.final_grade_label) = :gradeFilter");
-            params.put("gradeFilter", filter.gradeFilter().toUpperCase(Locale.ROOT));
+        switch (filter.kind()) {
+            case GRADED -> {
+                where.append(" AND ").append(PRODUCT_TYPE_SQL).append(" = 'graded_card'");
+                if ("Pristine 10".equals(filter.gradeFilter())) {
+                    where.append(
+                        " AND REPLACE(REPLACE(UPPER(TRIM(COALESCE(g.final_grade_label, ''))), ' ', ''), '-', '') LIKE '%STINE10%'"
+                    );
+                } else {
+                    where.append(" AND UPPER(TRIM(COALESCE(g.final_grade_label, ''))) IN (:gradeAliases)");
+                    params.put("gradeAliases", gradeLabelAliases(filter.gradeFilter()));
+                }
+            }
+            case MERCH -> where.append(" AND ").append(PRODUCT_TYPE_SQL).append(" = 'merch_product'");
+            case VINTAGE -> {
+                where.append(" AND ").append(PRODUCT_TYPE_SQL).append(" = 'vintage_product'");
+                where.append(" AND UPPER(TRIM(COALESCE(s.vintage_classification_code, ''))) = :vintageClassification");
+                params.put("vintageClassification", filter.vintageClassification().toUpperCase(Locale.ROOT));
+            }
+            case ALL -> {
+                // All approved products intentionally includes graded, merchandise, and vintage records.
+            }
         }
         if (!filter.certIds().isEmpty()) {
             List<String> normalizedCertIds = filter.certIds().stream().map(certId -> certId.toUpperCase(Locale.ROOT)).toList();
             where.append(" AND UPPER(s.cert_id) IN (:certIds)");
             params.put("certIds", normalizedCertIds);
         }
-        return new QueryParts(where.toString(), params);
+        return new QueryParts(where.append('\n').toString(), params);
     }
 
     private Object cell(Object value) {
@@ -299,13 +328,10 @@ public class AdminExportService {
     }
 
     private ExportFilter normalizeFilter(ExportRequest request) {
-        String gradeFilter = request.gradeFilter() == null ? "" : request.gradeFilter().trim();
-        if (gradeFilter.equalsIgnoreCase("all")) {
-            gradeFilter = "";
-        }
+        ExportSelection selection = parseSelection(request);
         List<String> certIds = new ArrayList<>();
         List<String> invalidCertIds = new ArrayList<>();
-        String rawCertIds = request.certIds() == null ? "" : request.certIds();
+        String rawCertIds = request == null || request.certIds() == null ? "" : request.certIds();
         for (String token : rawCertIds.split("[\\s,，;；]+")) {
             if (token.isBlank()) {
                 continue;
@@ -317,7 +343,89 @@ public class AdminExportService {
                 certIds.add(normalized);
             }
         }
-        return new ExportFilter(gradeFilter.isBlank() ? null : gradeFilter, certIds, invalidCertIds);
+        return new ExportFilter(
+            selection.value(),
+            selection.kind(),
+            selection.gradeFilter(),
+            selection.vintageClassification(),
+            certIds,
+            invalidCertIds
+        );
+    }
+
+    private ExportSelection parseSelection(ExportRequest request) {
+        String rawSelection = request == null ? "" : firstNonBlank(request.exportFilter(), request.gradeFilter());
+        if (rawSelection == null || rawSelection.equalsIgnoreCase(EXPORT_FILTER_ALL)) {
+            return new ExportSelection(EXPORT_FILTER_ALL, ExportFilterKind.ALL, null, null);
+        }
+
+        if (rawSelection.regionMatches(true, 0, EXPORT_FILTER_GRADE_PREFIX, 0, EXPORT_FILTER_GRADE_PREFIX.length())) {
+            String grade = normalizeGrade(rawSelection.substring(EXPORT_FILTER_GRADE_PREFIX.length()));
+            if (grade == null) {
+                throw unsupportedFilter();
+            }
+            return new ExportSelection(EXPORT_FILTER_GRADE_PREFIX + grade, ExportFilterKind.GRADED, grade, null);
+        }
+
+        if (rawSelection.equalsIgnoreCase(EXPORT_FILTER_MERCH)) {
+            return new ExportSelection(EXPORT_FILTER_MERCH, ExportFilterKind.MERCH, null, null);
+        }
+
+        if (rawSelection.regionMatches(true, 0, EXPORT_FILTER_VINTAGE_PREFIX, 0, EXPORT_FILTER_VINTAGE_PREFIX.length())) {
+            String requested = rawSelection.substring(EXPORT_FILTER_VINTAGE_PREFIX.length()).trim().toLowerCase(Locale.ROOT);
+            String classification = VINTAGE_CLASSIFICATIONS.get(requested);
+            if (classification == null) {
+                throw unsupportedFilter();
+            }
+            return new ExportSelection(
+                EXPORT_FILTER_VINTAGE_PREFIX + classification,
+                ExportFilterKind.VINTAGE,
+                null,
+                classification
+            );
+        }
+
+        String legacyGrade = normalizeGrade(rawSelection);
+        if (legacyGrade != null) {
+            return new ExportSelection(EXPORT_FILTER_GRADE_PREFIX + legacyGrade, ExportFilterKind.GRADED, legacyGrade, null);
+        }
+        throw unsupportedFilter();
+    }
+
+    private String firstNonBlank(String primary, String fallback) {
+        if (primary != null && !primary.isBlank()) {
+            return primary.trim();
+        }
+        return fallback == null || fallback.isBlank() ? null : fallback.trim();
+    }
+
+    private String normalizeGrade(String value) {
+        String compact = value == null
+            ? ""
+            : value.trim().toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9.]", "");
+        return switch (compact) {
+            case "8", "8.0", "8.00" -> "8";
+            case "8.5", "8.50" -> "8.5";
+            case "9", "9.0", "9.00" -> "9";
+            case "9.5", "9.50" -> "9.5";
+            case "10", "10.0", "10.00" -> "10";
+            default -> compact.contains("stine10") ? "Pristine 10" : null;
+        };
+    }
+
+    private List<String> gradeLabelAliases(String grade) {
+        return switch (grade) {
+            case "8" -> List.of("8", "8.0", "8.00", "NEAR MINT-MINT 8");
+            case "8.5" -> List.of("8.5", "8.50", "NEAR MINT-MINT+ 8.5");
+            case "9" -> List.of("9", "9.0", "9.00", "MINT 9");
+            case "9.5" -> List.of("9.5", "9.50", "GEM MINT 9.5");
+            case "10" -> List.of("10", "10.0", "10.00");
+            default -> throw unsupportedFilter();
+        };
+    }
+
+    private ResponseStatusException unsupportedFilter() {
+        return new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported export filter");
     }
 
     private ExportJobResponse findJob(String filename) {
@@ -351,20 +459,28 @@ public class AdminExportService {
     }
 
     private String filenameFor(ExportFilter filter) {
-        String grade = filter.gradeFilter() == null ? "all" : filter.gradeFilter().replaceAll("[^A-Za-z0-9_-]", "_");
+        String grade = filter.selection().replaceAll("[^A-Za-z0-9_-]", "_");
         String ids = filter.certIds().isEmpty() ? "" : "_ids_" + filter.certIds().size();
         return "approved_cards_" + grade + ids + "_" + LocalDateTime.now().format(FILENAME_TIMESTAMP) + ".xlsx";
     }
 
     private String filterLabel(ExportFilter filter) {
-        String label = filter.gradeFilter() == null ? "All Grades" : "Grade = " + filter.gradeFilter();
+        String label = switch (filter.kind()) {
+            case ALL -> "All Approved Products";
+            case GRADED -> "Graded Card - " + filter.gradeFilter();
+            case MERCH -> "Merch Product";
+            case VINTAGE -> "Vintage Card - " + filter.vintageClassification();
+        };
         if (!filter.certIds().isEmpty()) {
             label += "; Cert IDs = " + String.join(", ", filter.certIds());
         }
         return label;
     }
 
-    public record ExportRequest(String gradeFilter, String certIds) {
+    public record ExportRequest(String exportFilter, String gradeFilter, String certIds) {
+        public ExportRequest(String gradeFilter, String certIds) {
+            this(null, gradeFilter, certIds);
+        }
     }
 
     public record ExportPreviewResponse(
@@ -423,7 +539,29 @@ public class AdminExportService {
     public record DeleteExportResponse(boolean success, String filename) {
     }
 
-    private record ExportFilter(String gradeFilter, List<String> certIds, List<String> invalidCertIds) {
+    private enum ExportFilterKind {
+        ALL,
+        GRADED,
+        MERCH,
+        VINTAGE
+    }
+
+    private record ExportSelection(
+        String value,
+        ExportFilterKind kind,
+        String gradeFilter,
+        String vintageClassification
+    ) {
+    }
+
+    private record ExportFilter(
+        String selection,
+        ExportFilterKind kind,
+        String gradeFilter,
+        String vintageClassification,
+        List<String> certIds,
+        List<String> invalidCertIds
+    ) {
     }
 
     private record QueryParts(String whereClause, Map<String, Object> params) {

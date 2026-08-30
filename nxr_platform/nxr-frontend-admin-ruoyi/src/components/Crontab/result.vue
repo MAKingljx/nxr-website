@@ -1,11 +1,11 @@
 <template>
 	<div class="popup-result">
-		<p class="title">最近5次运行时间</p>
+		<p class="title">{{ $tx('Next 5 Run Times') }}</p>
 		<ul class="popup-result-scroll">
 			<template v-if='isShow'>
 				<li v-for='item in resultList' :key="item">{{item}}</li>
 			</template>
-			<li v-else>计算结果中...</li>
+			<li v-else>{{ $tx('Calculating...') }}</li>
 		</ul>
 	</div>
 </template>
@@ -318,11 +318,11 @@ function expressionChange() {
     }
     // 判断100年内的结果条数
     if (resultArr.length === 0) {
-        resultList.value = ['没有达到条件的结果！']
+        resultList.value = [tx('No matching run time found.')]
     } else {
         resultList.value = resultArr
         if (resultArr.length !== 5) {
-            resultList.value.push('最近100年内只有上面' + resultArr.length + '条结果！')
+            resultList.value.push(tx('Only ') + resultArr.length + tx(' matching run times were found in the next 100 years.'))
         }
     }
     // 计算完成-显示结果

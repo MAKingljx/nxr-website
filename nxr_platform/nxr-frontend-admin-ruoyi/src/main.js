@@ -5,7 +5,6 @@ import Cookies from 'js-cookie'
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
 import 'element-plus/theme-chalk/dark/css-vars.css'
-import locale from 'element-plus/es/locale/lang/zh-cn'
 
 import '@/assets/styles/index.scss' // global css
 // Phoenix Component Library：仅加载当前实际复用组件对应的样式，避免引入整套展厅 CSS。
@@ -14,6 +13,7 @@ import '@phoenix-gallery/platform-primitives.css'
 import '@phoenix-gallery/analytics-primitives.css'
 
 import App from './App'
+import { i18n, tx } from './i18n'
 import store from './store'
 import router from './router'
 import directive from './directive' // directive
@@ -50,6 +50,8 @@ import DictTag from '@/components/DictTag'
 
 const app = createApp(App)
 
+app.config.globalProperties.$tx = tx
+
 // 全局方法挂载
 app.config.globalProperties.useDict = useDict
 app.config.globalProperties.download = download
@@ -72,6 +74,7 @@ app.component('Editor', Editor)
 
 app.use(router)
 app.use(store)
+app.use(i18n)
 app.use(plugins)
 app.use(elementIcons)
 app.component('svg-icon', SvgIcon)
@@ -80,7 +83,6 @@ directive(app)
 
 // 使用element-plus 并且设置全局的大小
 app.use(ElementPlus, {
-  locale: locale,
   // 支持 large、default、small
   size: Cookies.get('size') || 'default'
 })

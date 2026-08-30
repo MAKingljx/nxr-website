@@ -283,6 +283,22 @@ public class AdminMediaService {
     }
 
     public MediaImportResponse importFolder(List<MultipartFile> imageFiles) {
+        return importMedia(imageFiles, null);
+    }
+
+    public MediaImportResponse importSubmissionMedia(long submissionId, List<MultipartFile> imageFiles) {
+        AdminMediaPersistenceService.SubmissionForMediaImport submission =
+            adminMediaPersistenceService.loadSubmissionForMediaImport(submissionId);
+        return importMedia(
+            imageFiles,
+            Map.of(submission.certId().toUpperCase(Locale.ROOT), submission.id())
+        );
+    }
+
+    private MediaImportResponse importMedia(
+        List<MultipartFile> imageFiles,
+        Map<String, Long> allowedSubmissionByCertId
+    ) {
         List<MultipartFile> uploadedFiles = imageFiles == null
             ? List.of()
             : imageFiles.stream().filter(file -> file != null && isPresent(file.getOriginalFilename())).toList();
@@ -349,9 +365,22 @@ public class AdminMediaService {
             );
         }
 
-        Map<String, Long> submissionByCertId = adminMediaPersistenceService.loadSubmissionIdsForImport(
-            candidates.keySet().stream().map(MediaCandidateKey::certId).toList()
-        );
+        List<String> candidateCertIds = candidates.keySet().stream()
+            .map(MediaCandidateKey::certId)
+            .distinct()
+            .toList();
+        Map<String, Long> submissionByCertId;
+        if (allowedSubmissionByCertId == null) {
+            submissionByCertId = adminMediaPersistenceService.loadSubmissionIdsForImport(candidateCertIds);
+        } else {
+            submissionByCertId = new LinkedHashMap<>();
+            for (String certId : candidateCertIds) {
+                Long allowedSubmissionId = allowedSubmissionByCertId.get(certId);
+                if (allowedSubmissionId != null) {
+                    submissionByCertId.put(certId, allowedSubmissionId);
+                }
+            }
+        }
         List<String> missingCertIds = candidates.keySet().stream()
             .map(MediaCandidateKey::certId)
             .distinct()
