@@ -200,6 +200,17 @@ class NonGradedReadPathTest {
         );
         jdbcTemplate.execute(
             """
+            CREATE TABLE grading_order (
+                id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                order_no VARCHAR(40) NOT NULL,
+                status_code VARCHAR(32) NOT NULL,
+                total_card_count INT NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        );
+        jdbcTemplate.execute(
+            """
             CREATE TABLE certificate_ownership (
                 id BIGINT PRIMARY KEY,
                 cert_id VARCHAR(32) NOT NULL,
