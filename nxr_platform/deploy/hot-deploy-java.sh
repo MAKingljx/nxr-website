@@ -25,7 +25,7 @@ GREEN_PORT="${NXR_HOT_DEPLOY_GREEN_PORT:-18089}"
 HEALTH_TIMEOUT="${NXR_HOT_DEPLOY_HEALTH_TIMEOUT:-90}"
 DRAIN_TIMEOUT="${NXR_HOT_DEPLOY_DRAIN_TIMEOUT:-300}"
 MIN_HEADROOM_KB="${NXR_HOT_DEPLOY_MIN_HEADROOM_KB:-786432}"
-JAVA_DATABASE="${NXR_HOT_DEPLOY_DATABASE:-nxr_java_stage}"
+JAVA_DATABASE_OVERRIDE="${NXR_HOT_DEPLOY_DATABASE:-}"
 
 SYSTEMCTL_BIN="${NXR_HOT_DEPLOY_SYSTEMCTL_BIN:-systemctl}"
 NGINX_BIN="${NXR_HOT_DEPLOY_NGINX_BIN:-nginx}"
@@ -290,11 +290,32 @@ check_memory_headroom() {
     die "Insufficient memory headroom for a second Java slot (${headroom_kb}KB available)."
 }
 
+resolve_java_database() {
+  local jdbc_url database
+  if [[ -n "$JAVA_DATABASE_OVERRIDE" ]]; then
+    database="$JAVA_DATABASE_OVERRIDE"
+  elif [[ -r "$CONFIG_ROOT/stage.env" ]]; then
+    jdbc_url="$(sed -n 's/^NXR_DB_URL=//p' "$CONFIG_ROOT/stage.env" | tail -n 1)"
+    case "$jdbc_url" in
+      jdbc:mysql://*/*)
+        jdbc_url="${jdbc_url%%\?*}"
+        database="${jdbc_url##*/}"
+        ;;
+      *) die "Unable to resolve the Java database from the shared runtime configuration." ;;
+    esac
+  else
+    die "Missing Java database configuration: $CONFIG_ROOT/stage.env"
+  fi
+  [[ "$database" =~ ^[A-Za-z0-9_]+$ ]] || die "The configured Java database name is unsafe."
+  printf '%s\n' "$database"
+}
+
 check_no_enabled_jobs() {
-  local enabled_jobs
-  if ! enabled_jobs="$("$MYSQL_BIN" --batch --skip-column-names "$JAVA_DATABASE" \
+  local java_database enabled_jobs
+  java_database="$(resolve_java_database)"
+  if ! enabled_jobs="$("$MYSQL_BIN" --batch --skip-column-names "$java_database" \
       -e "SELECT COUNT(*) FROM sys_job WHERE status = '0';" 2>/dev/null)"; then
-    die "Unable to verify Quartz job state; refusing an overlapping backend start."
+    die "Unable to verify Quartz job state in the configured Java database; refusing an overlapping backend start."
   fi
   [[ "$enabled_jobs" =~ ^[0-9]+$ ]] || die "Unexpected Quartz job count: $enabled_jobs"
   (( enabled_jobs == 0 )) || \

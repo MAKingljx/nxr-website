@@ -41,6 +41,12 @@
             <artifactId>spring-boot-starter-jdbc</artifactId>
         </dependency>
 
+        <!-- Cloudflare R2 uses the S3-compatible API. Credentials stay in environment variables. -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3</artifactId>
+        </dependency>
+
         <!-- 候补名单 SMTP 兜底通知（Resend 主通道使用 JDK HttpClient） -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

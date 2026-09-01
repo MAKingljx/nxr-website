@@ -13,10 +13,13 @@ replace or proxy the existing Python services.
 - Optional remote Java builds remain loopback-only on `127.0.0.1:18082` and
   `127.0.0.1:18083`; the existing TLS virtual host exposes only
   `/java-stage/` and `/java-stage-admin/`.
-- Java uses the new MySQL database `nxr_java_stage` and account
-  `nxr_java_stage`; it never reads or writes `/root/nxr_website/Data`.
+- Java uses the independent MySQL database named by `NXR_DB_URL` and the
+  scoped Java account; it never reads or writes `/root/nxr_website/Data`.
 - The optional Python-to-Java synchronizer reads both SQLite files read-only.
   MySQL failures stop only that one-shot task and never enter Flask requests.
+- Java may read staged files through a dedicated read-only bind mount at
+  `/var/lib/nxr-java/python-uploads`. It cannot alter or delete Python queue
+  images, and publication copies them into the active Java storage provider.
 - Redis is a dedicated instance on `127.0.0.1:16379`.
 - Real secrets live only in root-readable `/etc/nxr-java` files.
 
@@ -67,8 +70,9 @@ The inactive Java slot is normally stopped.
   Nginx/post-switch check automatically restores the previous configuration.
 - Blue/green overlap is refused when available memory plus free swap is below
   768 MB, the target slot is already running, or any `sys_job` row is enabled.
-  The last guard prevents duplicate Quartz execution until clustered scheduling
-  is introduced. The current stage jobs are expected to remain paused.
+  The job guard resolves the actual database from `NXR_DB_URL` (or the explicit
+  `NXR_HOT_DEPLOY_DATABASE` override), preventing a stale default database from
+  bypassing the check. The current stage jobs are expected to remain paused.
 - These operations never copy, replace, restore, or write the Python `Data/`
   directory and never change the Python ports or public catch-all routes.
 
@@ -132,8 +136,8 @@ Nginx file, or start both slots outside the deployment command.
 ## Python data synchronization
 
 Install `08_nxr_python_sync.sql` only in the cloned Java database selected for
-migration. Apply `10_nxr_product_types.sql` after a verified MySQL backup when
-upgrading a database created before product types were introduced. Put its
+migration. Apply any missing versioned scripts through
+`15_nxr_python_feature_parity.sql` after a verified Java MySQL backup. Put its
 exact database name twice in the root-readable
 `/etc/nxr-java/python-sync.env`, install the `nxr-python-java-sync` service and
 timer, then run one manual full synchronization before enabling the timer.
@@ -149,12 +153,13 @@ a vintage product; do not grant row deletion on any other table. Store the
 generated password only in the same root-readable synchronization environment
 file.
 
-The timer runs the synchronizer once per day at 00:00 Asia/Shanghai. It has no
-minute-level, boot-time, or missed-run catch-up trigger. The synchronizer still
-selects a full source reconciliation when the previous full sync is at least 24
-hours old. Source cursors and target writes commit in the same MySQL transaction.
-The SQLite files remain the source of truth and are never opened writable by
-this task.
+The timer checks for changes about every five minutes, without a persistent
+missed-run catch-up. Incremental runs load only changed certificate records; a
+full source reconciliation is selected when the previous full sync is at least
+24 hours old. Source fingerprints prevent an unchanged full run from reverting
+a completed Java workflow. Source cursors and target writes commit in the same
+MySQL transaction. The SQLite files remain the source of truth and are never
+opened writable by this task.
 
 ## Optional HTTPS access
 

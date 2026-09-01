@@ -184,7 +184,9 @@ class SyncSource(domain.SourceBundle):
             mapped = dict(card_rows[0])
             mapped.update(
                 {
+                    "temp_joined_cert_id": temp_row["cert_id"] if temp_row else None,
                     "temp_entry_notes": temp_row["entry_notes"] if temp_row else None,
+                    "temp_entry_by": temp_row["entry_by"] if temp_row else None,
                     "temp_approved_at": temp_row["approved_at"] if temp_row else None,
                     "temp_approval_sequence": (
                         temp_row["approval_sequence"] if temp_row else None
@@ -192,6 +194,10 @@ class SyncSource(domain.SourceBundle):
                     "temp_upload_completed": (
                         temp_row["upload_completed"] if temp_row else None
                     ),
+                    "temp_upload_status": temp_row["upload_status"] if temp_row else None,
+                    "temp_upload_started": temp_row["upload_started"] if temp_row else None,
+                    "temp_upload_error": temp_row["upload_error"] if temp_row else None,
+                    "temp_server_response": temp_row["server_response"] if temp_row else None,
                 }
             )
             return domain.map_published_row(mapped)
@@ -283,6 +289,7 @@ class SyncState:
 @dataclass(frozen=True)
 class SyncRows:
     submissions: Iterable[dict[str, Any]]
+    match_projections: Iterable[dict[str, Any]]
     waitlist: Iterable[Sequence[Any]]
     brands: Iterable[Sequence[Any]]
     sports_types: Iterable[Sequence[Any]]
@@ -450,6 +457,17 @@ class PythonToJavaSync:
                 ),
                 "submissions",
             ),
+            "match_projections": self._load(
+                helper,
+                f"INSERT INTO tmp_nxr_match_projection "
+                f"({','.join(domain.MATCH_PROJECTION_COLUMNS)}) "
+                f"VALUES ({','.join(['%s'] * len(domain.MATCH_PROJECTION_COLUMNS))})",
+                (
+                    tuple(row[column] for column in domain.MATCH_PROJECTION_COLUMNS)
+                    for row in rows.match_projections
+                ),
+                "match_projections",
+            ),
             "waitlist": self._load(
                 helper,
                 "INSERT INTO tmp_nxr_waitlist (email,created_at) VALUES (%s,%s)",
@@ -498,6 +516,7 @@ class PythonToJavaSync:
                     captured = source.capture_cursor()
                     rows = SyncRows(
                         submissions=source.iter_submissions(),
+                        match_projections=source.iter_match_projections(),
                         waitlist=source.iter_waitlist(),
                         brands=source.iter_brands(),
                         sports_types=source.iter_sports_types(),
@@ -514,8 +533,14 @@ class PythonToJavaSync:
         ) as source:
             source.validate_light()
             captured = source.capture_cursor()
+            changed_cert_ids = source.changed_cert_ids(previous)
             rows = SyncRows(
-                submissions=list(source.iter_changed_submissions(previous)),
+                submissions=[
+                    row
+                    for cert_id in changed_cert_ids
+                    if (row := source.submission_for_cert(cert_id)) is not None
+                ],
+                match_projections=list(source.iter_match_projections(changed_cert_ids)),
                 waitlist=list(source.iter_waitlist_since(previous)),
                 brands=list(source.iter_brands()),
                 sports_types=list(source.iter_sports_types()),
@@ -543,7 +568,24 @@ class PythonToJavaSync:
                 + row["cert_id"]
             )
 
-    def merge(self) -> None:
+    def merge(self, *, full_refresh: bool = False) -> None:
+        with self.db.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE tmp_nxr_submission t
+                LEFT JOIN nxr_python_sync_submission m ON m.cert_id=t.cert_id
+                SET t.sync_required=CASE
+                    WHEN m.cert_id IS NULL OR m.source_fingerprint<>t.source_fingerprint
+                    THEN 1 ELSE 0 END
+                """
+            )
+            cursor.execute(
+                "SELECT COUNT(*) AS count FROM tmp_nxr_submission WHERE sync_required=1"
+            )
+            print(f"sync_changed_submissions={cursor.fetchone()['count']}")
+        if full_refresh:
+            with self.db.cursor() as cursor:
+                cursor.execute("DELETE FROM nxr_python_match_projection")
         statements = (
             """
             INSERT INTO grading_submission (
@@ -552,7 +594,7 @@ class PythonToJavaSync:
                 grading_phase_code,card_category_code,product_type_code,
                 vintage_classification_code,merch_description,movie_name,release_year,
                 production_company,film_type,sports_type,group_name,approval_sequence,
-                entry_notes,entry_by_user_id,approved_by_user_id,approved_at,published_at,
+                entry_notes,entry_by_user_id,entry_by_label,approved_by_user_id,approved_at,published_at,
                 created_at,updated_at
             )
             SELECT
@@ -561,8 +603,9 @@ class PythonToJavaSync:
                 grading_phase_code,card_category_code,product_type_code,
                 vintage_classification_code,merch_description,movie_name,release_year,
                 production_company,film_type,sports_type,group_name,approval_sequence,
-                entry_notes,NULL,NULL,approved_at,published_at,created_at,updated_at
+                entry_notes,NULL,entry_by_label,NULL,approved_at,published_at,created_at,updated_at
             FROM tmp_nxr_submission
+            WHERE sync_required=1
             ON DUPLICATE KEY UPDATE
                 card_name=VALUES(card_name),year_label=VALUES(year_label),
                 brand_name=VALUES(brand_name),player_name=VALUES(player_name),
@@ -579,6 +622,7 @@ class PythonToJavaSync:
                 production_company=VALUES(production_company),film_type=VALUES(film_type),
                 sports_type=VALUES(sports_type),group_name=VALUES(group_name),
                 approval_sequence=VALUES(approval_sequence),entry_notes=VALUES(entry_notes),
+                entry_by_label=VALUES(entry_by_label),
                 approved_at=VALUES(approved_at),published_at=VALUES(published_at),
                 created_at=VALUES(created_at),updated_at=VALUES(updated_at)
             """,
@@ -587,30 +631,211 @@ class PythonToJavaSync:
             FROM grading_score g
             JOIN grading_submission s ON s.id=g.submission_id
             JOIN tmp_nxr_submission t ON t.cert_id=s.cert_id
-            WHERE t.product_type_code<>'graded_card'
+            WHERE t.sync_required=1
+              AND t.product_type_code<>'graded_card'
             """,
             """
             INSERT INTO grading_score (
                 submission_id,centering_score,edges_score,corners_score,surface_score,
-                final_grade_value,final_grade_label,ai_grade_value,ai_confidence_value,
+                final_grade_value,final_grade_label,ai_grade_value,
+                ai_centering_score,ai_edges_score,ai_corners_score,ai_surface_score,
+                ai_confidence_value,
                 decision_method_code,decision_notes,created_at,updated_at
             )
             SELECT
                 s.id,t.centering_score,t.edges_score,t.corners_score,t.surface_score,
-                t.final_grade_value,t.final_grade_label,t.ai_grade_value,t.ai_confidence_value,
+                t.final_grade_value,t.final_grade_label,t.ai_grade_value,
+                t.ai_centering_score,t.ai_edges_score,t.ai_corners_score,t.ai_surface_score,
+                t.ai_confidence_value,
                 t.decision_method_code,t.decision_notes,t.created_at,t.updated_at
             FROM tmp_nxr_submission t
             JOIN grading_submission s ON s.cert_id=t.cert_id
-            WHERE t.product_type_code='graded_card'
+            WHERE t.sync_required=1
+              AND t.product_type_code='graded_card'
             ON DUPLICATE KEY UPDATE
                 centering_score=VALUES(centering_score),edges_score=VALUES(edges_score),
                 corners_score=VALUES(corners_score),surface_score=VALUES(surface_score),
                 final_grade_value=VALUES(final_grade_value),
                 final_grade_label=VALUES(final_grade_label),
                 ai_grade_value=VALUES(ai_grade_value),
+                ai_centering_score=VALUES(ai_centering_score),
+                ai_edges_score=VALUES(ai_edges_score),
+                ai_corners_score=VALUES(ai_corners_score),
+                ai_surface_score=VALUES(ai_surface_score),
                 ai_confidence_value=VALUES(ai_confidence_value),
                 decision_method_code=VALUES(decision_method_code),
                 decision_notes=VALUES(decision_notes),updated_at=VALUES(updated_at)
+            """,
+            """
+            INSERT INTO submission_upload_state (
+                submission_id,status_code,claim_token,claimed_front_media_id,
+                claimed_back_media_id,started_at,completed_at,error_message,
+                response_payload_json,triggered_by_user_id,created_at,updated_at
+            )
+            SELECT
+                s.id,t.upload_status,NULL,NULL,NULL,t.upload_started_at,
+                t.upload_completed_at,t.upload_error,t.server_response,NULL,
+                t.created_at,t.updated_at
+            FROM tmp_nxr_submission t
+            JOIN grading_submission s ON s.cert_id=t.cert_id
+            WHERE t.sync_required=1
+            ON DUPLICATE KEY UPDATE
+                started_at=IF(
+                    submission_upload_state.status_code='uploading'
+                    AND submission_upload_state.claim_token IS NOT NULL
+                    AND submission_upload_state.updated_at > CURRENT_TIMESTAMP - INTERVAL 15 MINUTE,
+                    submission_upload_state.started_at,
+                    VALUES(started_at)
+                ),
+                completed_at=IF(
+                    submission_upload_state.status_code='uploading'
+                    AND submission_upload_state.claim_token IS NOT NULL
+                    AND submission_upload_state.updated_at > CURRENT_TIMESTAMP - INTERVAL 15 MINUTE,
+                    submission_upload_state.completed_at,
+                    VALUES(completed_at)
+                ),
+                error_message=IF(
+                    submission_upload_state.status_code='uploading'
+                    AND submission_upload_state.claim_token IS NOT NULL
+                    AND submission_upload_state.updated_at > CURRENT_TIMESTAMP - INTERVAL 15 MINUTE,
+                    submission_upload_state.error_message,
+                    VALUES(error_message)
+                ),
+                response_payload_json=IF(
+                    submission_upload_state.status_code='uploading'
+                    AND submission_upload_state.claim_token IS NOT NULL
+                    AND submission_upload_state.updated_at > CURRENT_TIMESTAMP - INTERVAL 15 MINUTE,
+                    submission_upload_state.response_payload_json,
+                    VALUES(response_payload_json)
+                ),
+                claimed_front_media_id=IF(
+                    submission_upload_state.status_code='uploading'
+                    AND submission_upload_state.claim_token IS NOT NULL
+                    AND submission_upload_state.updated_at > CURRENT_TIMESTAMP - INTERVAL 15 MINUTE,
+                    submission_upload_state.claimed_front_media_id,
+                    NULL
+                ),
+                claimed_back_media_id=IF(
+                    submission_upload_state.status_code='uploading'
+                    AND submission_upload_state.claim_token IS NOT NULL
+                    AND submission_upload_state.updated_at > CURRENT_TIMESTAMP - INTERVAL 15 MINUTE,
+                    submission_upload_state.claimed_back_media_id,
+                    NULL
+                ),
+                triggered_by_user_id=IF(
+                    submission_upload_state.status_code='uploading'
+                    AND submission_upload_state.claim_token IS NOT NULL
+                    AND submission_upload_state.updated_at > CURRENT_TIMESTAMP - INTERVAL 15 MINUTE,
+                    submission_upload_state.triggered_by_user_id,
+                    NULL
+                ),
+                status_code=IF(
+                    submission_upload_state.status_code='uploading'
+                    AND submission_upload_state.claim_token IS NOT NULL
+                    AND submission_upload_state.updated_at > CURRENT_TIMESTAMP - INTERVAL 15 MINUTE,
+                    submission_upload_state.status_code,
+                    VALUES(status_code)
+                ),
+                claim_token=IF(
+                    submission_upload_state.status_code='uploading'
+                    AND submission_upload_state.claim_token IS NOT NULL
+                    AND submission_upload_state.updated_at > CURRENT_TIMESTAMP - INTERVAL 15 MINUTE,
+                    submission_upload_state.claim_token,
+                    NULL
+                ),
+                updated_at=IF(
+                    submission_upload_state.status_code='uploading'
+                    AND submission_upload_state.claim_token IS NOT NULL
+                    AND submission_upload_state.updated_at > CURRENT_TIMESTAMP - INTERVAL 15 MINUTE,
+                    submission_upload_state.updated_at,
+                    VALUES(updated_at)
+                )
+            """,
+            """
+            INSERT INTO submission_media (
+                submission_id,cert_id,media_side_code,media_stage_code,
+                storage_provider_code,storage_bucket,storage_key,public_url,
+                sort_order,is_active,original_filename,mime_type,created_at,updated_at
+            )
+            SELECT
+                s.id,t.cert_id,'front','staged','legacy-python','python-admin-uploads',
+                t.staged_front_key,CONCAT('/media/staged/',t.staged_front_key),1,1,
+                t.staged_front_key,
+                CASE LOWER(SUBSTRING_INDEX(t.staged_front_key,'.',-1))
+                    WHEN 'png' THEN 'image/png'
+                    WHEN 'webp' THEN 'image/webp'
+                    ELSE 'image/jpeg'
+                END,
+                t.created_at,t.updated_at
+            FROM tmp_nxr_submission t
+            JOIN grading_submission s ON s.cert_id=t.cert_id
+            LEFT JOIN submission_upload_state u ON u.submission_id=s.id
+            WHERE t.sync_required=1
+              AND t.staged_front_key IS NOT NULL
+              AND NOT (
+                  u.status_code='uploading' AND u.claim_token IS NOT NULL
+                  AND u.updated_at > CURRENT_TIMESTAMP - INTERVAL 15 MINUTE
+              )
+            ON DUPLICATE KEY UPDATE
+                cert_id=IF(submission_media.storage_provider_code='legacy-python',VALUES(cert_id),submission_media.cert_id),
+                storage_bucket=IF(submission_media.storage_provider_code='legacy-python',VALUES(storage_bucket),submission_media.storage_bucket),
+                storage_key=IF(submission_media.storage_provider_code='legacy-python',VALUES(storage_key),submission_media.storage_key),
+                public_url=IF(submission_media.storage_provider_code='legacy-python',VALUES(public_url),submission_media.public_url),
+                is_active=IF(submission_media.storage_provider_code='legacy-python',1,submission_media.is_active),
+                original_filename=IF(submission_media.storage_provider_code='legacy-python',VALUES(original_filename),submission_media.original_filename),
+                mime_type=IF(submission_media.storage_provider_code='legacy-python',VALUES(mime_type),submission_media.mime_type),
+                updated_at=IF(submission_media.storage_provider_code='legacy-python',VALUES(updated_at),submission_media.updated_at)
+            """,
+            """
+            INSERT INTO submission_media (
+                submission_id,cert_id,media_side_code,media_stage_code,
+                storage_provider_code,storage_bucket,storage_key,public_url,
+                sort_order,is_active,original_filename,mime_type,created_at,updated_at
+            )
+            SELECT
+                s.id,t.cert_id,'back','staged','legacy-python','python-admin-uploads',
+                t.staged_back_key,CONCAT('/media/staged/',t.staged_back_key),1,1,
+                t.staged_back_key,
+                CASE LOWER(SUBSTRING_INDEX(t.staged_back_key,'.',-1))
+                    WHEN 'png' THEN 'image/png'
+                    WHEN 'webp' THEN 'image/webp'
+                    ELSE 'image/jpeg'
+                END,
+                t.created_at,t.updated_at
+            FROM tmp_nxr_submission t
+            JOIN grading_submission s ON s.cert_id=t.cert_id
+            LEFT JOIN submission_upload_state u ON u.submission_id=s.id
+            WHERE t.sync_required=1
+              AND t.staged_back_key IS NOT NULL
+              AND NOT (
+                  u.status_code='uploading' AND u.claim_token IS NOT NULL
+                  AND u.updated_at > CURRENT_TIMESTAMP - INTERVAL 15 MINUTE
+              )
+            ON DUPLICATE KEY UPDATE
+                cert_id=IF(submission_media.storage_provider_code='legacy-python',VALUES(cert_id),submission_media.cert_id),
+                storage_bucket=IF(submission_media.storage_provider_code='legacy-python',VALUES(storage_bucket),submission_media.storage_bucket),
+                storage_key=IF(submission_media.storage_provider_code='legacy-python',VALUES(storage_key),submission_media.storage_key),
+                public_url=IF(submission_media.storage_provider_code='legacy-python',VALUES(public_url),submission_media.public_url),
+                is_active=IF(submission_media.storage_provider_code='legacy-python',1,submission_media.is_active),
+                original_filename=IF(submission_media.storage_provider_code='legacy-python',VALUES(original_filename),submission_media.original_filename),
+                mime_type=IF(submission_media.storage_provider_code='legacy-python',VALUES(mime_type),submission_media.mime_type),
+                updated_at=IF(submission_media.storage_provider_code='legacy-python',VALUES(updated_at),submission_media.updated_at)
+            """,
+            """
+            UPDATE submission_media m
+            JOIN grading_submission s ON s.id=m.submission_id
+            JOIN tmp_nxr_submission t ON t.cert_id=s.cert_id
+            LEFT JOIN submission_upload_state u ON u.submission_id=s.id
+            SET m.public_url=NULL,m.is_active=0,m.updated_at=t.updated_at
+            WHERE t.sync_required=1
+              AND m.media_stage_code='staged'
+              AND m.storage_provider_code='legacy-python'
+              AND NOT (
+                  u.status_code='uploading' AND u.claim_token IS NOT NULL
+                  AND u.updated_at > CURRENT_TIMESTAMP - INTERVAL 15 MINUTE
+              )
+              AND ((m.media_side_code='front' AND t.staged_front_key IS NULL)
+                OR (m.media_side_code='back' AND t.staged_back_key IS NULL))
             """,
             """
             INSERT INTO submission_media (
@@ -624,11 +849,15 @@ class PythonToJavaSync:
                 t.published_at,t.updated_at
             FROM tmp_nxr_submission t
             JOIN grading_submission s ON s.cert_id=t.cert_id
-            WHERE t.is_published=1 AND t.published_front_url IS NOT NULL
+            WHERE t.sync_required=1
+              AND t.is_published=1 AND t.published_front_url IS NOT NULL
             ON DUPLICATE KEY UPDATE
-                cert_id=VALUES(cert_id),storage_provider_code=VALUES(storage_provider_code),
-                storage_bucket=VALUES(storage_bucket),storage_key=VALUES(storage_key),
-                public_url=VALUES(public_url),is_active=1,updated_at=VALUES(updated_at)
+                cert_id=IF(submission_media.storage_provider_code='legacy-python',VALUES(cert_id),submission_media.cert_id),
+                storage_bucket=IF(submission_media.storage_provider_code='legacy-python',VALUES(storage_bucket),submission_media.storage_bucket),
+                storage_key=IF(submission_media.storage_provider_code='legacy-python',VALUES(storage_key),submission_media.storage_key),
+                public_url=IF(submission_media.storage_provider_code='legacy-python',VALUES(public_url),submission_media.public_url),
+                is_active=IF(submission_media.storage_provider_code='legacy-python',1,submission_media.is_active),
+                updated_at=IF(submission_media.storage_provider_code='legacy-python',VALUES(updated_at),submission_media.updated_at)
             """,
             """
             INSERT INTO submission_media (
@@ -642,18 +871,23 @@ class PythonToJavaSync:
                 t.published_at,t.updated_at
             FROM tmp_nxr_submission t
             JOIN grading_submission s ON s.cert_id=t.cert_id
-            WHERE t.is_published=1 AND t.published_back_url IS NOT NULL
+            WHERE t.sync_required=1
+              AND t.is_published=1 AND t.published_back_url IS NOT NULL
             ON DUPLICATE KEY UPDATE
-                cert_id=VALUES(cert_id),storage_provider_code=VALUES(storage_provider_code),
-                storage_bucket=VALUES(storage_bucket),storage_key=VALUES(storage_key),
-                public_url=VALUES(public_url),is_active=1,updated_at=VALUES(updated_at)
+                cert_id=IF(submission_media.storage_provider_code='legacy-python',VALUES(cert_id),submission_media.cert_id),
+                storage_bucket=IF(submission_media.storage_provider_code='legacy-python',VALUES(storage_bucket),submission_media.storage_bucket),
+                storage_key=IF(submission_media.storage_provider_code='legacy-python',VALUES(storage_key),submission_media.storage_key),
+                public_url=IF(submission_media.storage_provider_code='legacy-python',VALUES(public_url),submission_media.public_url),
+                is_active=IF(submission_media.storage_provider_code='legacy-python',1,submission_media.is_active),
+                updated_at=IF(submission_media.storage_provider_code='legacy-python',VALUES(updated_at),submission_media.updated_at)
             """,
             """
             UPDATE submission_media m
             JOIN grading_submission s ON s.id=m.submission_id
             JOIN tmp_nxr_submission t ON t.cert_id=s.cert_id
             SET m.public_url=NULL,m.is_active=0,m.updated_at=t.updated_at
-            WHERE t.is_published=1
+            WHERE t.sync_required=1
+              AND t.is_published=1
               AND m.media_stage_code='published'
               AND m.storage_provider_code='legacy-python'
               AND ((m.media_side_code='front' AND t.published_front_url IS NULL)
@@ -681,7 +915,8 @@ class PythonToJavaSync:
              AND back_media.media_side_code='back'
              AND back_media.sort_order=1
              AND back_media.is_active=1
-            WHERE t.is_published=1
+            WHERE t.sync_required=1
+              AND t.is_published=1
             ON DUPLICATE KEY UPDATE
                 cert_id=VALUES(cert_id),verification_slug=VALUES(verification_slug),
                 qr_url=VALUES(qr_url),published_at=VALUES(published_at),
@@ -764,6 +999,29 @@ class PythonToJavaSync:
                 source_fingerprint=VALUES(source_fingerprint),
                 source_updated_at=VALUES(source_updated_at)
             """,
+            """
+            INSERT INTO nxr_python_match_projection (
+                source_code,cert_id,product_type_code,card_category_code,
+                set_name,card_number,card_name,brand_name,year_label,variety_name,
+                language_code,sports_type,group_name,merch_description,status_code,
+                source_updated_at
+            )
+            SELECT
+                source_code,cert_id,product_type_code,card_category_code,
+                set_name,card_number,card_name,brand_name,year_label,variety_name,
+                language_code,sports_type,group_name,merch_description,status_code,
+                source_updated_at
+            FROM tmp_nxr_match_projection
+            ON DUPLICATE KEY UPDATE
+                product_type_code=VALUES(product_type_code),
+                card_category_code=VALUES(card_category_code),
+                set_name=VALUES(set_name),card_number=VALUES(card_number),
+                card_name=VALUES(card_name),brand_name=VALUES(brand_name),
+                year_label=VALUES(year_label),variety_name=VALUES(variety_name),
+                language_code=VALUES(language_code),sports_type=VALUES(sports_type),
+                group_name=VALUES(group_name),merch_description=VALUES(merch_description),
+                status_code=VALUES(status_code),source_updated_at=VALUES(source_updated_at)
+            """,
         )
         with self.db.cursor() as cursor:
             for index, statement in enumerate(statements, start=1):
@@ -776,7 +1034,8 @@ class PythonToJavaSync:
                 SELECT COUNT(*) AS count
                 FROM tmp_nxr_submission t
                 LEFT JOIN grading_submission s ON s.cert_id=t.cert_id
-                WHERE s.id IS NULL OR NOT (
+                WHERE t.sync_required=1
+                  AND (s.id IS NULL OR NOT (
                        s.card_name <=> t.card_name
                    AND s.year_label <=> t.year_label
                    AND s.brand_name <=> t.brand_name
@@ -800,16 +1059,18 @@ class PythonToJavaSync:
                    AND s.group_name <=> t.group_name
                    AND s.approval_sequence <=> t.approval_sequence
                    AND s.entry_notes <=> t.entry_notes
+                   AND s.entry_by_label <=> t.entry_by_label
                    AND s.approved_at <=> t.approved_at
                    AND s.published_at <=> t.published_at
-                )
+                ))
             """,
             "score": """
                 SELECT COUNT(*) AS count
                 FROM tmp_nxr_submission t
                 JOIN grading_submission s ON s.cert_id=t.cert_id
                 LEFT JOIN grading_score g ON g.submission_id=s.id
-                WHERE (t.product_type_code='graded_card' AND (
+                WHERE t.sync_required=1 AND (
+                  (t.product_type_code='graded_card' AND (
                        g.submission_id IS NULL OR NOT (
                        g.centering_score <=> t.centering_score
                    AND g.edges_score <=> t.edges_score
@@ -818,12 +1079,59 @@ class PythonToJavaSync:
                    AND g.final_grade_value <=> t.final_grade_value
                    AND g.final_grade_label <=> t.final_grade_label
                    AND g.ai_grade_value <=> t.ai_grade_value
+                   AND g.ai_centering_score <=> t.ai_centering_score
+                   AND g.ai_edges_score <=> t.ai_edges_score
+                   AND g.ai_corners_score <=> t.ai_corners_score
+                   AND g.ai_surface_score <=> t.ai_surface_score
                    AND g.ai_confidence_value <=> t.ai_confidence_value
                    AND g.decision_method_code <=> t.decision_method_code
                    AND g.decision_notes <=> t.decision_notes
                        )
                 ))
-                OR (t.product_type_code<>'graded_card' AND g.submission_id IS NOT NULL)
+                  OR (t.product_type_code<>'graded_card' AND g.submission_id IS NOT NULL)
+                )
+            """,
+            "upload_state": """
+                SELECT COUNT(*) AS count
+                FROM tmp_nxr_submission t
+                JOIN grading_submission s ON s.cert_id=t.cert_id
+                LEFT JOIN submission_upload_state u ON u.submission_id=s.id
+                WHERE t.sync_required=1 AND (u.submission_id IS NULL OR (
+                    NOT (
+                           u.status_code <=> t.upload_status
+                       AND u.started_at <=> t.upload_started_at
+                       AND u.completed_at <=> t.upload_completed_at
+                       AND u.error_message <=> t.upload_error
+                       AND u.response_payload_json <=> t.server_response
+                    )
+                    AND NOT (
+                        u.status_code='uploading'
+                        AND u.claim_token IS NOT NULL
+                        AND u.updated_at > CURRENT_TIMESTAMP - INTERVAL 15 MINUTE
+                    )
+                ))
+            """,
+            "match_projection": """
+                SELECT COUNT(*) AS count
+                FROM tmp_nxr_match_projection t
+                LEFT JOIN nxr_python_match_projection p
+                  ON p.source_code=t.source_code AND p.cert_id=t.cert_id
+                WHERE p.cert_id IS NULL OR NOT (
+                       p.product_type_code <=> t.product_type_code
+                   AND p.card_category_code <=> t.card_category_code
+                   AND p.set_name <=> t.set_name
+                   AND p.card_number <=> t.card_number
+                   AND p.card_name <=> t.card_name
+                   AND p.brand_name <=> t.brand_name
+                   AND p.year_label <=> t.year_label
+                   AND p.variety_name <=> t.variety_name
+                   AND p.language_code <=> t.language_code
+                   AND p.sports_type <=> t.sports_type
+                   AND p.group_name <=> t.group_name
+                   AND p.merch_description <=> t.merch_description
+                   AND p.status_code <=> t.status_code
+                   AND p.source_updated_at <=> t.source_updated_at
+                )
             """,
             "managed_submission": """
                 SELECT COUNT(*) AS count
@@ -838,11 +1146,59 @@ class PythonToJavaSync:
                 FROM tmp_nxr_submission t
                 JOIN grading_submission s ON s.cert_id=t.cert_id
                 LEFT JOIN published_certificate p ON p.submission_id=s.id
-                WHERE t.is_published=1 AND (
+                WHERE t.sync_required=1 AND t.is_published=1 AND (
                     p.id IS NULL OR p.cert_id<>t.cert_id
                     OR p.verification_slug<>t.verification_slug
                     OR NOT (p.qr_url <=> t.qr_url)
                 )
+            """,
+            "staged_front_media": """
+                SELECT COUNT(*) AS count
+                FROM tmp_nxr_submission t
+                JOIN grading_submission s ON s.cert_id=t.cert_id
+                LEFT JOIN submission_upload_state u ON u.submission_id=s.id
+                LEFT JOIN submission_media m
+                  ON m.submission_id=s.id AND m.media_stage_code='staged'
+                 AND m.media_side_code='front' AND m.sort_order=1 AND m.is_active=1
+                WHERE t.sync_required=1 AND t.staged_front_key IS NOT NULL
+                  AND NOT (
+                      u.status_code='uploading' AND u.claim_token IS NOT NULL
+                      AND u.updated_at > CURRENT_TIMESTAMP - INTERVAL 15 MINUTE
+                  )
+                  AND (
+                      m.id IS NULL OR (
+                          m.storage_provider_code='legacy-python'
+                          AND NOT (
+                              m.storage_bucket <=> 'python-admin-uploads'
+                              AND m.storage_key <=> t.staged_front_key
+                              AND m.public_url <=> CONCAT('/media/staged/',t.staged_front_key)
+                          )
+                      )
+                  )
+            """,
+            "staged_back_media": """
+                SELECT COUNT(*) AS count
+                FROM tmp_nxr_submission t
+                JOIN grading_submission s ON s.cert_id=t.cert_id
+                LEFT JOIN submission_upload_state u ON u.submission_id=s.id
+                LEFT JOIN submission_media m
+                  ON m.submission_id=s.id AND m.media_stage_code='staged'
+                 AND m.media_side_code='back' AND m.sort_order=1 AND m.is_active=1
+                WHERE t.sync_required=1 AND t.staged_back_key IS NOT NULL
+                  AND NOT (
+                      u.status_code='uploading' AND u.claim_token IS NOT NULL
+                      AND u.updated_at > CURRENT_TIMESTAMP - INTERVAL 15 MINUTE
+                  )
+                  AND (
+                      m.id IS NULL OR (
+                          m.storage_provider_code='legacy-python'
+                          AND NOT (
+                              m.storage_bucket <=> 'python-admin-uploads'
+                              AND m.storage_key <=> t.staged_back_key
+                              AND m.public_url <=> CONCAT('/media/staged/',t.staged_back_key)
+                          )
+                      )
+                  )
             """,
             "front_media": """
                 SELECT COUNT(*) AS count
@@ -851,8 +1207,11 @@ class PythonToJavaSync:
                 LEFT JOIN submission_media m
                   ON m.submission_id=s.id AND m.media_stage_code='published'
                  AND m.media_side_code='front' AND m.sort_order=1 AND m.is_active=1
-                WHERE t.published_front_url IS NOT NULL
-                  AND (m.id IS NULL OR NOT (m.public_url <=> t.published_front_url))
+                WHERE t.sync_required=1 AND t.published_front_url IS NOT NULL
+                  AND (m.id IS NULL OR (
+                      m.storage_provider_code='legacy-python'
+                      AND NOT (m.public_url <=> t.published_front_url)
+                  ))
             """,
             "back_media": """
                 SELECT COUNT(*) AS count
@@ -861,8 +1220,11 @@ class PythonToJavaSync:
                 LEFT JOIN submission_media m
                   ON m.submission_id=s.id AND m.media_stage_code='published'
                  AND m.media_side_code='back' AND m.sort_order=1 AND m.is_active=1
-                WHERE t.published_back_url IS NOT NULL
-                  AND (m.id IS NULL OR NOT (m.public_url <=> t.published_back_url))
+                WHERE t.sync_required=1 AND t.published_back_url IS NOT NULL
+                  AND (m.id IS NULL OR (
+                      m.storage_provider_code='legacy-python'
+                      AND NOT (m.public_url <=> t.published_back_url)
+                  ))
             """,
             "waitlist": """
                 SELECT COUNT(*) AS count FROM tmp_nxr_waitlist t
@@ -961,7 +1323,7 @@ class PythonToJavaSync:
                     for label, count in counts.items():
                         print(f"sync_{label}={count}")
                     self.assert_no_unmanaged_conflicts()
-                    self.merge()
+                    self.merge(full_refresh=mode == "full")
                     self.verify_staging()
                     self.write_state(captured, mode)
                     self.db.commit()

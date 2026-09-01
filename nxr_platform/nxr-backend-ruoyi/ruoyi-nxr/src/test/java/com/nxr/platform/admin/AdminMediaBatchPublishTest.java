@@ -12,7 +12,7 @@ class AdminMediaBatchPublishTest {
 
     @Test
     void batchPublishDeduplicatesAndReportsIndividualFailures() {
-        AdminMediaService service = new AdminMediaService(null, null, null, 100, 1024) {
+        AdminMediaService service = new AdminMediaService(null, null, null, 100, 1024, 102400, 100_000_000) {
             @Override
             public MediaPublishResponse publishSubmission(long submissionId) {
                 if (submissionId == 2L) {

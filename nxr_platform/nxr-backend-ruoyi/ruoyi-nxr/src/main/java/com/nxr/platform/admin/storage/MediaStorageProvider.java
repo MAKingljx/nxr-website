@@ -32,6 +32,9 @@ public interface MediaStorageProvider {
     record MediaUpload(
         String originalFilename,
         String contentType,
+        long contentLength,
+        Integer widthPx,
+        Integer heightPx,
         InputStreamSource inputStreamSource
     ) {
     }
@@ -48,7 +51,9 @@ public interface MediaStorageProvider {
         String storageObjectVersion,
         String originalFilename,
         String mimeType,
-        String checksumSha256
+        String checksumSha256,
+        Integer widthPx,
+        Integer heightPx
     ) {
     }
 
@@ -61,7 +66,9 @@ public interface MediaStorageProvider {
         String mimeType,
         long fileSizeBytes,
         String checksumSha256,
-        String storageObjectVersion
+        String storageObjectVersion,
+        Integer widthPx,
+        Integer heightPx
     ) {
     }
 

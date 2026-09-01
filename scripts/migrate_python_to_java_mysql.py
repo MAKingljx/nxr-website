@@ -34,6 +34,13 @@ DEFAULT_CARDS_DB = PROJECT_ROOT / "Data" / "cards.db"
 DEFAULT_TEMP_DB = PROJECT_ROOT / "Data" / "temp_cards.db"
 
 SUPPORTED_TEMP_STATUSES = {"pending", "review", "approved"}
+SUPPORTED_UPLOAD_STATUSES = {
+    "not_started",
+    "uploading",
+    "uploaded",
+    "failed",
+    "client_pushed",
+}
 SUPPORTED_CATEGORIES = {
     "trading_card",
     "movie_film",
@@ -64,11 +71,13 @@ EXCLUDED_FK_VIOLATION_TABLES = {"grading_history", "human_grading_details"}
 TARGET_TABLES = (
     "grading_submission",
     "grading_score",
+    "submission_upload_state",
     "submission_media",
     "published_certificate",
     "waitlist_email",
     "brand_settings",
     "ai_character_cache",
+    "nxr_python_match_projection",
     "sys_dict_type",
     "sys_dict_data",
 )
@@ -103,20 +112,27 @@ TARGET_REQUIRED_COLUMNS = {
         "vintage_classification_code", "merch_description", "movie_name",
         "release_year", "production_company", "film_type", "sports_type",
         "group_name", "approval_sequence", "entry_notes", "entry_by_user_id",
+        "entry_by_label",
         "approved_by_user_id", "approved_at", "published_at", "created_at",
         "updated_at",
     },
     "grading_score": {
         "submission_id", "centering_score", "edges_score", "corners_score",
         "surface_score", "final_grade_value", "final_grade_label",
-        "ai_grade_value", "ai_confidence_value", "decision_method_code",
+        "ai_grade_value", "ai_centering_score", "ai_edges_score",
+        "ai_corners_score", "ai_surface_score", "ai_confidence_value", "decision_method_code",
         "decision_notes", "created_at", "updated_at",
+    },
+    "submission_upload_state": {
+        "submission_id", "status_code", "claim_token", "claimed_front_media_id",
+        "claimed_back_media_id", "started_at", "completed_at", "error_message",
+        "response_payload_json", "triggered_by_user_id", "created_at", "updated_at",
     },
     "submission_media": {
         "id", "submission_id", "cert_id", "media_side_code",
         "media_stage_code", "storage_provider_code", "storage_bucket",
-        "storage_key", "public_url", "sort_order", "is_active", "created_at",
-        "updated_at",
+        "storage_key", "public_url", "sort_order", "is_active",
+        "original_filename", "mime_type", "created_at", "updated_at",
     },
     "published_certificate": {
         "id", "submission_id", "cert_id", "verification_slug", "qr_url",
@@ -146,6 +162,12 @@ TARGET_REQUIRED_COLUMNS = {
     },
     "nxr_python_sync_state": {
         "stream_name", "cursor_json", "last_full_sync_at", "last_success_at",
+    },
+    "nxr_python_match_projection": {
+        "source_code", "cert_id", "product_type_code", "card_category_code",
+        "set_name", "card_number", "card_name", "brand_name", "year_label",
+        "variety_name", "language_code", "sports_type", "group_name",
+        "merch_description", "status_code", "source_updated_at",
     },
 }
 
@@ -185,6 +207,7 @@ SUBMISSION_COLUMNS = (
     "group_name",
     "approval_sequence",
     "entry_notes",
+    "entry_by_label",
     "approved_at",
     "published_at",
     "created_at",
@@ -198,9 +221,24 @@ SCORE_COLUMNS = (
     "final_grade_value",
     "final_grade_label",
     "ai_grade_value",
+    "ai_centering_score",
+    "ai_edges_score",
+    "ai_corners_score",
+    "ai_surface_score",
     "ai_confidence_value",
     "decision_method_code",
     "decision_notes",
+)
+UPLOAD_STATE_COLUMNS = (
+    "upload_status",
+    "upload_started_at",
+    "upload_completed_at",
+    "upload_error",
+    "server_response",
+)
+STAGED_MEDIA_COLUMNS = (
+    "staged_front_key",
+    "staged_back_key",
 )
 PUBLICATION_COLUMNS = (
     "is_published",
@@ -209,8 +247,32 @@ PUBLICATION_COLUMNS = (
     "published_front_url",
     "published_back_url",
 )
-MAPPED_SUBMISSION_COLUMNS = SUBMISSION_COLUMNS + SCORE_COLUMNS + PUBLICATION_COLUMNS
+MAPPED_SUBMISSION_COLUMNS = (
+    SUBMISSION_COLUMNS
+    + SCORE_COLUMNS
+    + UPLOAD_STATE_COLUMNS
+    + STAGED_MEDIA_COLUMNS
+    + PUBLICATION_COLUMNS
+)
 STAGING_SUBMISSION_COLUMNS = MAPPED_SUBMISSION_COLUMNS + ("source_fingerprint",)
+MATCH_PROJECTION_COLUMNS = (
+    "source_code",
+    "cert_id",
+    "product_type_code",
+    "card_category_code",
+    "set_name",
+    "card_number",
+    "card_name",
+    "brand_name",
+    "year_label",
+    "variety_name",
+    "language_code",
+    "sports_type",
+    "group_name",
+    "merch_description",
+    "status_code",
+    "source_updated_at",
+)
 
 
 class MigrationError(RuntimeError):
@@ -228,6 +290,7 @@ class SourceStats:
     graded_submissions: int
     published_certificates: int
     published_media: int
+    staged_media: int
     waitlist: int
     brands: int
     sports_types: int
@@ -242,6 +305,7 @@ class TargetBaseline:
     brand_overlap: int
     sports_overlap: int
     ai_cache_overlap: int
+    match_projection_overlap: int
 
 
 def clean(value: Any) -> str:
@@ -260,6 +324,28 @@ def optional_text(value: Any) -> str | None:
 def optional_raw_text(value: Any) -> str | None:
     normalized = str(value or "").strip()
     return normalized or None
+
+
+def legacy_media_key(value: Any, *, field: str) -> str | None:
+    """Validate a Python upload filename before exposing it to Java.
+
+    The Java compatibility provider is intentionally filename-only and rooted
+    in the read-only Python upload directory. Rejecting separators and unusual
+    characters here prevents a database value from becoming a filesystem path.
+    """
+    normalized = str(value or "").strip()
+    if not normalized:
+        return None
+    if (
+        len(normalized) > 255
+        or normalized in {".", ".."}
+        or "/" in normalized
+        or "\\" in normalized
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", normalized) is None
+        or Path(normalized).suffix.lower() not in {".jpg", ".jpeg", ".png", ".webp"}
+    ):
+        raise MigrationError(f"{field} contains an unsafe upload filename")
+    return normalized
 
 
 def normalize_cert_id(value: Any) -> str:
@@ -309,6 +395,13 @@ def normalize_temp_status(value: Any) -> str:
     return status
 
 
+def normalize_upload_status(value: Any, *, default: str = "not_started") -> str:
+    status = clean(value).lower() or default
+    if status not in SUPPORTED_UPLOAD_STATUSES:
+        raise MigrationError(f"Unsupported upload status: {status!r}")
+    return status
+
+
 def to_int(value: Any, *, default: int = 0) -> int:
     if value is None or clean(value) == "":
         return default
@@ -325,6 +418,15 @@ def to_decimal(value: Any, *, default: str = "0") -> decimal.Decimal:
         return decimal.Decimal(str(value)).quantize(decimal.Decimal("0.1"))
     except decimal.InvalidOperation as exc:
         raise MigrationError(f"Expected a decimal-compatible value, got {value!r}") from exc
+
+
+def to_grade_decimal(value: Any, *, default: str = "0") -> decimal.Decimal:
+    if value is None or clean(value) == "":
+        value = default
+    try:
+        return decimal.Decimal(str(value)).quantize(decimal.Decimal("0.01"))
+    except decimal.InvalidOperation as exc:
+        raise MigrationError(f"Expected a grade-compatible value, got {value!r}") from exc
 
 
 def to_confidence(value: Any) -> decimal.Decimal | None:
@@ -368,7 +470,7 @@ def grade_label(row: Mapping[str, Any]) -> str:
     if not label and "grade" in row.keys():
         label = clean(row["grade"])
     if not label:
-        value = to_decimal(row["final_grade"])
+        value = to_grade_decimal(row["final_grade"])
         label = format(value.normalize(), "f")
     return truncate(label, 64, field="final_grade_label")
 
@@ -449,6 +551,7 @@ def _base_submission(row: Mapping[str, Any]) -> dict[str, Any]:
         "group_name": truncate(row["group_name"], 128, field="group_name") or None,
         "approval_sequence": None,
         "entry_notes": None,
+        "entry_by_label": None,
         "approved_at": None,
         "published_at": None,
         "created_at": created_at or dt.datetime(1970, 1, 1),
@@ -457,12 +560,23 @@ def _base_submission(row: Mapping[str, Any]) -> dict[str, Any]:
         "edges_score": to_decimal(row["edges"]) if has_grading else None,
         "corners_score": to_decimal(row["corners"]) if has_grading else None,
         "surface_score": to_decimal(row["surface"]) if has_grading else None,
-        "final_grade_value": to_decimal(row["final_grade"]) if has_grading else None,
+        "final_grade_value": to_grade_decimal(row["final_grade"]) if has_grading else None,
         "final_grade_label": grade_label(row) if has_grading else None,
         "ai_grade_value": None,
+        "ai_centering_score": None,
+        "ai_edges_score": None,
+        "ai_corners_score": None,
+        "ai_surface_score": None,
         "ai_confidence_value": None,
         "decision_method_code": "human_only",
         "decision_notes": None,
+        "upload_status": "not_started",
+        "upload_started_at": None,
+        "upload_completed_at": None,
+        "upload_error": None,
+        "server_response": None,
+        "staged_front_key": None,
+        "staged_back_key": None,
         "is_published": 0,
         "verification_slug": None,
         "qr_url": None,
@@ -482,6 +596,13 @@ def map_published_row(row: Mapping[str, Any]) -> dict[str, Any]:
         has_ai_analysis = row["ai_grade"] is not None or to_confidence(
             row["ai_confidence"]
         ) not in (None, decimal.Decimal("0.00"))
+    has_temp_row = source_value(row, "temp_joined_cert_id", None) is not None
+    source_upload_status = source_value(row, "temp_upload_status", None)
+    upload_status = normalize_upload_status(
+        source_upload_status,
+        default="not_started" if has_temp_row else "uploaded",
+    )
+    upload_completed_at = to_datetime(source_value(row, "temp_upload_completed", None))
     mapped.update(
         {
             "player_name": truncate(row["player"], 128, field="player_name") or None,
@@ -494,11 +615,24 @@ def map_published_row(row: Mapping[str, Any]) -> dict[str, Any]:
             if row["temp_approval_sequence"] is not None
             else None,
             "entry_notes": optional_raw_text(row["temp_entry_notes"]),
+            "entry_by_label": optional_raw_text(source_value(row, "temp_entry_by", None)),
             "approved_at": to_datetime(row["temp_approved_at"]),
-            "published_at": to_datetime(row["temp_upload_completed"])
+            "published_at": upload_completed_at
             or mapped["updated_at"],
             "ai_grade_value": to_decimal(row["ai_grade"])
             if has_ai_analysis and row["ai_grade"] is not None
+            else None,
+            "ai_centering_score": to_decimal(source_value(row, "ai_centering"))
+            if has_ai_analysis and source_value(row, "ai_centering") is not None
+            else None,
+            "ai_edges_score": to_decimal(source_value(row, "ai_edges"))
+            if has_ai_analysis and source_value(row, "ai_edges") is not None
+            else None,
+            "ai_corners_score": to_decimal(source_value(row, "ai_corners"))
+            if has_ai_analysis and source_value(row, "ai_corners") is not None
+            else None,
+            "ai_surface_score": to_decimal(source_value(row, "ai_surface"))
+            if has_ai_analysis and source_value(row, "ai_surface") is not None
             else None,
             "ai_confidence_value": to_confidence(row["ai_confidence"])
             if has_ai_analysis
@@ -508,6 +642,12 @@ def map_published_row(row: Mapping[str, Any]) -> dict[str, Any]:
             )
             or "human_only",
             "decision_notes": optional_raw_text(row["decision_notes"]),
+            "upload_status": upload_status,
+            "upload_started_at": to_datetime(source_value(row, "temp_upload_started", None)),
+            "upload_completed_at": upload_completed_at
+            or (mapped["updated_at"] if upload_status == "uploaded" and not has_temp_row else None),
+            "upload_error": optional_raw_text(source_value(row, "temp_upload_error", None)),
+            "server_response": optional_raw_text(source_value(row, "temp_server_response", None)),
             "is_published": 1,
             "verification_slug": cert_id.lower(),
             "qr_url": truncate(row["qr_url"], 255, field="qr_url")
@@ -528,6 +668,12 @@ def map_published_row(row: Mapping[str, Any]) -> dict[str, Any]:
 def map_temp_only_row(row: Mapping[str, Any]) -> dict[str, Any]:
     mapped = _base_submission(row)
     status = normalize_temp_status(row["status"])
+    upload_status = normalize_upload_status(source_value(row, "upload_status", None))
+    can_stage_media = status == "approved" and upload_status in {
+        "not_started",
+        "failed",
+        "uploading",
+    }
     mapped.update(
         {
             "status_code": status,
@@ -535,10 +681,65 @@ def map_temp_only_row(row: Mapping[str, Any]) -> dict[str, Any]:
             if row["approval_sequence"] is not None
             else None,
             "entry_notes": optional_raw_text(row["entry_notes"]),
+            "entry_by_label": optional_raw_text(source_value(row, "entry_by", None)),
             "approved_at": to_datetime(row["approved_at"]),
+            "upload_status": upload_status,
+            "upload_started_at": to_datetime(source_value(row, "upload_started", None)),
+            "upload_completed_at": to_datetime(source_value(row, "upload_completed", None)),
+            "upload_error": optional_raw_text(source_value(row, "upload_error", None)),
+            "server_response": optional_raw_text(source_value(row, "server_response", None)),
+            "staged_front_key": legacy_media_key(
+                source_value(row, "front_image", None),
+                field="front_image",
+            )
+            if can_stage_media
+            else None,
+            "staged_back_key": legacy_media_key(
+                source_value(row, "back_image", None),
+                field="back_image",
+            )
+            if can_stage_media
+            else None,
         }
     )
     return finalize_submission(mapped)
+
+
+def map_match_projection(row: Mapping[str, Any], source_code: str) -> dict[str, Any]:
+    product_type = normalize_product_type(source_value(row, "product_type", ""))
+    category = normalize_category(row["card_category"])
+    if product_type != DEFAULT_PRODUCT_TYPE:
+        category = "trading_card"
+    status = (
+        normalize_temp_status(row["status"])
+        if source_code == "temp_cards"
+        else "published"
+    )
+    updated_at = (
+        to_datetime(source_value(row, "updated_at", None))
+        or to_datetime(source_value(row, "entry_date", None))
+        or to_datetime(source_value(row, "created_at", None))
+    )
+    return {
+        "source_code": source_code,
+        "cert_id": normalize_cert_id(row["cert_id"]),
+        "product_type_code": product_type,
+        "card_category_code": category,
+        "set_name": truncate(row["set_name"], 255, field="match set_name"),
+        "card_number": truncate(row["card_number"], 64, field="match card_number"),
+        "card_name": truncate(row["card_name"], 255, field="match card_name"),
+        "brand_name": truncate(row["brand"], 64, field="match brand_name"),
+        "year_label": truncate(row["year"], 16, field="match year_label") or None,
+        "variety_name": truncate(row["variety"], 255, field="match variety_name") or None,
+        "language_code": normalize_language(row["language"]),
+        "sports_type": truncate(row["sports_type"], 64, field="match sports_type") or None,
+        "group_name": truncate(row["group_name"], 128, field="match group_name") or None,
+        "merch_description": optional_raw_text(source_value(row, "merch_description", ""))
+        if product_type == "merch_product"
+        else None,
+        "status_code": status,
+        "source_updated_at": updated_at,
+    }
 
 
 class SourceBundle:
@@ -715,10 +916,15 @@ class SourceBundle:
             WHERE LOWER(TRIM(g.code)) = 'sports_type'
             """
         ).fetchone()[0]
+        mapped_submissions = list(self.iter_submissions())
         graded_submissions = sum(
             1
-            for row in self.iter_submissions()
+            for row in mapped_submissions
             if row["product_type_code"] == DEFAULT_PRODUCT_TYPE
+        )
+        staged_media = sum(
+            int(bool(row["staged_front_key"])) + int(bool(row["staged_back_key"]))
+            for row in mapped_submissions
         )
         return SourceStats(
             cards=cards,
@@ -732,6 +938,7 @@ class SourceBundle:
             graded_submissions=graded_submissions,
             published_certificates=cards,
             published_media=media,
+            staged_media=staged_media,
             waitlist=query("SELECT COUNT(*) FROM main.waitlist").fetchone()[0],
             brands=brands,
             sports_types=sports,
@@ -749,9 +956,14 @@ class SourceBundle:
                 c.*,
                 t.cert_id AS temp_joined_cert_id,
                 t.entry_notes AS temp_entry_notes,
+                t.entry_by AS temp_entry_by,
                 t.approved_at AS temp_approved_at,
                 t.approval_sequence AS temp_approval_sequence,
-                t.upload_completed AS temp_upload_completed
+                t.upload_status AS temp_upload_status,
+                t.upload_started AS temp_upload_started,
+                t.upload_completed AS temp_upload_completed,
+                t.upload_error AS temp_upload_error,
+                t.server_response AS temp_server_response
             FROM main.cards c
             LEFT JOIN tempdb.temp_cards t
               ON t.cert_id = c.cert_id
@@ -767,7 +979,9 @@ class SourceBundle:
                 if temp_cert_id is not None:
                     metadata = self.db.execute(
                         """
-                        SELECT entry_notes, approved_at, approval_sequence, upload_completed
+                        SELECT entry_notes, entry_by, approved_at, approval_sequence,
+                               upload_status, upload_started, upload_completed,
+                               upload_error, server_response
                         FROM tempdb.temp_cards
                         WHERE cert_id = ?
                         """,
@@ -777,11 +991,16 @@ class SourceBundle:
                         mapped_row.update(
                             {
                                 "temp_entry_notes": metadata["entry_notes"],
+                                "temp_entry_by": metadata["entry_by"],
                                 "temp_approved_at": metadata["approved_at"],
                                 "temp_approval_sequence": metadata[
                                     "approval_sequence"
                                 ],
+                                "temp_upload_status": metadata["upload_status"],
+                                "temp_upload_started": metadata["upload_started"],
                                 "temp_upload_completed": metadata["upload_completed"],
+                                "temp_upload_error": metadata["upload_error"],
+                                "temp_server_response": metadata["server_response"],
                             }
                         )
             yield map_published_row(mapped_row)
@@ -796,6 +1015,32 @@ class SourceBundle:
         for row in temp_only_rows:
             if normalize_cert_id(row["cert_id"]) not in self.card_cert_ids_by_key:
                 yield map_temp_only_row(row)
+
+    def iter_match_projections(
+        self,
+        cert_ids: Sequence[str] | None = None,
+    ) -> Iterator[dict[str, Any]]:
+        normalized_ids = (
+            [normalize_cert_id(value) for value in cert_ids]
+            if cert_ids is not None
+            else None
+        )
+        if normalized_ids == []:
+            return
+        for table_name, source_code in (
+            ("tempdb.temp_cards", "temp_cards"),
+            ("main.cards", "cards"),
+        ):
+            if normalized_ids is not None:
+                placeholders = ",".join("?" for _ in normalized_ids)
+                rows = self.db.execute(
+                    f"SELECT * FROM {table_name} WHERE UPPER(TRIM(cert_id)) IN ({placeholders}) ORDER BY cert_id",
+                    normalized_ids,
+                )
+            else:
+                rows = self.db.execute(f"SELECT * FROM {table_name} ORDER BY cert_id")
+            for row in rows:
+                yield map_match_projection(row, source_code)
 
     def iter_waitlist(self) -> Iterator[tuple[Any, ...]]:
         for row in self.db.execute(
@@ -1024,6 +1269,27 @@ class JavaMySqlMigration:
                 )
 
             cursor.execute(
+                """
+                SELECT NUMERIC_PRECISION AS numeric_precision,
+                       NUMERIC_SCALE AS numeric_scale
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA=DATABASE()
+                  AND TABLE_NAME='grading_score'
+                  AND COLUMN_NAME='final_grade_value'
+                """
+            )
+            final_grade_column = cursor.fetchone()
+            if (
+                final_grade_column is None
+                or int(final_grade_column["numeric_precision"] or 0) < 4
+                or int(final_grade_column["numeric_scale"] or 0) < 2
+            ):
+                raise MigrationError(
+                    "Incompatible target schema; grading_score.final_grade_value "
+                    "must preserve at least two decimal places"
+                )
+
+            cursor.execute(
                 "SELECT COUNT(*) AS count FROM sys_dict_type WHERE dict_type='nxr_sports_type'"
             )
             if cursor.fetchone()["count"] != 1:
@@ -1080,6 +1346,7 @@ class JavaMySqlMigration:
                 group_name VARCHAR(128) NULL,
                 approval_sequence BIGINT NULL,
                 entry_notes TEXT NULL,
+                entry_by_label VARCHAR(128) NULL,
                 approved_at DATETIME(6) NULL,
                 published_at DATETIME(6) NULL,
                 created_at DATETIME(6) NOT NULL,
@@ -1088,18 +1355,30 @@ class JavaMySqlMigration:
                 edges_score DECIMAL(4,1) NULL,
                 corners_score DECIMAL(4,1) NULL,
                 surface_score DECIMAL(4,1) NULL,
-                final_grade_value DECIMAL(4,1) NULL,
+                final_grade_value DECIMAL(4,2) NULL,
                 final_grade_label VARCHAR(64) NULL,
                 ai_grade_value DECIMAL(4,1) NULL,
+                ai_centering_score DECIMAL(4,1) NULL,
+                ai_edges_score DECIMAL(4,1) NULL,
+                ai_corners_score DECIMAL(4,1) NULL,
+                ai_surface_score DECIMAL(4,1) NULL,
                 ai_confidence_value DECIMAL(5,2) NULL,
                 decision_method_code VARCHAR(32) NOT NULL,
                 decision_notes TEXT NULL,
+                upload_status VARCHAR(32) NOT NULL,
+                upload_started_at DATETIME(6) NULL,
+                upload_completed_at DATETIME(6) NULL,
+                upload_error TEXT NULL,
+                server_response LONGTEXT NULL,
+                staged_front_key VARCHAR(255) NULL,
+                staged_back_key VARCHAR(255) NULL,
                 is_published TINYINT NOT NULL,
                 verification_slug VARCHAR(64) NULL,
                 qr_url VARCHAR(255) NULL,
                 published_front_url VARCHAR(255) NULL,
                 published_back_url VARCHAR(255) NULL,
-                source_fingerprint CHAR(64) NOT NULL
+                source_fingerprint CHAR(64) NOT NULL,
+                sync_required TINYINT NOT NULL DEFAULT 1
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE={submission_collation}
             """,
             f"""
@@ -1137,6 +1416,27 @@ class JavaMySqlMigration:
                 created_at DATETIME(6) NOT NULL,
                 PRIMARY KEY (cert_id, language_code)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE={ai_collation}
+            """,
+            f"""
+            CREATE TEMPORARY TABLE tmp_nxr_match_projection (
+                source_code VARCHAR(16) NOT NULL,
+                cert_id VARCHAR(32) NOT NULL,
+                product_type_code VARCHAR(32) NOT NULL,
+                card_category_code VARCHAR(32) NOT NULL,
+                set_name VARCHAR(255) NOT NULL,
+                card_number VARCHAR(64) NOT NULL,
+                card_name VARCHAR(255) NOT NULL,
+                brand_name VARCHAR(64) NOT NULL,
+                year_label VARCHAR(16) NULL,
+                variety_name VARCHAR(255) NULL,
+                language_code VARCHAR(16) NOT NULL,
+                sports_type VARCHAR(64) NULL,
+                group_name VARCHAR(128) NULL,
+                merch_description TEXT NULL,
+                status_code VARCHAR(32) NULL,
+                source_updated_at DATETIME(6) NULL,
+                PRIMARY KEY (source_code, cert_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE={submission_collation}
             """,
         )
         with self.db.cursor() as cursor:
@@ -1194,11 +1494,25 @@ class JavaMySqlMigration:
             self.source.iter_ai_cache(),
             "ai_cache",
         )
+        match_placeholders = ",".join(["%s"] * len(MATCH_PROJECTION_COLUMNS))
+        loaded_match_projections = self._load(
+            f"INSERT INTO tmp_nxr_match_projection ({','.join(MATCH_PROJECTION_COLUMNS)}) "
+            f"VALUES ({match_placeholders})",
+            (
+                tuple(row[column] for column in MATCH_PROJECTION_COLUMNS)
+                for row in self.source.iter_match_projections()
+            ),
+            "match_projections",
+        )
         expected = {
             "waitlist": (loaded_waitlist, stats.waitlist),
             "brands": (loaded_brands, stats.brands),
             "sports": (loaded_sports, stats.sports_types),
             "ai_cache": (loaded_ai, stats.ai_cache_rows),
+            "match_projections": (
+                loaded_match_projections,
+                stats.cards + stats.temp_cards,
+            ),
         }
         mismatches = [
             f"{name}:staged={actual},expected={wanted}"
@@ -1245,6 +1559,11 @@ class JavaMySqlMigration:
                     JOIN ai_character_cache a
                       ON a.cert_id=t.cert_id AND a.language_code=t.language_code
                 """,
+                "match_projection": """
+                    SELECT COUNT(*) AS count FROM tmp_nxr_match_projection t
+                    JOIN nxr_python_match_projection p
+                      ON p.source_code=t.source_code AND p.cert_id=t.cert_id
+                """,
             }
             overlaps = {}
             for name, sql in overlap_queries.items():
@@ -1256,6 +1575,7 @@ class JavaMySqlMigration:
             brand_overlap=overlaps["brand"],
             sports_overlap=overlaps["sports"],
             ai_cache_overlap=overlaps["ai_cache"],
+            match_projection_overlap=overlaps["match_projection"],
         )
 
     def merge(self) -> None:
@@ -1267,7 +1587,7 @@ class JavaMySqlMigration:
                 grading_phase_code,card_category_code,product_type_code,
                 vintage_classification_code,merch_description,movie_name,release_year,
                 production_company,film_type,sports_type,group_name,approval_sequence,
-                entry_notes,entry_by_user_id,approved_by_user_id,approved_at,published_at,
+                entry_notes,entry_by_user_id,entry_by_label,approved_by_user_id,approved_at,published_at,
                 created_at,updated_at
             )
             SELECT
@@ -1276,22 +1596,77 @@ class JavaMySqlMigration:
                 grading_phase_code,card_category_code,product_type_code,
                 vintage_classification_code,merch_description,movie_name,release_year,
                 production_company,film_type,sports_type,group_name,approval_sequence,
-                entry_notes,NULL,NULL,approved_at,published_at,created_at,updated_at
+                entry_notes,NULL,entry_by_label,NULL,approved_at,published_at,created_at,updated_at
             FROM tmp_nxr_submission
             """,
             """
             INSERT INTO grading_score (
                 submission_id,centering_score,edges_score,corners_score,surface_score,
-                final_grade_value,final_grade_label,ai_grade_value,ai_confidence_value,
+                final_grade_value,final_grade_label,ai_grade_value,
+                ai_centering_score,ai_edges_score,ai_corners_score,ai_surface_score,
+                ai_confidence_value,
                 decision_method_code,decision_notes,created_at,updated_at
             )
             SELECT
                 s.id,t.centering_score,t.edges_score,t.corners_score,t.surface_score,
-                t.final_grade_value,t.final_grade_label,t.ai_grade_value,t.ai_confidence_value,
+                t.final_grade_value,t.final_grade_label,t.ai_grade_value,
+                t.ai_centering_score,t.ai_edges_score,t.ai_corners_score,t.ai_surface_score,
+                t.ai_confidence_value,
                 t.decision_method_code,t.decision_notes,t.created_at,t.updated_at
             FROM tmp_nxr_submission t
             JOIN grading_submission s ON s.cert_id=t.cert_id
             WHERE t.product_type_code='graded_card'
+            """,
+            """
+            INSERT INTO submission_upload_state (
+                submission_id,status_code,started_at,completed_at,error_message,
+                response_payload_json,created_at,updated_at
+            )
+            SELECT
+                s.id,t.upload_status,t.upload_started_at,t.upload_completed_at,
+                t.upload_error,t.server_response,t.created_at,t.updated_at
+            FROM tmp_nxr_submission t
+            JOIN grading_submission s ON s.cert_id=t.cert_id
+            """,
+            """
+            INSERT INTO submission_media (
+                submission_id,cert_id,media_side_code,media_stage_code,
+                storage_provider_code,storage_bucket,storage_key,public_url,
+                sort_order,is_active,original_filename,mime_type,created_at,updated_at
+            )
+            SELECT
+                s.id,t.cert_id,'front','staged','legacy-python','python-admin-uploads',
+                t.staged_front_key,CONCAT('/media/staged/',t.staged_front_key),1,1,
+                t.staged_front_key,
+                CASE LOWER(SUBSTRING_INDEX(t.staged_front_key,'.',-1))
+                    WHEN 'png' THEN 'image/png'
+                    WHEN 'webp' THEN 'image/webp'
+                    ELSE 'image/jpeg'
+                END,
+                t.created_at,t.updated_at
+            FROM tmp_nxr_submission t
+            JOIN grading_submission s ON s.cert_id=t.cert_id
+            WHERE t.staged_front_key IS NOT NULL
+            """,
+            """
+            INSERT INTO submission_media (
+                submission_id,cert_id,media_side_code,media_stage_code,
+                storage_provider_code,storage_bucket,storage_key,public_url,
+                sort_order,is_active,original_filename,mime_type,created_at,updated_at
+            )
+            SELECT
+                s.id,t.cert_id,'back','staged','legacy-python','python-admin-uploads',
+                t.staged_back_key,CONCAT('/media/staged/',t.staged_back_key),1,1,
+                t.staged_back_key,
+                CASE LOWER(SUBSTRING_INDEX(t.staged_back_key,'.',-1))
+                    WHEN 'png' THEN 'image/png'
+                    WHEN 'webp' THEN 'image/webp'
+                    ELSE 'image/jpeg'
+                END,
+                t.created_at,t.updated_at
+            FROM tmp_nxr_submission t
+            JOIN grading_submission s ON s.cert_id=t.cert_id
+            WHERE t.staged_back_key IS NOT NULL
             """,
             """
             INSERT INTO submission_media (
@@ -1411,6 +1786,29 @@ class JavaMySqlMigration:
                 source_updated_at=VALUES(source_updated_at),
                 last_synced_at=CURRENT_TIMESTAMP
             """,
+            """
+            INSERT INTO nxr_python_match_projection (
+                source_code,cert_id,product_type_code,card_category_code,
+                set_name,card_number,card_name,brand_name,year_label,variety_name,
+                language_code,sports_type,group_name,merch_description,status_code,
+                source_updated_at
+            )
+            SELECT
+                source_code,cert_id,product_type_code,card_category_code,
+                set_name,card_number,card_name,brand_name,year_label,variety_name,
+                language_code,sports_type,group_name,merch_description,status_code,
+                source_updated_at
+            FROM tmp_nxr_match_projection
+            ON DUPLICATE KEY UPDATE
+                product_type_code=VALUES(product_type_code),
+                card_category_code=VALUES(card_category_code),
+                set_name=VALUES(set_name),card_number=VALUES(card_number),
+                card_name=VALUES(card_name),brand_name=VALUES(brand_name),
+                year_label=VALUES(year_label),variety_name=VALUES(variety_name),
+                language_code=VALUES(language_code),sports_type=VALUES(sports_type),
+                group_name=VALUES(group_name),merch_description=VALUES(merch_description),
+                status_code=VALUES(status_code),source_updated_at=VALUES(source_updated_at)
+            """,
         )
         with self.db.cursor() as cursor:
             for index, statement in enumerate(statements, start=1):
@@ -1424,12 +1822,16 @@ class JavaMySqlMigration:
         expected = dict(baseline.counts)
         expected["grading_submission"] += stats.submissions
         expected["grading_score"] += stats.graded_submissions
-        expected["submission_media"] += stats.published_media
+        expected["submission_upload_state"] += stats.submissions
+        expected["submission_media"] += stats.published_media + stats.staged_media
         expected["published_certificate"] += stats.published_certificates
         expected["waitlist_email"] += stats.waitlist - baseline.waitlist_overlap
         expected["brand_settings"] += stats.brands - baseline.brand_overlap
         expected["ai_character_cache"] += stats.ai_cache_rows - baseline.ai_cache_overlap
         expected["sys_dict_data"] += stats.sports_types - baseline.sports_overlap
+        expected["nxr_python_match_projection"] += (
+            stats.cards + stats.temp_cards - baseline.match_projection_overlap
+        )
         return expected
 
     def verify(self, stats: SourceStats, *, phase: str) -> None:
@@ -1472,6 +1874,7 @@ class JavaMySqlMigration:
                         AND s.group_name <=> t.group_name
                         AND s.approval_sequence <=> t.approval_sequence
                         AND s.entry_notes <=> t.entry_notes
+                        AND s.entry_by_label <=> t.entry_by_label
                         AND s.approved_at <=> t.approved_at
                         AND s.published_at <=> t.published_at
                         AND s.created_at <=> t.created_at
@@ -1493,12 +1896,51 @@ class JavaMySqlMigration:
                         AND g.final_grade_value <=> t.final_grade_value
                         AND g.final_grade_label <=> t.final_grade_label
                         AND g.ai_grade_value <=> t.ai_grade_value
+                        AND g.ai_centering_score <=> t.ai_centering_score
+                        AND g.ai_edges_score <=> t.ai_edges_score
+                        AND g.ai_corners_score <=> t.ai_corners_score
+                        AND g.ai_surface_score <=> t.ai_surface_score
                         AND g.ai_confidence_value <=> t.ai_confidence_value
                         AND g.decision_method_code <=> t.decision_method_code
                         AND g.decision_notes <=> t.decision_notes
                          )
                        ))
                        OR (t.product_type_code<>'graded_card' AND g.submission_id IS NOT NULL)
+                """,
+                "upload_state": """
+                    SELECT COUNT(*) AS count
+                    FROM tmp_nxr_submission t
+                    JOIN grading_submission s ON s.cert_id=t.cert_id
+                    LEFT JOIN submission_upload_state u ON u.submission_id=s.id
+                    WHERE u.submission_id IS NULL OR NOT (
+                           u.status_code <=> t.upload_status
+                       AND u.started_at <=> t.upload_started_at
+                       AND u.completed_at <=> t.upload_completed_at
+                       AND u.error_message <=> t.upload_error
+                       AND u.response_payload_json <=> t.server_response
+                    )
+                """,
+                "match_projection": """
+                    SELECT COUNT(*) AS count
+                    FROM tmp_nxr_match_projection t
+                    LEFT JOIN nxr_python_match_projection p
+                      ON p.source_code=t.source_code AND p.cert_id=t.cert_id
+                    WHERE p.cert_id IS NULL OR NOT (
+                           p.product_type_code <=> t.product_type_code
+                       AND p.card_category_code <=> t.card_category_code
+                       AND p.set_name <=> t.set_name
+                       AND p.card_number <=> t.card_number
+                       AND p.card_name <=> t.card_name
+                       AND p.brand_name <=> t.brand_name
+                       AND p.year_label <=> t.year_label
+                       AND p.variety_name <=> t.variety_name
+                       AND p.language_code <=> t.language_code
+                       AND p.sports_type <=> t.sports_type
+                       AND p.group_name <=> t.group_name
+                       AND p.merch_description <=> t.merch_description
+                       AND p.status_code <=> t.status_code
+                       AND p.source_updated_at <=> t.source_updated_at
+                    )
                 """,
                 "publication": """
                     SELECT COUNT(*) AS count
@@ -1514,6 +1956,44 @@ class JavaMySqlMigration:
                            AND p.qr_url <=> t.qr_url
                            AND p.published_at <=> t.published_at
                         )
+                      )
+                """,
+                "staged_front_media": """
+                    SELECT COUNT(*) AS count
+                    FROM tmp_nxr_submission t
+                    JOIN grading_submission s ON s.cert_id=t.cert_id
+                    LEFT JOIN submission_media m
+                      ON m.submission_id=s.id
+                     AND m.media_stage_code='staged'
+                     AND m.media_side_code='front'
+                     AND m.sort_order=1
+                    WHERE t.staged_front_key IS NOT NULL
+                      AND (
+                           m.id IS NULL
+                        OR m.storage_provider_code<>'legacy-python'
+                        OR m.storage_bucket<>'python-admin-uploads'
+                        OR m.storage_key<>t.staged_front_key
+                        OR m.public_url<>CONCAT('/media/staged/',t.staged_front_key)
+                        OR m.is_active<>1
+                      )
+                """,
+                "staged_back_media": """
+                    SELECT COUNT(*) AS count
+                    FROM tmp_nxr_submission t
+                    JOIN grading_submission s ON s.cert_id=t.cert_id
+                    LEFT JOIN submission_media m
+                      ON m.submission_id=s.id
+                     AND m.media_stage_code='staged'
+                     AND m.media_side_code='back'
+                     AND m.sort_order=1
+                    WHERE t.staged_back_key IS NOT NULL
+                      AND (
+                           m.id IS NULL
+                        OR m.storage_provider_code<>'legacy-python'
+                        OR m.storage_bucket<>'python-admin-uploads'
+                        OR m.storage_key<>t.staged_back_key
+                        OR m.public_url<>CONCAT('/media/staged/',t.staged_back_key)
+                        OR m.is_active<>1
                       )
                 """,
                 "front_media": """
@@ -1599,6 +2079,11 @@ class JavaMySqlMigration:
                     LEFT JOIN grading_submission s ON s.id=p.submission_id
                     WHERE s.id IS NULL
                 """,
+                "orphan_upload_state": """
+                    SELECT COUNT(*) AS count FROM submission_upload_state u
+                    LEFT JOIN grading_submission s ON s.id=u.submission_id
+                    WHERE s.id IS NULL
+                """,
                 "orphan_sync_submission": """
                     SELECT COUNT(*) AS count
                     FROM nxr_python_sync_submission m
@@ -1661,7 +2146,7 @@ def print_plan(stats: SourceStats) -> None:
     for field in stats.__dataclass_fields__:
         print(f"source_{field}={getattr(stats, field)}")
     print("mapping_cards=grading_submission+optional_grading_score+published_certificate+submission_media")
-    print("mapping_temp_only=grading_submission+optional_grading_score")
+    print("mapping_temp_only=grading_submission+optional_grading_score+read_only_staged_media")
     print("mapping_dictionary_brand=brand_settings")
     print("mapping_dictionary_sports_type=sys_dict_data:nxr_sports_type")
     print("mapping_waitlist=waitlist_email")

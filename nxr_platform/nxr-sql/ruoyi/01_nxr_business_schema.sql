@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS grading_submission (
     approval_sequence BIGINT NULL,
     entry_notes TEXT,
     entry_by_user_id BIGINT NULL,
+    entry_by_label VARCHAR(128) NULL,
     approved_by_user_id BIGINT NULL,
     approved_at TIMESTAMP NULL,
     published_at TIMESTAMP NULL,
@@ -55,15 +56,42 @@ CREATE TABLE IF NOT EXISTS grading_score (
     edges_score DECIMAL(4,1) NOT NULL,
     corners_score DECIMAL(4,1) NOT NULL,
     surface_score DECIMAL(4,1) NOT NULL,
-    final_grade_value DECIMAL(4,1) NOT NULL,
+    final_grade_value DECIMAL(4,2) NOT NULL,
     final_grade_label VARCHAR(64) NOT NULL,
     ai_grade_value DECIMAL(4,1) NULL,
+    ai_centering_score DECIMAL(4,1) NULL,
+    ai_edges_score DECIMAL(4,1) NULL,
+    ai_corners_score DECIMAL(4,1) NULL,
+    ai_surface_score DECIMAL(4,1) NULL,
     ai_confidence_value DECIMAL(5,2) NULL,
     decision_method_code VARCHAR(32) NOT NULL DEFAULT 'human_only',
     decision_notes TEXT,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT fk_grading_score_submission FOREIGN KEY (submission_id) REFERENCES grading_submission(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS nxr_python_match_projection (
+    source_code VARCHAR(16) NOT NULL,
+    cert_id VARCHAR(32) NOT NULL,
+    product_type_code VARCHAR(32) NOT NULL DEFAULT 'graded_card',
+    card_category_code VARCHAR(32) NOT NULL DEFAULT 'trading_card',
+    set_name VARCHAR(255) NOT NULL,
+    card_number VARCHAR(64) NOT NULL,
+    card_name VARCHAR(255) NOT NULL,
+    brand_name VARCHAR(64) NOT NULL,
+    year_label VARCHAR(16) NULL,
+    variety_name VARCHAR(255) NULL,
+    language_code VARCHAR(16) NOT NULL DEFAULT 'EN',
+    sports_type VARCHAR(64) NULL,
+    group_name VARCHAR(128) NULL,
+    merch_description TEXT NULL,
+    status_code VARCHAR(32) NULL,
+    source_updated_at TIMESTAMP NULL,
+    PRIMARY KEY (source_code, cert_id),
+    KEY idx_nxr_python_match_lookup (
+        product_type_code, card_category_code, set_name, card_number, source_code, source_updated_at
+    )
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS submission_media (
@@ -95,6 +123,28 @@ CREATE TABLE IF NOT EXISTS submission_media (
     KEY idx_submission_media_stage_side_active (submission_id, media_stage_code, media_side_code, is_active, sort_order),
     CONSTRAINT fk_submission_media_submission FOREIGN KEY (submission_id) REFERENCES grading_submission(id) ON DELETE CASCADE,
     CONSTRAINT fk_submission_media_source_media FOREIGN KEY (source_media_id) REFERENCES submission_media(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS submission_upload_state (
+    submission_id BIGINT PRIMARY KEY,
+    status_code VARCHAR(32) NOT NULL DEFAULT 'not_started',
+    claim_token CHAR(36) NULL,
+    claimed_front_media_id BIGINT NULL,
+    claimed_back_media_id BIGINT NULL,
+    started_at TIMESTAMP NULL,
+    completed_at TIMESTAMP NULL,
+    error_message TEXT NULL,
+    response_payload_json LONGTEXT NULL,
+    triggered_by_user_id BIGINT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    KEY idx_submission_upload_state_status (status_code, updated_at),
+    CONSTRAINT fk_submission_upload_state_submission
+        FOREIGN KEY (submission_id) REFERENCES grading_submission(id) ON DELETE CASCADE,
+    CONSTRAINT fk_submission_upload_state_front_media
+        FOREIGN KEY (claimed_front_media_id) REFERENCES submission_media(id) ON DELETE SET NULL,
+    CONSTRAINT fk_submission_upload_state_back_media
+        FOREIGN KEY (claimed_back_media_id) REFERENCES submission_media(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS published_certificate (

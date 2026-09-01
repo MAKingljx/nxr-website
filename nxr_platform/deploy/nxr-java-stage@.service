@@ -38,6 +38,9 @@ CapabilityBoundingSet=
 AmbientCapabilities=
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 ReadWritePaths=/var/lib/nxr-java /var/log/nxr-java/%i
+# The bind mount exposes only Flask's staged-image directory. It is read-only;
+# Java cannot alter Python queue files or traverse the /root project tree.
+BindReadOnlyPaths=-/root/nxr_website/nxr_admin/uploads:/var/lib/nxr-java/python-uploads
 
 MemoryHigh=576M
 MemoryMax=640M

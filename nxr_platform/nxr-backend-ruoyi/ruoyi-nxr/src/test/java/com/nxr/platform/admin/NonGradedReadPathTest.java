@@ -57,7 +57,9 @@ class NonGradedReadPathTest {
             null,
             null,
             100,
-            1024
+            1024,
+            102400,
+            100_000_000
         ).loadQueue(null, 1, 20);
         assertThat(mediaQueue.total()).isOne();
         assertThat(mediaQueue.items()).singleElement().satisfies(item -> {
@@ -141,6 +143,9 @@ class NonGradedReadPathTest {
                 status_code VARCHAR(32) NOT NULL,
                 grading_phase_code VARCHAR(32) NOT NULL,
                 entry_notes TEXT,
+                entry_by_user_id BIGINT,
+                entry_by_label VARCHAR(128),
+                approval_sequence BIGINT,
                 approved_at TIMESTAMP,
                 published_at TIMESTAMP,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -158,6 +163,12 @@ class NonGradedReadPathTest {
                 surface_score DECIMAL(4,1),
                 final_grade_value DECIMAL(4,1),
                 final_grade_label VARCHAR(64),
+                ai_grade_value DECIMAL(4,1),
+                ai_centering_score DECIMAL(4,1),
+                ai_edges_score DECIMAL(4,1),
+                ai_corners_score DECIMAL(4,1),
+                ai_surface_score DECIMAL(4,1),
+                ai_confidence_value DECIMAL(5,2),
                 decision_method_code VARCHAR(32),
                 decision_notes TEXT
             )
@@ -190,6 +201,19 @@ class NonGradedReadPathTest {
             )
             """
         );
+        jdbcTemplate.execute(
+            """
+            CREATE TABLE submission_upload_state (
+                submission_id BIGINT PRIMARY KEY,
+                status_code VARCHAR(32) NOT NULL DEFAULT 'not_started',
+                started_at TIMESTAMP,
+                completed_at TIMESTAMP,
+                error_message TEXT,
+                response_payload_json TEXT
+            )
+            """
+        );
+        jdbcTemplate.execute("CREATE TABLE sys_user (user_id BIGINT PRIMARY KEY, user_name VARCHAR(64), nick_name VARCHAR(64))");
         jdbcTemplate.execute(
             """
             CREATE TABLE waitlist_email (

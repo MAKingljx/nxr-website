@@ -10,7 +10,7 @@ class AdminMediaControllerSecurityTest {
 
     @Test
     void singleAndBatchPublishRequireTheSamePublishPermission() {
-        for (String methodName : new String[] {"publishSubmission", "publishSubmissions"}) {
+        for (String methodName : new String[] {"publishSubmission", "publishSubmissions", "markClientPushed"}) {
             Method method = java.util.Arrays.stream(AdminMediaController.class.getDeclaredMethods())
                 .filter(candidate -> candidate.getName().equals(methodName))
                 .findFirst()

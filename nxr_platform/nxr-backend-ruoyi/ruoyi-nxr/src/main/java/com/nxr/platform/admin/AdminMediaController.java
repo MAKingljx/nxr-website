@@ -3,6 +3,7 @@ package com.nxr.platform.admin;
 import com.ruoyi.common.annotation.Log;
 import com.ruoyi.common.core.domain.AjaxResult;
 import com.ruoyi.common.enums.BusinessType;
+import com.ruoyi.common.utils.SecurityUtils;
 import java.util.List;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -29,10 +30,15 @@ public class AdminMediaController {
     @GetMapping("/queue")
     public AjaxResult mediaQueue(
         @RequestParam(required = false) String query,
+        @RequestParam(required = false) String uploadStatus,
+        @RequestParam(required = false) String imageStatus,
+        @RequestParam(defaultValue = "false") boolean showClientPushed,
         @RequestParam(defaultValue = "1") int page,
         @RequestParam(defaultValue = "12") int pageSize
     ) {
-        return AjaxResult.success(adminMediaService.loadQueue(query, page, pageSize));
+        return AjaxResult.success(
+            adminMediaService.loadQueue(query, uploadStatus, imageStatus, showClientPushed, page, pageSize)
+        );
     }
 
     @PreAuthorize("@ss.hasPermi('nxr:media:import')")
@@ -58,7 +64,14 @@ public class AdminMediaController {
     @Log(title = "媒体发布", businessType = BusinessType.UPDATE)
     @PostMapping("/submissions/{submissionId}/publish")
     public AjaxResult publishSubmission(@PathVariable long submissionId) {
-        return AjaxResult.success(adminMediaService.publishSubmission(submissionId));
+        return AjaxResult.success(adminMediaService.publishSubmission(submissionId, SecurityUtils.getUserId()));
+    }
+
+    @PreAuthorize("@ss.hasPermi('nxr:media:publish')")
+    @Log(title = "标记客户端已推送", businessType = BusinessType.UPDATE)
+    @PostMapping("/submissions/{submissionId}/client-pushed")
+    public AjaxResult markClientPushed(@PathVariable long submissionId) {
+        return AjaxResult.success(adminMediaService.markClientPushed(submissionId, SecurityUtils.getUserId()));
     }
 
     @PreAuthorize("@ss.hasPermi('nxr:media:publish')")
@@ -66,7 +79,10 @@ public class AdminMediaController {
     @PostMapping("/batch-publish")
     public AjaxResult publishSubmissions(@RequestBody AdminMediaService.MediaBatchPublishRequest request) {
         return AjaxResult.success(
-            adminMediaService.publishSubmissions(request == null ? null : request.submissionIds())
+            adminMediaService.publishSubmissions(
+                request == null ? null : request.submissionIds(),
+                SecurityUtils.getUserId()
+            )
         );
     }
 }

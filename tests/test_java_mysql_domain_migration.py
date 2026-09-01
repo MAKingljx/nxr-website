@@ -108,6 +108,8 @@ CREATE TABLE temp_cards (
     upload_status TEXT,
     upload_started TEXT,
     upload_completed TEXT,
+    upload_error TEXT,
+    server_response TEXT,
     published_front_image TEXT,
     published_back_image TEXT,
     approved_at TEXT,
@@ -226,6 +228,15 @@ class JavaDomainMigrationTests(unittest.TestCase):
             )
             """
         )
+        for column in ("ai_centering", "ai_edges", "ai_corners", "ai_surface"):
+            cards.execute(f"ALTER TABLE cards ADD COLUMN {column} REAL")
+        cards.execute(
+            """
+            UPDATE cards
+            SET ai_centering=9.4, ai_edges=9.1, ai_corners=9.2, ai_surface=9.3
+            WHERE cert_id='vra003'
+            """
+        )
         cards.commit()
         cards.close()
         temp = sqlite3.connect(self.fixture.temp_path)
@@ -234,7 +245,9 @@ class JavaDomainMigrationTests(unittest.TestCase):
             """
             UPDATE temp_cards
             SET upload_completed='2026-07-01T10:30:00', approval_sequence=42,
-                entry_notes='Intake line 1\nIntake line 2'
+                upload_started='2026-07-01T10:20:00', upload_status='uploaded',
+                entry_by='Python Operator', entry_notes='Intake line 1\nIntake line 2',
+                server_response='{"ok":true}'
             WHERE cert_id='VRA003'
             """
         )
@@ -258,6 +271,14 @@ class JavaDomainMigrationTests(unittest.TestCase):
         self.assertEqual(rows[0]["published_front_url"], "/static/front.webp")
         self.assertEqual(rows[0]["ai_confidence_value"], migration.decimal.Decimal("95.00"))
         self.assertEqual(rows[0]["entry_notes"], "Intake line 1\nIntake line 2")
+        self.assertEqual(rows[0]["entry_by_label"], "Python Operator")
+        self.assertEqual(rows[0]["upload_status"], "uploaded")
+        self.assertEqual(rows[0]["server_response"], '{"ok":true}')
+        self.assertEqual(rows[0]["final_grade_value"], migration.decimal.Decimal("9.30"))
+        self.assertEqual(rows[0]["ai_centering_score"], migration.decimal.Decimal("9.4"))
+        self.assertEqual(rows[0]["ai_edges_score"], migration.decimal.Decimal("9.1"))
+        self.assertEqual(rows[0]["ai_corners_score"], migration.decimal.Decimal("9.2"))
+        self.assertEqual(rows[0]["ai_surface_score"], migration.decimal.Decimal("9.3"))
         self.assertEqual(len(rows[0]["source_fingerprint"]), 64)
         self.assertEqual(
             rows[0]["decision_notes"], "Decision line 1\nDecision line 2"
@@ -275,6 +296,7 @@ class JavaDomainMigrationTests(unittest.TestCase):
             source.validate()
             without_ai = list(source.iter_submissions())[0]
         self.assertIsNone(without_ai["ai_grade_value"])
+        self.assertIsNone(without_ai["ai_centering_score"])
         self.assertIsNone(without_ai["ai_confidence_value"])
 
     def test_temp_only_rows_map_to_java_workflow_states(self):
@@ -294,9 +316,73 @@ class JavaDomainMigrationTests(unittest.TestCase):
         self.assertEqual(stats.temp_only_approved, 1)
         self.assertEqual(stats.temp_only_pending_or_review, 1)
         self.assertEqual(rows["PENDING01"]["status_code"], "pending")
+        self.assertEqual(rows["PENDING01"]["entry_by_label"], None)
+        self.assertEqual(rows["PENDING01"]["upload_status"], "not_started")
         self.assertIsNone(rows["PENDING01"]["approved_at"])
         self.assertEqual(rows["APPROVED1"]["status_code"], "approved")
         self.assertIsNotNone(rows["APPROVED1"]["approved_at"])
+
+    def test_approved_python_queue_images_map_as_read_only_staged_media(self):
+        temp = sqlite3.connect(self.fixture.temp_path)
+        insert_temp_card(temp, "MEDIA001", status="approved")
+        temp.execute(
+            """
+            UPDATE temp_cards
+            SET front_image='front_MEDIA001_deadbeef.webp',
+                back_image='back_MEDIA001_deadbeef.jpg',
+                upload_status='not_started'
+            WHERE cert_id='MEDIA001'
+            """
+        )
+        temp.commit()
+        temp.close()
+
+        with migration.SourceBundle(
+            self.fixture.cards_path, self.fixture.temp_path
+        ) as source:
+            stats = source.validate()
+            row = list(source.iter_submissions())[0]
+
+        self.assertEqual(stats.staged_media, 2)
+        self.assertEqual(row["staged_front_key"], "front_MEDIA001_deadbeef.webp")
+        self.assertEqual(row["staged_back_key"], "back_MEDIA001_deadbeef.jpg")
+
+    def test_legacy_queue_media_rejects_unsafe_paths_and_uploaded_rows_are_not_staged(self):
+        temp = sqlite3.connect(self.fixture.temp_path)
+        insert_temp_card(temp, "UNSAFE01", status="approved")
+        temp.execute(
+            "UPDATE temp_cards SET front_image='../secret.webp' WHERE cert_id='UNSAFE01'"
+        )
+        temp.commit()
+        temp.close()
+
+        with migration.SourceBundle(
+            self.fixture.cards_path, self.fixture.temp_path
+        ) as source:
+            with self.assertRaisesRegex(
+                migration.MigrationError, "unsafe upload filename"
+            ):
+                source.validate()
+
+        temp = sqlite3.connect(self.fixture.temp_path)
+        temp.execute(
+            """
+            UPDATE temp_cards
+            SET front_image='front_UNSAFE01_deadbeef.webp',
+                back_image='back_UNSAFE01_deadbeef.webp',upload_status='uploaded'
+            WHERE cert_id='UNSAFE01'
+            """
+        )
+        temp.commit()
+        temp.close()
+        with migration.SourceBundle(
+            self.fixture.cards_path, self.fixture.temp_path
+        ) as source:
+            stats = source.validate()
+            row = list(source.iter_submissions())[0]
+        self.assertEqual(stats.staged_media, 0)
+        self.assertIsNone(row["staged_front_key"])
+        self.assertIsNone(row["staged_back_key"])
 
     def test_product_types_map_without_fake_grading_scores(self):
         cards = sqlite3.connect(self.fixture.cards_path)
@@ -361,6 +447,19 @@ class JavaDomainMigrationTests(unittest.TestCase):
             rows["VINTAGE1"]["vintage_classification_code"], "Archive A"
         )
         self.assertIsNone(rows["VINTAGE1"]["centering_score"])
+
+        with migration.SourceBundle(
+            self.fixture.cards_path, self.fixture.temp_path
+        ) as source:
+            source.validate()
+            projections = {
+                (row["source_code"], row["cert_id"]): row
+                for row in source.iter_match_projections()
+            }
+        self.assertEqual(
+            projections[("temp_cards", "LABEL001")]["merch_description"],
+            "Limited pin",
+        )
 
     def test_published_non_graded_product_discards_legacy_ai_grade(self):
         cards = sqlite3.connect(self.fixture.cards_path)
@@ -481,6 +580,35 @@ class JavaDomainMigrationTests(unittest.TestCase):
             ["grading_submission.merch_description"],
         )
 
+    def test_two_decimal_final_grade_and_upload_failure_fields_are_preserved(self):
+        temp = sqlite3.connect(self.fixture.temp_path)
+        insert_temp_card(temp, "PRECISE1", status="approved")
+        temp.execute(
+            """
+            UPDATE temp_cards
+            SET final_grade=9.35, final_grade_text='', entry_by='Legacy Admin',
+                upload_status='failed', upload_started='2026-07-01T10:00:00',
+                upload_completed='2026-07-01T10:01:00', upload_error='R2 timeout',
+                server_response='{"status":"retry"}'
+            WHERE cert_id='PRECISE1'
+            """
+        )
+        temp.commit()
+        temp.close()
+
+        with migration.SourceBundle(
+            self.fixture.cards_path, self.fixture.temp_path
+        ) as source:
+            source.validate()
+            row = list(source.iter_submissions())[0]
+
+        self.assertEqual(row["final_grade_value"], migration.decimal.Decimal("9.35"))
+        self.assertEqual(row["final_grade_label"], "9.35")
+        self.assertEqual(row["entry_by_label"], "Legacy Admin")
+        self.assertEqual(row["upload_status"], "failed")
+        self.assertEqual(row["upload_error"], "R2 timeout")
+        self.assertEqual(row["server_response"], '{"status":"retry"}')
+
     def test_unsupported_temp_status_fails_before_mysql(self):
         temp = sqlite3.connect(self.fixture.temp_path)
         insert_temp_card(temp, "REJECTED1", status="rejected")
@@ -530,6 +658,19 @@ class JavaDomainMigrationTests(unittest.TestCase):
         ) as source:
             completed = source.changed_cert_ids(inserted_cursor)
         self.assertEqual(completed, ["SYNC0001"])
+
+    def test_empty_incremental_projection_does_not_rescan_full_source(self):
+        temp = sqlite3.connect(self.fixture.temp_path)
+        insert_temp_card(temp, "PROJECTION1", status="approved")
+        temp.commit()
+        temp.close()
+
+        with migration.SourceBundle(
+            self.fixture.cards_path, self.fixture.temp_path
+        ) as source:
+            source.validate()
+            self.assertEqual(len(list(source.iter_match_projections())), 1)
+            self.assertEqual(list(source.iter_match_projections([])), [])
 
     def test_sync_source_does_not_modify_sqlite_files(self):
         before = {

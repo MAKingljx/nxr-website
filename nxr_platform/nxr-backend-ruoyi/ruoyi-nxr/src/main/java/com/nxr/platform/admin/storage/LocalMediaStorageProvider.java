@@ -3,8 +3,10 @@ package com.nxr.platform.admin.storage;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.StandardCopyOption;
 import java.security.DigestInputStream;
 import java.security.MessageDigest;
@@ -62,6 +64,7 @@ public class LocalMediaStorageProvider implements MediaStorageProvider {
         String normalizedStage = requireStage(stage);
         String storageKey = generateStorageKey(normalizedStage, certId, sideCode, extension);
         Path outputPath = resolveStagePath(normalizedStage, storageKey);
+        Path pendingPath = outputPath.resolveSibling("." + outputPath.getFileName() + ".part");
 
         try {
             Files.createDirectories(outputPath.getParent());
@@ -70,7 +73,7 @@ public class LocalMediaStorageProvider implements MediaStorageProvider {
             try (
                 InputStream inputStream = mediaUpload.inputStreamSource().openStream();
                 DigestInputStream digestInputStream = new DigestInputStream(inputStream, messageDigest);
-                OutputStream outputStream = Files.newOutputStream(outputPath)
+                OutputStream outputStream = Files.newOutputStream(pendingPath, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
             ) {
                 byte[] buffer = new byte[8192];
                 int bytesRead;
@@ -79,6 +82,8 @@ public class LocalMediaStorageProvider implements MediaStorageProvider {
                     fileSizeBytes += bytesRead;
                 }
             }
+            forceFile(pendingPath);
+            moveCompleteFile(pendingPath, outputPath);
 
             return new StoredMediaObject(
                 providerCode(),
@@ -89,12 +94,16 @@ public class LocalMediaStorageProvider implements MediaStorageProvider {
                 mediaUpload.contentType(),
                 fileSizeBytes,
                 HexFormat.of().formatHex(messageDigest.digest()),
-                null
+                null,
+                mediaUpload.widthPx(),
+                mediaUpload.heightPx()
             );
         } catch (IOException exc) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to store uploaded media.", exc);
         } catch (NoSuchAlgorithmException exc) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Missing SHA-256 support.", exc);
+        } finally {
+            deletePendingFile(pendingPath);
         }
     }
 
@@ -125,10 +134,13 @@ public class LocalMediaStorageProvider implements MediaStorageProvider {
             extractExtension(source.storageKey())
         );
         Path targetPath = resolveStagePath(normalizedStage, storageKey);
+        Path pendingPath = targetPath.resolveSibling("." + targetPath.getFileName() + ".part");
 
         try {
             Files.createDirectories(targetPath.getParent());
-            Files.copy(sourcePath, targetPath, StandardCopyOption.REPLACE_EXISTING);
+            Files.copy(sourcePath, pendingPath);
+            forceFile(pendingPath);
+            moveCompleteFile(pendingPath, targetPath);
             return new StoredMediaObject(
                 providerCode(),
                 storageBucket,
@@ -138,10 +150,14 @@ public class LocalMediaStorageProvider implements MediaStorageProvider {
                 source.mimeType(),
                 Files.size(targetPath),
                 source.checksumSha256(),
-                null
+                null,
+                source.widthPx(),
+                source.heightPx()
             );
         } catch (IOException exc) {
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Failed to publish staged media.", exc);
+        } finally {
+            deletePendingFile(pendingPath);
         }
     }
 
@@ -257,5 +273,27 @@ public class LocalMediaStorageProvider implements MediaStorageProvider {
             normalized = normalized.substring(0, normalized.length() - 1);
         }
         return normalized;
+    }
+
+    private void forceFile(Path path) throws IOException {
+        try (FileChannel channel = FileChannel.open(path, StandardOpenOption.WRITE)) {
+            channel.force(true);
+        }
+    }
+
+    private void moveCompleteFile(Path source, Path target) throws IOException {
+        try {
+            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
+        } catch (java.nio.file.AtomicMoveNotSupportedException ignored) {
+            Files.move(source, target);
+        }
+    }
+
+    private void deletePendingFile(Path path) {
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException ignored) {
+            // A random private .part name is never exposed through a media URL.
+        }
     }
 }

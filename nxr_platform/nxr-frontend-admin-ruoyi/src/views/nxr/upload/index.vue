@@ -85,6 +85,25 @@
       <el-form-item>
         <el-button type="primary" icon="Search" @click="loadQueue(true)">{{ $tx('Search') }}</el-button>
       </el-form-item>
+      <el-form-item :label="$tx('Upload Status')">
+        <el-select v-model="uploadStatusFilter" clearable style="width: 160px" @change="loadQueue(true)">
+          <el-option :label="$tx('Not Started')" value="not_started" />
+          <el-option :label="$tx('Uploading')" value="uploading" />
+          <el-option :label="$tx('Uploaded')" value="uploaded" />
+          <el-option :label="$tx('Failed')" value="failed" />
+          <el-option :label="$tx('Client Pushed')" value="client_pushed" />
+        </el-select>
+      </el-form-item>
+      <el-form-item :label="$tx('Image Status')">
+        <el-select v-model="imageStatusFilter" clearable style="width: 150px" @change="loadQueue(true)">
+          <el-option :label="$tx('Ready')" value="ready" />
+          <el-option :label="$tx('Waiting')" value="waiting" />
+          <el-option :label="$tx('Published')" value="published" />
+        </el-select>
+      </el-form-item>
+      <el-form-item>
+        <el-checkbox v-model="showClientPushed" @change="loadQueue(true)">{{ $tx('Show Client Pushed') }}</el-checkbox>
+      </el-form-item>
       <el-form-item v-hasPermi="['nxr:media:publish']">
         <el-button
           type="success"
@@ -106,8 +125,8 @@
       <el-table-column :label="$tx('Staged Images')" width="160" align="center">
         <template #default="scope">
           <div class="thumb-row">
-            <el-image v-if="scope.row.stagedFrontUrl" :src="scope.row.stagedFrontUrl" :preview-src-list="[scope.row.stagedFrontUrl]" fit="cover" class="thumb" preview-teleported />
-            <el-image v-if="scope.row.stagedBackUrl" :src="scope.row.stagedBackUrl" :preview-src-list="[scope.row.stagedBackUrl]" fit="cover" class="thumb" preview-teleported />
+            <el-image v-if="scope.row.stagedFrontUrl" :src="mediaDisplayUrl(scope.row.stagedFrontUrl)" :preview-src-list="[mediaDisplayUrl(scope.row.stagedFrontUrl)]" fit="cover" class="thumb" preview-teleported />
+            <el-image v-if="scope.row.stagedBackUrl" :src="mediaDisplayUrl(scope.row.stagedBackUrl)" :preview-src-list="[mediaDisplayUrl(scope.row.stagedBackUrl)]" fit="cover" class="thumb" preview-teleported />
             <span v-if="!scope.row.stagedFrontUrl && !scope.row.stagedBackUrl" class="muted">-</span>
           </div>
         </template>
@@ -121,12 +140,20 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column :label="$tx('Media Status')" width="120" align="center">
+      <el-table-column :label="$tx('Upload Status')" width="135" align="center">
+        <template #default="scope">
+          <el-tooltip v-if="scope.row.uploadError" :content="scope.row.uploadError" placement="top">
+            <el-tag :type="uploadStateTag(scope.row.uploadStatus)">{{ uploadStateLabel(scope.row.uploadStatus) }}</el-tag>
+          </el-tooltip>
+          <el-tag v-else :type="uploadStateTag(scope.row.uploadStatus)">{{ uploadStateLabel(scope.row.uploadStatus) }}</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column :label="$tx('Image Status')" width="130" align="center">
         <template #default="scope">
           <el-tag :type="mediaStateTag(scope.row)">{{ mediaStateLabel(scope.row) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column :label="$tx('Actions')" width="130" align="center">
+      <el-table-column :label="$tx('Actions')" width="220" align="center">
         <template #default="scope">
           <el-button
             link
@@ -137,6 +164,14 @@
             v-hasPermi="['nxr:media:publish']"
             @click="publishEntry(scope.row.submissionId)"
           >{{ $tx('Publish') }}</el-button>
+          <el-button
+            link
+            type="primary"
+            :loading="clientPushLoadingId === scope.row.submissionId"
+            :disabled="scope.row.uploadStatus === 'uploading' || scope.row.uploadStatus === 'client_pushed'"
+            v-hasPermi="['nxr:media:publish']"
+            @click="markClientPushed(scope.row)"
+          >{{ $tx('Client Pushed') }}</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -153,7 +188,7 @@
 
 <script setup name="NxrUpload">
 import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
-import { fetchMediaQueue, importMediaFolder, publishSubmissionMedia, publishSubmissionMediaBatch } from '@/api/nxr/media'
+import { fetchMediaQueue, importMediaFolder, publishSubmissionMedia, publishSubmissionMediaBatch, markSubmissionClientPushed } from '@/api/nxr/media'
 
 const { proxy } = getCurrentInstance()
 const allowedImagePattern = /\.(webp|png|jpe?g)$/i
@@ -163,9 +198,13 @@ const summary = ref({ trackedEntries: 0, readyToPublish: 0, livePublished: 0, mi
 const queuePage = ref(1)
 const queuePageSize = ref(12)
 const searchQuery = ref('')
+const uploadStatusFilter = ref('')
+const imageStatusFilter = ref('')
+const showClientPushed = ref(false)
 const loading = ref(false)
 const importing = ref(false)
 const publishLoadingId = ref(null)
+const clientPushLoadingId = ref(null)
 const batchPublishing = ref(false)
 const selectedReadyIds = ref([])
 const selectedFiles = ref([])
@@ -177,11 +216,21 @@ const uploadLabel = ref('')
 const lastImport = ref(null)
 const folderInput = ref(null)
 
+function mediaDisplayUrl(value) {
+  if (typeof value === 'string' && value.startsWith('/media/')) {
+    return `${import.meta.env.VITE_APP_BASE_API}${value}`
+  }
+  return value
+}
+
 function loadQueue(resetPage = false) {
   if (resetPage) queuePage.value = 1
   loading.value = true
   return fetchMediaQueue({
     query: searchQuery.value.trim() || undefined,
+    uploadStatus: uploadStatusFilter.value || undefined,
+    imageStatus: imageStatusFilter.value || undefined,
+    showClientPushed: showClientPushed.value,
     page: queuePage.value,
     pageSize: queuePageSize.value
   })
@@ -305,6 +354,40 @@ function mediaStateLabel(item) {
   if (item.readyToPublish) return tx('Ready')
   if (item.hasStagedFront || item.hasStagedBack) return tx('One Side Missing')
   return tx('Images Missing')
+}
+
+function uploadStateLabel(status) {
+  const labels = {
+    not_started: 'Not Started',
+    uploading: 'Uploading',
+    uploaded: 'Uploaded',
+    failed: 'Failed',
+    client_pushed: 'Client Pushed'
+  }
+  return tx(labels[status] || 'Not Started')
+}
+
+function uploadStateTag(status) {
+  if (status === 'uploaded' || status === 'client_pushed') return 'success'
+  if (status === 'uploading') return 'warning'
+  if (status === 'failed') return 'danger'
+  return 'info'
+}
+
+async function markClientPushed(row) {
+  try {
+    await proxy.$modal.confirm(tx('Mark this card as pushed by the client?'))
+  } catch {
+    return
+  }
+  clientPushLoadingId.value = row.submissionId
+  try {
+    await markSubmissionClientPushed(row.submissionId)
+    proxy.$modal.msgSuccess(tx('Marked as Client Pushed'))
+    await loadQueue()
+  } finally {
+    clientPushLoadingId.value = null
+  }
 }
 
 function queueResult(item) {

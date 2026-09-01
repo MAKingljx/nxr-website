@@ -30,6 +30,7 @@ public class AdminSubmissionService {
     private static final String VINTAGE_PRODUCT_TYPE = ProductTypePolicy.VINTAGE_PRODUCT;
     private static final String PRODUCT_TYPE_SQL = " " + ProductTypePolicy.canonicalSql("product_type_code");
     private static final String SUBMISSION_PRODUCT_TYPE_SQL = " " + ProductTypePolicy.canonicalSql("s.product_type_code");
+    private static final String CANONICAL_GRADE_SQL = GradeLabelResolver.canonicalSql("g.final_grade_label");
     private static final String DEFAULT_CARD_CATEGORY = "trading_card";
     private static final Map<String, String> CARD_CATEGORY_ALIASES = Map.ofEntries(
         Map.entry("", DEFAULT_CARD_CATEGORY),
@@ -171,7 +172,7 @@ public class AdminSubmissionService {
         params.put("cardCategory", normalizedCategory == null ? null : normalizeCardCategory(normalizedCategory));
         params.put("productType", normalizedProductType == null ? null : normalizeProductType(normalizedProductType));
         params.put("brand", likeFilter(normalizedBrand));
-        params.put("finalGrade", normalizedFinalGrade == null ? null : normalizedFinalGrade.toUpperCase(Locale.ROOT));
+        params.put("finalGrade", normalizedFinalGrade == null ? null : gradeLabelResolver.normalizeLabel(normalizedFinalGrade));
         params.put("finalGradeValue", parseGradeFilter(normalizedFinalGrade));
         params.put("setName", likeFilter(normalizedSetName));
         params.put("language", normalizedLanguage == null ? null : normalizedLanguage.toUpperCase(Locale.ROOT));
@@ -198,17 +199,18 @@ public class AdminSubmissionService {
               AND (:brand IS NULL OR UPPER(COALESCE(s.brand_name, '')) LIKE :brand)
               AND (
                 :finalGrade IS NULL
-                OR UPPER(COALESCE(g.final_grade_label, '')) = :finalGrade
+                OR %s = :finalGrade
                 OR (:finalGradeValue IS NOT NULL AND g.final_grade_value = :finalGradeValue)
               )
               AND (:setName IS NULL OR UPPER(COALESCE(s.set_name, '')) LIKE :setName)
               AND (:language IS NULL OR UPPER(COALESCE(s.language_code, '')) = :language)
               AND (
                 :enteredBy IS NULL
+                OR UPPER(COALESCE(s.entry_by_label, '')) LIKE :enteredBy
                 OR UPPER(COALESCE(u.user_name, '')) LIKE :enteredBy
                 OR UPPER(COALESCE(u.nick_name, '')) LIKE :enteredBy
               )
-            """.formatted(ProductTypePolicy.canonicalSql("s.product_type_code"));
+            """.formatted(ProductTypePolicy.canonicalSql("s.product_type_code"), CANONICAL_GRADE_SQL);
         String joins = """
             LEFT JOIN grading_score g ON g.submission_id = s.id
             LEFT JOIN sys_user u ON u.user_id = s.entry_by_user_id
@@ -245,7 +247,7 @@ public class AdminSubmissionService {
                     s.status_code,
                     s.created_at,
                     s.updated_at,
-                    COALESCE(NULLIF(u.user_name, ''), NULLIF(u.nick_name, '')) AS entered_by,
+                    COALESCE(NULLIF(s.entry_by_label, ''), NULLIF(u.user_name, ''), NULLIF(u.nick_name, '')) AS entered_by,
                     g.final_grade_value,
                     g.final_grade_label
                 FROM grading_submission s
@@ -272,7 +274,7 @@ public class AdminSubmissionService {
                 rs.getObject("updated_at", LocalDateTime.class),
                 rs.getString("entered_by"),
                 rs.getBigDecimal("final_grade_value"),
-                rs.getString("final_grade_label")
+                gradeLabelResolver.canonicalOrOriginal(rs.getString("final_grade_label"))
             ))
             .list();
 
@@ -307,7 +309,7 @@ public class AdminSubmissionService {
                     s.status_code,
                     s.grading_phase_code,
                     s.entry_notes,
-                    COALESCE(NULLIF(u.user_name, ''), NULLIF(u.nick_name, '')) AS entered_by,
+                    COALESCE(NULLIF(s.entry_by_label, ''), NULLIF(u.user_name, ''), NULLIF(u.nick_name, '')) AS entered_by,
                     s.created_at,
                     s.updated_at,
                     s.approved_at,
@@ -366,7 +368,7 @@ public class AdminSubmissionService {
                 rs.getBigDecimal("corners_score"),
                 rs.getBigDecimal("surface_score"),
                 rs.getBigDecimal("final_grade_value"),
-                rs.getString("final_grade_label"),
+                gradeLabelResolver.canonicalOrOriginal(rs.getString("final_grade_label")),
                 rs.getBigDecimal("ai_grade_value"),
                 rs.getBigDecimal("ai_confidence_value"),
                 rs.getString("decision_method_code"),
@@ -517,7 +519,9 @@ public class AdminSubmissionService {
                 requestedVintageClassification,
                 "Vintage Classification"
             );
-        String finalGradeLabel = gradedProduct ? normalizeOptional(request.finalGradeLabel()) : null;
+        String finalGradeLabel = gradedProduct
+            ? gradeLabelResolver.normalizeLabel(request.finalGradeLabel())
+            : null;
         if (gradedProduct && finalGradeLabel == null && request.hasScores()) {
             finalGradeLabel = calculateGrade(new ScoreRequest(
                 request.centeringScore(),
@@ -581,6 +585,60 @@ public class AdminSubmissionService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Set name and card number are required");
         }
 
+        Map<String, Object> matchParams = Map.of(
+            "productType", productType,
+            "category", category,
+            "setName", setName,
+            "cardNumber", cardNumber
+        );
+        Optional<MatchCardResponse> pythonMatch = jdbcClient.sql(
+                """
+                SELECT
+                    card_name,
+                    brand_name,
+                    year_label,
+                    variety_name,
+                    language_code,
+                    sports_type,
+                    group_name,
+                    merch_description,
+                    source_code
+                FROM nxr_python_match_projection
+                WHERE (
+                """ + ProductTypePolicy.canonicalSql("product_type_code") + """
+                ) = :productType
+                  AND COALESCE(NULLIF(card_category_code, ''), 'trading_card') = :category
+                  AND UPPER(set_name) = UPPER(:setName)
+                  AND UPPER(card_number) = UPPER(:cardNumber)
+                ORDER BY
+                    CASE WHEN source_code='temp_cards' THEN 0 ELSE 1 END,
+                    CASE WHEN status_code='approved' THEN 0 ELSE 1 END,
+                    source_updated_at DESC,
+                    cert_id DESC
+                LIMIT 1
+                """
+            )
+            .params(matchParams)
+            .query((rs, rowNum) -> new MatchCardResponse(
+                true,
+                rs.getString("card_name"),
+                rs.getString("brand_name"),
+                rs.getString("year_label"),
+                rs.getString("variety_name"),
+                rs.getString("language_code"),
+                rs.getString("sports_type"),
+                rs.getString("group_name"),
+                MERCH_PRODUCT_TYPE.equals(productType)
+                    ? normalizeOptional(rs.getString("merch_description"))
+                    : null,
+                rs.getString("source_code"),
+                "Matched from the Python synchronization projection."
+            ))
+            .optional();
+        if (pythonMatch.isPresent()) {
+            return pythonMatch.get();
+        }
+
         return jdbcClient.sql(
                 """
                 SELECT
@@ -605,12 +663,7 @@ public class AdminSubmissionService {
                 LIMIT 1
                 """
             )
-            .params(Map.of(
-                "productType", productType,
-                "category", category,
-                "setName", setName,
-                "cardNumber", cardNumber
-            ))
+            .params(matchParams)
             .query((rs, rowNum) -> new MatchCardResponse(
                 true,
                 rs.getString("card_name"),
@@ -1005,7 +1058,7 @@ public class AdminSubmissionService {
             """
         );
         if (gradedProduct) {
-            where.append(" AND g.final_grade_label = :finalGradeLabel\n");
+            where.append(" AND ").append(CANONICAL_GRADE_SQL).append(" = :finalGradeLabel\n");
         } else if (VINTAGE_PRODUCT_TYPE.equals(productType)) {
             where.append(" AND UPPER(COALESCE(s.vintage_classification_code, '')) = UPPER(:vintageClassification)\n");
         }

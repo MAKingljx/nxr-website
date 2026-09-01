@@ -28,6 +28,13 @@ export function publishSubmissionMediaBatch(submissionIds) {
   })
 }
 
+export function markSubmissionClientPushed(submissionId) {
+  return request({
+    url: '/api/admin/media/submissions/' + submissionId + '/client-pushed',
+    method: 'post'
+  })
+}
+
 // 分批上传图片文件（文件名约定 {certId}_A / {certId}_B）
 const MAX_BATCH_FILES = 12
 const MAX_BATCH_BYTES = 24 * 1024 * 1024

@@ -86,7 +86,7 @@ class AdminSubmissionServiceTest {
         );
 
         assertThat(created.finalGradeValue()).isEqualByComparingTo("9.0");
-        assertThat(created.finalGradeLabel()).isEqualTo("Mint 9");
+        assertThat(created.finalGradeLabel()).isEqualTo("9");
         assertThat(count("grading_score")).isOne();
     }
 
@@ -202,6 +202,39 @@ class AdminSubmissionServiceTest {
         assertThat(match.found()).isTrue();
         assertThat(match.cardName()).isEqualTo("Test Card");
         assertThat(match.merchDescription()).isEqualTo("Legacy description");
+    }
+
+    @Test
+    void pythonTemporaryProjectionHasPriorityAndReturnsMerchDescription() {
+        jdbcTemplate.update(
+            """
+            INSERT INTO nxr_python_match_projection (
+                source_code, cert_id, product_type_code, card_category_code,
+                set_name, card_number, card_name, brand_name, year_label,
+                variety_name, language_code, merch_description, status_code,
+                source_updated_at
+            ) VALUES
+                ('cards', 'MATCH001', 'merch_product', 'trading_card',
+                 'Base Set', '4/102', 'Published Name', 'Pokemon', '1999',
+                 'Published Variety', 'EN', 'Published description', 'published',
+                 TIMESTAMP '2026-08-01 10:00:00'),
+                ('temp_cards', 'MATCH002', 'merch_product', 'trading_card',
+                 'Base Set', '4/102', 'Temporary Name', 'Pokemon', '2000',
+                 'Temporary Variety', 'EN', 'Temporary description', 'approved',
+                 TIMESTAMP '2026-08-01 09:00:00')
+            """
+        );
+
+        AdminSubmissionService.MatchCardResponse match = service.matchCard(
+            new AdminSubmissionService.MatchCardRequest(
+                "merch_product", "trading_card", "Base Set", "4/102"
+            )
+        );
+
+        assertThat(match.found()).isTrue();
+        assertThat(match.cardName()).isEqualTo("Temporary Name");
+        assertThat(match.merchDescription()).isEqualTo("Temporary description");
+        assertThat(match.source()).isEqualTo("temp_cards");
     }
 
     @Test
@@ -356,6 +389,7 @@ class AdminSubmissionServiceTest {
                 approval_sequence BIGINT,
                 entry_notes TEXT,
                 entry_by_user_id BIGINT,
+                entry_by_label VARCHAR(128),
                 approved_by_user_id BIGINT,
                 approved_at TIMESTAMP,
                 published_at TIMESTAMP,
@@ -372,7 +406,7 @@ class AdminSubmissionServiceTest {
                 edges_score DECIMAL(4,1) NOT NULL,
                 corners_score DECIMAL(4,1) NOT NULL,
                 surface_score DECIMAL(4,1) NOT NULL,
-                final_grade_value DECIMAL(4,1) NOT NULL,
+                final_grade_value DECIMAL(4,2) NOT NULL,
                 final_grade_label VARCHAR(64) NOT NULL,
                 ai_grade_value DECIMAL(4,1),
                 ai_confidence_value DECIMAL(5,2),
@@ -416,6 +450,29 @@ class AdminSubmissionServiceTest {
                 dict_value VARCHAR(100) NOT NULL,
                 dict_type VARCHAR(100) NOT NULL,
                 status CHAR(1) NOT NULL
+            )
+            """
+        );
+        jdbcTemplate.execute(
+            """
+            CREATE TABLE nxr_python_match_projection (
+                source_code VARCHAR(16) NOT NULL,
+                cert_id VARCHAR(32) NOT NULL,
+                product_type_code VARCHAR(32) NOT NULL,
+                card_category_code VARCHAR(32) NOT NULL,
+                set_name VARCHAR(255) NOT NULL,
+                card_number VARCHAR(64) NOT NULL,
+                card_name VARCHAR(255) NOT NULL,
+                brand_name VARCHAR(64) NOT NULL,
+                year_label VARCHAR(16),
+                variety_name VARCHAR(255),
+                language_code VARCHAR(16),
+                sports_type VARCHAR(64),
+                group_name VARCHAR(128),
+                merch_description TEXT,
+                status_code VARCHAR(32),
+                source_updated_at TIMESTAMP,
+                PRIMARY KEY (source_code, cert_id)
             )
             """
         );

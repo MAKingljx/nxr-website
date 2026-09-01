@@ -34,6 +34,7 @@ esac
 install -d -m 0755 "$JAVA_ROOT/releases" "$JAVA_ROOT/slots" "$CONFIG_ROOT/slots"
 install -d -m 0700 "$STATE_ROOT" "$STATE_ROOT/backups"
 install -d -m 0750 -o nxr-java -g nxr-java /var/log/nxr-java/blue /var/log/nxr-java/green
+install -d -m 0750 -o nxr-java -g nxr-java /var/lib/nxr-java/python-uploads
 
 install -m 0644 "$DEPLOY_SOURCE/nxr-java-stage@.service" \
   "$SYSTEMD_ROOT/nxr-java-stage@.service"

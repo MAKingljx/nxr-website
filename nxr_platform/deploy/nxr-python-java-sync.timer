@@ -2,8 +2,10 @@
 Description=Run NXR Python to Java data synchronization
 
 [Timer]
-OnCalendar=*-*-* 00:00:00 Asia/Shanghai
-AccuracySec=1s
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+RandomizedDelaySec=15s
 Persistent=false
 Unit=nxr-python-java-sync.service
 
