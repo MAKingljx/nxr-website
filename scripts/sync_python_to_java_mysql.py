@@ -568,6 +568,27 @@ class PythonToJavaSync:
                 + row["cert_id"]
             )
 
+    def retire_missing_match_projections(self) -> None:
+        """Hide projection rows that disappeared from a complete source snapshot.
+
+        The production synchronizer intentionally has UPDATE but not DELETE on
+        this table.  Keeping the historical row also makes a full refresh
+        recoverable: a later source reappearance simply upserts it back to its
+        current status.
+        """
+        with self.db.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE nxr_python_match_projection p
+                LEFT JOIN tmp_nxr_match_projection t
+                  ON t.source_code=p.source_code AND t.cert_id=p.cert_id
+                SET p.status_code='deleted'
+                WHERE t.cert_id IS NULL
+                  AND COALESCE(p.status_code, '')<>'deleted'
+                """
+            )
+            print(f"sync_retired_match_projections={cursor.rowcount}")
+
     def merge(self, *, full_refresh: bool = False) -> None:
         with self.db.cursor() as cursor:
             cursor.execute(
@@ -584,8 +605,7 @@ class PythonToJavaSync:
             )
             print(f"sync_changed_submissions={cursor.fetchone()['count']}")
         if full_refresh:
-            with self.db.cursor() as cursor:
-                cursor.execute("DELETE FROM nxr_python_match_projection")
+            self.retire_missing_match_projections()
         statements = (
             """
             INSERT INTO grading_submission (

@@ -608,6 +608,7 @@ public class AdminSubmissionService {
                 """ + ProductTypePolicy.canonicalSql("product_type_code") + """
                 ) = :productType
                   AND COALESCE(NULLIF(card_category_code, ''), 'trading_card') = :category
+                  AND COALESCE(status_code, '') <> 'deleted'
                   AND UPPER(set_name) = UPPER(:setName)
                   AND UPPER(card_number) = UPPER(:cardNumber)
                 ORDER BY

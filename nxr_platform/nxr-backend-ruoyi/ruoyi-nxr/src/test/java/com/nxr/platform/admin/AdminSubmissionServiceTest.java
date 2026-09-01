@@ -238,6 +238,39 @@ class AdminSubmissionServiceTest {
     }
 
     @Test
+    void deletedPythonProjectionIsExcludedFromAutomaticMatching() {
+        jdbcTemplate.update(
+            """
+            INSERT INTO nxr_python_match_projection (
+                source_code, cert_id, product_type_code, card_category_code,
+                set_name, card_number, card_name, brand_name, year_label,
+                variety_name, language_code, merch_description, status_code,
+                source_updated_at
+            ) VALUES
+                ('temp_cards', 'MATCH003', 'merch_product', 'trading_card',
+                 'Base Set', '4/102', 'Deleted Name', 'Pokemon', '2001',
+                 'Deleted Variety', 'EN', 'Deleted description', 'deleted',
+                 TIMESTAMP '2026-08-01 12:00:00'),
+                ('cards', 'MATCH004', 'merch_product', 'trading_card',
+                 'Base Set', '4/102', 'Current Name', 'Pokemon', '2002',
+                 'Current Variety', 'EN', 'Current description', 'published',
+                 TIMESTAMP '2026-08-01 11:00:00')
+            """
+        );
+
+        AdminSubmissionService.MatchCardResponse match = service.matchCard(
+            new AdminSubmissionService.MatchCardRequest(
+                "merch_product", "trading_card", "Base Set", "4/102"
+            )
+        );
+
+        assertThat(match.found()).isTrue();
+        assertThat(match.cardName()).isEqualTo("Current Name");
+        assertThat(match.merchDescription()).isEqualTo("Current description");
+        assertThat(match.source()).isEqualTo("cards");
+    }
+
+    @Test
     void listFiltersMatchPythonAdminFieldsAndReturnEnteredBy() {
         service.createSubmission(
             request("5703018208", "graded_card", null, "sports_card", new BigDecimal("9.0"))

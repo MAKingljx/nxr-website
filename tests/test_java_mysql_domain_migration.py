@@ -672,6 +672,43 @@ class JavaDomainMigrationTests(unittest.TestCase):
             self.assertEqual(len(list(source.iter_match_projections())), 1)
             self.assertEqual(list(source.iter_match_projections([])), [])
 
+    def test_full_sync_retires_missing_projection_without_delete_privilege(self):
+        class RecordingCursor:
+            rowcount = 2
+
+            def __init__(self):
+                self.statements = []
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc_value, traceback):
+                return False
+
+            def execute(self, statement, parameters=None):
+                self.statements.append((statement, parameters))
+
+        class RecordingConnection:
+            def __init__(self):
+                self.recording_cursor = RecordingCursor()
+
+            def cursor(self):
+                return self.recording_cursor
+
+        runner = sync.PythonToJavaSync(object())
+        connection = RecordingConnection()
+        runner.connection = connection
+
+        runner.retire_missing_match_projections()
+
+        statement = " ".join(
+            connection.recording_cursor.statements[0][0].upper().split()
+        )
+        self.assertTrue(statement.startswith("UPDATE NXR_PYTHON_MATCH_PROJECTION"))
+        self.assertIn("LEFT JOIN TMP_NXR_MATCH_PROJECTION", statement)
+        self.assertIn("SET P.STATUS_CODE='DELETED'", statement)
+        self.assertNotIn("DELETE FROM", statement)
+
     def test_sync_source_does_not_modify_sqlite_files(self):
         before = {
             path: hashlib.sha256(path.read_bytes()).hexdigest()
