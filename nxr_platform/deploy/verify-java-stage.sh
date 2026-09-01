@@ -5,7 +5,18 @@
 
 set -euo pipefail
 
-BACKEND_URL="${NXR_STAGE_BACKEND_URL:-http://127.0.0.1:18088}"
+if [[ -n "${NXR_STAGE_BACKEND_URL:-}" ]]; then
+  BACKEND_URL="$NXR_STAGE_BACKEND_URL"
+elif [[ -s /var/lib/nxr-java-deploy/active-slot ]]; then
+  ACTIVE_SLOT="$(tr -d '\r\n' < /var/lib/nxr-java-deploy/active-slot)"
+  case "$ACTIVE_SLOT" in
+    blue) BACKEND_URL="http://127.0.0.1:18088" ;;
+    green) BACKEND_URL="http://127.0.0.1:18089" ;;
+    *) printf 'Invalid Java active slot: %s\n' "$ACTIVE_SLOT" >&2; exit 1 ;;
+  esac
+else
+  BACKEND_URL="http://127.0.0.1:18088"
+fi
 WEB_URL="${NXR_STAGE_WEB_URL:-http://127.0.0.1:18080}"
 ADMIN_URL="${NXR_STAGE_ADMIN_URL:-http://127.0.0.1:18081}"
 

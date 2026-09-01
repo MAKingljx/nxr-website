@@ -1,7 +1,6 @@
 [Unit]
 Description=Dedicated Redis for NXR Java staging
 After=network.target
-Before=nxr-java-stage.service
 StartLimitIntervalSec=300
 StartLimitBurst=5
 

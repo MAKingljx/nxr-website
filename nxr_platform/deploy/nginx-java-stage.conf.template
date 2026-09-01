@@ -1,9 +1,15 @@
+# Rendered atomically by hot-deploy-java.sh. Do not install this template
+# directly in conf.d: both placeholders must be replaced first.
+upstream nxr_java_stage_backend {
+    server 127.0.0.1:@@NXR_BACKEND_PORT@@ max_fails=2 fail_timeout=5s;
+}
+
 # Localhost-only Java staging UIs. Public access, when enabled, is forwarded
 # through the main TLS virtual host without exposing these ports directly.
 server {
     listen 127.0.0.1:18080;
     server_name localhost;
-    root /opt/nxr-java/current/web;
+    root @@NXR_RELEASE_ROOT@@/web;
     index index.html;
 
     add_header X-Robots-Tag "noindex, nofollow" always;
@@ -13,25 +19,27 @@ server {
     }
 
     location /api/ {
-        proxy_pass http://127.0.0.1:18088;
+        proxy_pass http://nxr_java_stage_backend;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 300;
+        proxy_next_upstream off;
     }
 
     location /media/ {
-        proxy_pass http://127.0.0.1:18088;
+        proxy_pass http://nxr_java_stage_backend;
         proxy_set_header Host $host;
         proxy_read_timeout 300;
+        proxy_next_upstream off;
     }
 }
 
 server {
     listen 127.0.0.1:18082;
     server_name localhost;
-    root /opt/nxr-java/current/web-remote;
+    root @@NXR_RELEASE_ROOT@@/web-remote;
     index index.html;
 
     add_header X-Robots-Tag "noindex, nofollow" always;
@@ -41,25 +49,27 @@ server {
     }
 
     location /api/ {
-        proxy_pass http://127.0.0.1:18088;
+        proxy_pass http://nxr_java_stage_backend;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 300;
+        proxy_next_upstream off;
     }
 
     location /media/ {
-        proxy_pass http://127.0.0.1:18088;
+        proxy_pass http://nxr_java_stage_backend;
         proxy_set_header Host $host;
         proxy_read_timeout 300;
+        proxy_next_upstream off;
     }
 }
 
 server {
     listen 127.0.0.1:18083;
     server_name localhost;
-    root /opt/nxr-java/current/admin-remote;
+    root @@NXR_RELEASE_ROOT@@/admin-remote;
     index index.html;
     client_max_body_size 256M;
 
@@ -70,20 +80,21 @@ server {
     }
 
     location /prod-api/ {
-        proxy_pass http://127.0.0.1:18088/;
+        proxy_pass http://nxr_java_stage_backend/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 300;
         proxy_send_timeout 300;
+        proxy_next_upstream off;
     }
 }
 
 server {
     listen 127.0.0.1:18081;
     server_name localhost;
-    root /opt/nxr-java/current/admin;
+    root @@NXR_RELEASE_ROOT@@/admin;
     index index.html;
     client_max_body_size 256M;
 
@@ -94,12 +105,13 @@ server {
     }
 
     location /prod-api/ {
-        proxy_pass http://127.0.0.1:18088/;
+        proxy_pass http://nxr_java_stage_backend/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 300;
         proxy_send_timeout 300;
+        proxy_next_upstream off;
     }
 }
