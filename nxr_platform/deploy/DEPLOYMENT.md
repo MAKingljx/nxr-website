@@ -153,13 +153,13 @@ a vintage product; do not grant row deletion on any other table. Store the
 generated password only in the same root-readable synchronization environment
 file.
 
-The timer checks for changes about every five minutes, without a persistent
-missed-run catch-up. Incremental runs load only changed certificate records; a
-full source reconciliation is selected when the previous full sync is at least
-24 hours old. Source fingerprints prevent an unchanged full run from reverting
-a completed Java workflow. Source cursors and target writes commit in the same
-MySQL transaction. The SQLite files remain the source of truth and are never
-opened writable by this task.
+The timer runs once per day at 00:00 Asia/Shanghai, without a boot-time or
+persistent missed-run catch-up. A full source reconciliation is selected when
+the previous full sync is at least 24 hours old; otherwise that run loads only
+changed certificate records. Source fingerprints prevent an unchanged full run
+from reverting a completed Java workflow. Source cursors and target writes
+commit in the same MySQL transaction. The SQLite files remain the source of
+truth and are never opened writable by this task.
 
 ## Optional HTTPS access
 
