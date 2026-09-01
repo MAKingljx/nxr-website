@@ -292,7 +292,7 @@ function handleQuery() {
 
 /** 返回按钮操作 */
 function handleClose() {
-  const obj = { path: "/nxr/settings/dict" }
+  const obj = { path: "/system/dict" }
   proxy.$tab.closeOpenPage(obj)
 }
 

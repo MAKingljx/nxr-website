@@ -90,7 +90,7 @@ function checkSelectable(row) {
 
 /** 关闭按钮 */
 function close() {
-  const obj = { path: "/nxr/settings/user" }
+  const obj = { path: "/system/user" }
   proxy.$tab.closeOpenPage(obj)
 }
 

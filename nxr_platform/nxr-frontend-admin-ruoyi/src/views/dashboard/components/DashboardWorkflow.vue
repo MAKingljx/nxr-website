@@ -1,22 +1,43 @@
 <template>
   <section class="workflow-strip" :aria-label="$tx('Grading workflow progress')">
     <div class="workflow-strip__heading">
-      <span>{{ $tx('Grading Workflow') }}</span>
-      <strong>{{ formatNumber(pendingWork) }} {{ $tx('pending') }}</strong>
+      <span class="workflow-label">{{ $tx('Grading Workflow') }}</span>
+      <div class="workflow-metric workflow-metric--primary">
+        <strong>{{ formatNumber(pendingWork) }}</strong>
+        <small>{{ $tx('pending') }}</small>
+      </div>
     </div>
     <div class="workflow-step">
       <span class="workflow-step__number">01</span>
-      <div><strong>{{ $tx('Data Entry') }}</strong><small>{{ formatNumber(totalSubmissions) }} {{ $tx('records') }}</small></div>
+      <div class="workflow-step__content">
+        <span class="workflow-label">{{ $tx('Data Entry') }}</span>
+        <div class="workflow-metric">
+          <strong>{{ formatNumber(totalSubmissions) }}</strong>
+          <small>{{ $tx('records') }}</small>
+        </div>
+      </div>
     </div>
     <el-icon class="workflow-arrow"><ArrowRight /></el-icon>
     <div class="workflow-step">
       <span class="workflow-step__number">02</span>
-      <div><strong>{{ $tx('Review') }}</strong><small>{{ formatNumber(pendingReview) }} {{ $tx('records') }}</small></div>
+      <div class="workflow-step__content">
+        <span class="workflow-label">{{ $tx('Review') }}</span>
+        <div class="workflow-metric">
+          <strong>{{ formatNumber(pendingReview) }}</strong>
+          <small>{{ $tx('records') }}</small>
+        </div>
+      </div>
     </div>
     <el-icon class="workflow-arrow"><ArrowRight /></el-icon>
     <div class="workflow-step">
       <span class="workflow-step__number">03</span>
-      <div><strong>{{ $tx('Publication') }}</strong><small>{{ formatNumber(approvedReady) }} {{ $tx('ready') }}</small></div>
+      <div class="workflow-step__content">
+        <span class="workflow-label">{{ $tx('Publication') }}</span>
+        <div class="workflow-metric">
+          <strong>{{ formatNumber(approvedReady) }}</strong>
+          <small>{{ $tx('ready') }}</small>
+        </div>
+      </div>
     </div>
   </section>
 </template>
@@ -50,20 +71,50 @@ function formatNumber(value) {
   background: var(--nxr-surface);
 }
 
-.workflow-strip__heading span,
-.workflow-strip__heading strong {
+.workflow-strip__heading,
+.workflow-step__content {
+  min-width: 0;
+}
+
+.workflow-label {
   display: block;
-}
-
-.workflow-strip__heading span {
+  overflow: hidden;
   color: var(--nxr-text-faint);
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.workflow-strip__heading strong {
-  margin-top: 6px;
+.workflow-metric {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 5px;
+  margin-top: 5px;
+  white-space: nowrap;
+}
+
+.workflow-metric strong {
   color: var(--nxr-text);
-  font-size: 16px;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
+  letter-spacing: -0.025em;
+  line-height: 1;
+}
+
+.workflow-metric--primary strong {
+  font-size: 24px;
+}
+
+.workflow-metric small {
+  overflow: hidden;
+  color: var(--nxr-text-faint);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-overflow: ellipsis;
 }
 
 .workflow-step {
@@ -80,29 +131,6 @@ function formatNumber(value) {
   color: var(--nxr-text-faint);
   font-size: 11px;
   font-weight: 800;
-}
-
-.workflow-step div {
-  min-width: 0;
-}
-
-.workflow-step strong,
-.workflow-step small {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workflow-step strong {
-  color: var(--nxr-text);
-  font-size: 13px;
-}
-
-.workflow-step small {
-  margin-top: 4px;
-  color: var(--nxr-text-faint);
-  font-size: 11px;
 }
 
 .workflow-arrow {

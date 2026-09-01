@@ -105,7 +105,7 @@ export const dynamicRoutes = [
         path: 'role/:userId(\\d+)',
         component: () => import('@/views/system/user/authRole'),
         name: 'AuthRole',
-        meta: { title: i18n.global.t('nav.roleManagement'), activeMenu: '/nxr/settings/user' }
+        meta: { title: i18n.global.t('nav.roleManagement'), activeMenu: '/system/user' }
       }
     ]
   },
@@ -133,7 +133,7 @@ export const dynamicRoutes = [
         path: 'index/:dictId(\\d+)',
         component: () => import('@/views/system/dict/data'),
         name: 'Data',
-        meta: { title: i18n.global.t('nav.dictionarySettings'), activeMenu: '/nxr/settings/dict' }
+        meta: { title: i18n.global.t('nav.dictionarySettings'), activeMenu: '/system/dict' }
       }
     ]
   },

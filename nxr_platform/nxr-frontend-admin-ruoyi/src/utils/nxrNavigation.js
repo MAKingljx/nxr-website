@@ -5,6 +5,7 @@ const HIDDEN_TOOL_COMPONENTS = new Set(['tool/build/index', 'tool/gen/index'])
 const MENU_TITLE_KEYS = new Map([
   ['NXR后台', 'nav.nxrAdmin'],
   ['NXR管理', 'nav.nxrAdmin'],
+  ['卡片管理', 'nav.cardManagement'],
   ['卡牌管理', 'nav.cardManagement'],
   ['新建卡牌', 'nav.newCard'],
   ['新建录入', 'nav.newEntry'],
@@ -18,10 +19,11 @@ const MENU_TITLE_KEYS = new Map([
   ['上传与发布', 'nav.uploadPublish'],
   ['送审管理', 'nav.submissionManagement'],
   ['订单管理', 'nav.orderManagement'],
+  ['订单列表', 'nav.orderList'],
   ['送评订单', 'nav.gradingOrders'],
   ['客户管理', 'nav.customerManagement'],
   ['候补名单', 'nav.waitlist'],
-  ['提交者名单', 'nav.waitlist'],
+  ['提交者名单', 'nav.submitters'],
   ['数据导出', 'nav.dataExport'],
   ['Excel 导出', 'nav.excelExport'],
   ['Excel导出', 'nav.excelExport'],
@@ -62,14 +64,14 @@ const LEGACY_ROUTE_ALIASES = new Map([
   ['nxr/entries/index|entries', ['/nxr/entries', '/nxr/main/entries']],
   ['nxr/entries/index|pending-review', ['/nxr/main/pending-review']],
   ['nxr/entries/index|approved-entries', ['/nxr/main/approved-entries']],
-  ['nxr/upload/index|upload', ['/nxr/tools/upload']],
-  ['nxr/exports/index|exports', ['/nxr/tools/exports']],
-  ['nxr/waitlist/index|waitlist', ['/nxr/tools/waitlist']],
+  ['nxr/upload/index|upload', ['/nxr/upload', '/nxr/tools/upload']],
+  ['nxr/exports/index|exports', ['/nxr/exports', '/nxr/tools/exports']],
+  ['nxr/waitlist/index|waitlist', ['/nxr/waitlist', '/nxr/tools/waitlist']],
   ['nxr/orders/index|orders', ['/nxr/orders', '/nxr/customer-ops/orders']],
-  ['nxr/customers/index|customers', ['/nxr/customer-ops/customers']],
-  ['nxr/brands/index|brands', ['/nxr/brands']],
-  ['system/user/index|user', ['/system/user']],
-  ['system/dict/index|dict', ['/system/dict']]
+  ['nxr/customers/index|customers', ['/nxr/customers', '/nxr/customer-ops/customers']],
+  ['nxr/brands/index|brands', ['/nxr/brands', '/nxr/settings/brands']],
+  ['system/user/index|user', ['/nxr/settings/user']],
+  ['system/dict/index|dict', ['/nxr/settings/dict']]
 ])
 
 function cleanPath(path = '') {

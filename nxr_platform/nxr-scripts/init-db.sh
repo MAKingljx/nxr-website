@@ -28,6 +28,7 @@ $MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/10_nxr_product_types.sql"
 $MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/11_nxr_admin_navigation_alignment.sql"
 $MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/12_nxr_menu_domain_separation.sql"
 $MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/13_nxr_order_fulfillment.sql"
+$MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/14_nxr_two_module_navigation.sql"
 
 # 与旧后台保持一致：登录不需要验证码
 $MYSQL_ROOT nxr_ruoyi -e "UPDATE sys_config SET config_value='false' WHERE config_key='sys.account.captchaEnabled';"

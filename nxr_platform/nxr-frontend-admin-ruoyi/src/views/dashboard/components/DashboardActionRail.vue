@@ -7,7 +7,7 @@
       </div>
       <strong>{{ formattedWaitlist }}</strong>
       <p>{{ $tx('Waitlist submissions to follow up') }}</p>
-      <el-button class="waitlist-panel__button" @click="$emit('navigate', '/nxr/waitlist')"> {{ $tx('View Waitlist') }} <el-icon class="el-icon--right"><ArrowRight /></el-icon>
+      <el-button class="waitlist-panel__button" @click="$emit('navigate', '/nxr/cards/waitlist')"> {{ $tx('View Waitlist') }} <el-icon class="el-icon--right"><ArrowRight /></el-icon>
       </el-button>
     </section>
 
@@ -49,10 +49,10 @@ const canViewWaitlist = computed(() => auth.hasPermi('nxr:waitlist:list'))
 
 const actions = [
   { label: tx('New Card'), detail: tx('Create a new grading record'), path: '/nxr/cards/new-entry?mode=create', icon: Plus, permission: 'nxr:entry:add' },
-  { label: tx('Card Image Upload'), detail: tx('Import front/back images and publish certificates'), path: '/nxr/upload', icon: UploadFilled, permission: 'nxr:media:list' },
+  { label: tx('Card Image Upload'), detail: tx('Import front/back images and publish certificates'), path: '/nxr/cards/upload', icon: UploadFilled, permission: 'nxr:media:list' },
   { label: tx('Order Management'), detail: tx('Handle grading orders, payments, and logistics'), path: '/nxr/submissions/orders', icon: ShoppingBag, permission: 'nxr:order:list' },
-  { label: tx('Customer Management'), detail: tx('Review accounts and card ownership'), path: '/nxr/customers', icon: User, permission: 'nxr:customer:list' },
-  { label: tx('Brand Settings'), detail: tx('Maintain brand names and aliases'), path: '/nxr/settings/brands', icon: Collection, permission: 'nxr:brand:list' }
+  { label: tx('Customer Management'), detail: tx('Review accounts and card ownership'), path: '/nxr/submissions/customers', icon: User, permission: 'nxr:customer:list' },
+  { label: tx('Brand Settings'), detail: tx('Maintain brand names and aliases'), path: '/system/brands', icon: Collection, permission: 'nxr:brand:list' }
 ]
 
 const visibleActions = computed(() => actions.filter((action) => auth.hasPermi(action.permission)))
