@@ -195,6 +195,10 @@ class NonGradedReadPathTest {
                 submission_id BIGINT NOT NULL,
                 media_side_code VARCHAR(16) NOT NULL,
                 media_stage_code VARCHAR(16) NOT NULL,
+                storage_provider_code VARCHAR(32),
+                storage_bucket VARCHAR(128),
+                storage_key VARCHAR(255),
+                storage_object_version VARCHAR(128),
                 public_url VARCHAR(255),
                 sort_order INT NOT NULL DEFAULT 1,
                 is_active TINYINT NOT NULL DEFAULT 1

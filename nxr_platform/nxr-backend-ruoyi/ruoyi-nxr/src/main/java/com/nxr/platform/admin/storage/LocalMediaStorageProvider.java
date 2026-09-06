@@ -181,6 +181,15 @@ public class LocalMediaStorageProvider implements MediaStorageProvider {
     }
 
     @Override
+    public boolean referenceExists(StoredMediaLocation location) {
+        try {
+            return Files.isRegularFile(resolveStagePath(location));
+        } catch (ResponseStatusException ignored) {
+            return false;
+        }
+    }
+
+    @Override
     public void deleteIfPresent(StoredMediaLocation location) {
         Path assetPath = resolveStagePath(location);
         try {

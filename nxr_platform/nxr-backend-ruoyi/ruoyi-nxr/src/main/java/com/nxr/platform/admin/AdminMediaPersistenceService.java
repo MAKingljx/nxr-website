@@ -4,6 +4,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nxr.platform.admin.storage.MediaStorageProvider;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -94,6 +96,61 @@ public class AdminMediaPersistenceService {
     @Transactional(readOnly = true)
     public Optional<ExistingMedia> findExistingMedia(long submissionId, String stage, String sideCode) {
         return findExistingMediaInternal(submissionId, stage, sideCode);
+    }
+
+    @Transactional
+    public List<ImportedMediaReplaceResult> replaceImportedMedia(
+        List<ImportedMediaReplacement> replacements,
+        boolean approvedOnly
+    ) {
+        List<ImportedMediaReplaceResult> results = new ArrayList<>();
+        // One transaction owns the entire browser batch. Stable lock order also
+        // lets overlapping imports wait without taking each other's locks out of order.
+        for (ImportedMediaReplacement replacement : replacements.stream()
+            .sorted(Comparator.comparingLong(ImportedMediaReplacement::submissionId)
+                .thenComparing(ImportedMediaReplacement::sideCode)).toList()) {
+            // Match the publisher's lock order: upload state first, then the
+            // submission. The second lock also prevents concurrent cert edits.
+            ensureUploadState(replacement.submissionId());
+            if ("uploading".equals(lockUploadStatus(replacement.submissionId()))) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "This submission is currently being published.");
+            }
+            SubmissionForPublish current = jdbcClient.sql("""
+                    SELECT id, cert_id, status_code FROM grading_submission
+                    WHERE id=:submissionId FOR UPDATE
+                    """)
+                .param("submissionId", replacement.submissionId())
+                .query((rs, rowNum) -> new SubmissionForPublish(rs.getLong("id"), rs.getString("cert_id"), rs.getString("status_code")))
+                .optional()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "The submission changed during image import."));
+            if (!current.certId().equalsIgnoreCase(replacement.certId())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "The certificate changed during image import.");
+            }
+            if (approvedOnly && !List.of("approved", "published").contains(current.statusCode())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "The submission is no longer approved for image import.");
+            }
+            MediaReplaceResult result = replaceMediaRecord(
+                replacement.submissionId(), replacement.certId(), replacement.sideCode(),
+                "staged", replacement.storedMedia(), null
+            );
+            results.add(new ImportedMediaReplaceResult(result.replacedMedia(), replacement.storedMedia()));
+        }
+        return results;
+    }
+
+    @Transactional(readOnly = true)
+    public boolean isStoredMediaReferenced(MediaStorageProvider.StoredMediaObject media) {
+        // A lost COMMIT response does not prove rollback. Re-read on a fresh
+        // transaction before removing any file that may now be in use.
+        return jdbcClient.sql("""
+                SELECT COUNT(*) FROM submission_media
+                WHERE storage_provider_code=:provider
+                  AND COALESCE(storage_bucket, '')=:bucket AND storage_key=:storageKey
+                """)
+            .param("provider", media.storageProviderCode())
+            .param("bucket", media.storageBucket() == null ? "" : media.storageBucket())
+            .param("storageKey", media.storageKey())
+            .query(Integer.class).single() > 0;
     }
 
     @Transactional
@@ -703,6 +760,17 @@ public class AdminMediaPersistenceService {
     }
 
     public record MediaReplaceResult(ExistingMedia replacedMedia) {
+    }
+
+    public record ImportedMediaReplacement(
+        long submissionId, String certId, String sideCode,
+        MediaStorageProvider.StoredMediaObject storedMedia
+    ) {
+    }
+
+    public record ImportedMediaReplaceResult(
+        ExistingMedia replacedMedia, MediaStorageProvider.StoredMediaObject storedMedia
+    ) {
     }
 
     public record MediaPublishTransactionResult(

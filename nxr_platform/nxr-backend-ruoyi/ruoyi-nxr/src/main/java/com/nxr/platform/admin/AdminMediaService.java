@@ -6,6 +6,9 @@ import com.nxr.platform.shared.ProductTypePolicy;
 import java.io.IOException;
 import java.io.DataInputStream;
 import java.io.InputStream;
+import java.math.BigDecimal;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -67,7 +70,7 @@ public class AdminMediaService {
 
     @Transactional(readOnly = true)
     public MediaQueueResponse loadQueue(String query, int page, int pageSize) {
-        return loadQueue(query, null, null, false, page, pageSize);
+        return loadQueue(query, null, null, null, null, null, null, null, null, null, false, page, pageSize);
     }
 
     @Transactional(readOnly = true)
@@ -79,171 +82,71 @@ public class AdminMediaService {
         int page,
         int pageSize
     ) {
-        String normalizedQuery = normalizeFilter(query);
-        String normalizedUploadStatus = normalizeUploadStatus(uploadStatus);
-        String normalizedImageStatus = normalizeImageStatus(imageStatus);
-        Map<String, Object> queueParams = new LinkedHashMap<>();
-        queueParams.put("query", normalizedQuery == null ? null : "%" + normalizedQuery.toUpperCase(Locale.ROOT) + "%");
-        queueParams.put("uploadStatus", normalizedUploadStatus);
-        queueParams.put("imageStatus", normalizedImageStatus);
-        queueParams.put("showClientPushed", showClientPushed ? 1 : 0);
-        int normalizedPageSize = Math.min(Math.max(pageSize, 1), 100);
-        int normalizedPage = Math.max(page, 1);
-        int total = jdbcClient.sql(
-                """
-                SELECT COUNT(*)
-                FROM grading_submission s
-                LEFT JOIN grading_score g ON g.submission_id = s.id
-                LEFT JOIN submission_upload_state us ON us.submission_id = s.id
-                WHERE s.status_code IN ('approved', 'published')
-                  AND (
-                    :query IS NULL
-                    OR UPPER(s.cert_id) LIKE :query
-                    OR UPPER(s.card_name) LIKE :query
-                    OR UPPER(s.set_name) LIKE :query
-                  )
-                  AND (:showClientPushed=1 OR COALESCE(us.status_code, 'not_started')<>'client_pushed')
-                  AND (:uploadStatus IS NULL OR COALESCE(us.status_code, 'not_started')=:uploadStatus)
-                  AND (
-                    :imageStatus IS NULL
-                    OR (:imageStatus='ready' AND
-                        EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='staged' AND sm.media_side_code='front' AND sm.is_active=1)
-                        AND EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='staged' AND sm.media_side_code='back' AND sm.is_active=1))
-                    OR (:imageStatus='published' AND
-                        EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='published' AND sm.media_side_code='front' AND sm.is_active=1)
-                        AND EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='published' AND sm.media_side_code='back' AND sm.is_active=1))
-                    OR (:imageStatus='waiting'
-                        AND NOT (EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='staged' AND sm.media_side_code='front' AND sm.is_active=1)
-                             AND EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='staged' AND sm.media_side_code='back' AND sm.is_active=1))
-                        AND NOT (EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='published' AND sm.media_side_code='front' AND sm.is_active=1)
-                             AND EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='published' AND sm.media_side_code='back' AND sm.is_active=1)))
-                  )
-                """
-            )
-            .params(queueParams)
-            .query(Integer.class)
-            .single();
+        return loadQueue(
+            query, null, null, null, null, null, null, null,
+            uploadStatus, imageStatus, showClientPushed, page, pageSize
+        );
+    }
 
+    @Transactional(readOnly = true)
+    public MediaQueueResponse loadQueue(
+        String query,
+        String certId,
+        String cardName,
+        String cardCategory,
+        String productType,
+        String brand,
+        String language,
+        String finalGrade,
+        String uploadStatus,
+        String imageStatus,
+        boolean showClientPushed,
+        int page,
+        int pageSize
+    ) {
+        QueueFilters filters = new QueueFilters(
+            normalizeFilter(query),
+            normalizeFilter(certId),
+            normalizeFilter(cardName),
+            normalizeCode(cardCategory),
+            normalizeCode(productType),
+            normalizeFilter(brand),
+            normalizeFilter(language),
+            normalizeFilter(finalGrade),
+            normalizeUploadStatus(uploadStatus),
+            normalizeImageStatus(imageStatus),
+            showClientPushed
+        );
+        List<MediaQueueItem> allItems = loadQueueItems();
+        MediaQueueSummary summary = summarizeQueue(allItems);
+        List<MediaQueueItem> filteredItems = allItems.stream()
+            .filter(item -> matchesFilters(item, filters))
+            .toList();
+
+        int normalizedPageSize = Math.min(Math.max(pageSize, 1), 200);
+        int total = filteredItems.size();
         int totalPages = Math.max(1, (int) Math.ceil((double) total / normalizedPageSize));
-        normalizedPage = Math.min(normalizedPage, totalPages);
+        int normalizedPage = Math.min(Math.max(page, 1), totalPages);
         int offset = (normalizedPage - 1) * normalizedPageSize;
+        List<MediaQueueItem> items = filteredItems.subList(offset, Math.min(offset + normalizedPageSize, total));
 
-        MediaQueueSummary summary = jdbcClient.sql(
-                """
-                SELECT
-                    COUNT(*) AS tracked_entries,
-                    COALESCE(SUM(CASE WHEN
-                        EXISTS (
-                            SELECT 1 FROM submission_media sm
-                            WHERE sm.submission_id = s.id
-                              AND sm.media_stage_code = 'staged'
-                              AND sm.media_side_code = 'front'
-                              AND sm.is_active = 1
-                        )
-                        AND EXISTS (
-                            SELECT 1 FROM submission_media sm
-                            WHERE sm.submission_id = s.id
-                              AND sm.media_stage_code = 'staged'
-                              AND sm.media_side_code = 'back'
-                              AND sm.is_active = 1
-                        )
-                        THEN 1 ELSE 0 END), 0) AS ready_to_publish,
-                    COALESCE(SUM(CASE WHEN
-                        EXISTS (
-                            SELECT 1 FROM submission_media sm
-                            WHERE sm.submission_id = s.id
-                              AND sm.media_stage_code = 'published'
-                              AND sm.media_side_code = 'front'
-                              AND sm.is_active = 1
-                        )
-                        AND EXISTS (
-                            SELECT 1 FROM submission_media sm
-                            WHERE sm.submission_id = s.id
-                              AND sm.media_stage_code = 'published'
-                              AND sm.media_side_code = 'back'
-                              AND sm.is_active = 1
-                        )
-                        THEN 1 ELSE 0 END), 0) AS live_published,
-                    COALESCE(SUM(CASE WHEN
-                        NOT (
-                            EXISTS (
-                                SELECT 1 FROM submission_media sm
-                                WHERE sm.submission_id = s.id
-                                  AND sm.media_stage_code = 'staged'
-                                  AND sm.media_side_code = 'front'
-                                  AND sm.is_active = 1
-                            )
-                            AND EXISTS (
-                                SELECT 1 FROM submission_media sm
-                                WHERE sm.submission_id = s.id
-                                  AND sm.media_stage_code = 'staged'
-                                  AND sm.media_side_code = 'back'
-                                  AND sm.is_active = 1
-                            )
-                        )
-                        AND NOT (
-                            EXISTS (
-                                SELECT 1 FROM submission_media sm
-                                WHERE sm.submission_id = s.id
-                                  AND sm.media_stage_code = 'published'
-                                  AND sm.media_side_code = 'front'
-                                  AND sm.is_active = 1
-                            )
-                            AND EXISTS (
-                                SELECT 1 FROM submission_media sm
-                                WHERE sm.submission_id = s.id
-                                  AND sm.media_stage_code = 'published'
-                                  AND sm.media_side_code = 'back'
-                                  AND sm.is_active = 1
-                            )
-                        )
-                        THEN 1 ELSE 0 END), 0) AS missing_media
-                FROM grading_submission s
-                LEFT JOIN grading_score g ON g.submission_id = s.id
-                LEFT JOIN submission_upload_state us ON us.submission_id = s.id
-                WHERE s.status_code IN ('approved', 'published')
-                  AND (
-                    :query IS NULL
-                    OR UPPER(s.cert_id) LIKE :query
-                    OR UPPER(s.card_name) LIKE :query
-                    OR UPPER(s.set_name) LIKE :query
-                  )
-                  AND (:showClientPushed=1 OR COALESCE(us.status_code, 'not_started')<>'client_pushed')
-                  AND (:uploadStatus IS NULL OR COALESCE(us.status_code, 'not_started')=:uploadStatus)
-                  AND (
-                    :imageStatus IS NULL
-                    OR (:imageStatus='ready' AND
-                        EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='staged' AND sm.media_side_code='front' AND sm.is_active=1)
-                        AND EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='staged' AND sm.media_side_code='back' AND sm.is_active=1))
-                    OR (:imageStatus='published' AND
-                        EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='published' AND sm.media_side_code='front' AND sm.is_active=1)
-                        AND EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='published' AND sm.media_side_code='back' AND sm.is_active=1))
-                    OR (:imageStatus='waiting'
-                        AND NOT (EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='staged' AND sm.media_side_code='front' AND sm.is_active=1)
-                             AND EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='staged' AND sm.media_side_code='back' AND sm.is_active=1))
-                        AND NOT (EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='published' AND sm.media_side_code='front' AND sm.is_active=1)
-                             AND EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='published' AND sm.media_side_code='back' AND sm.is_active=1)))
-                  )
-                """
-            )
-            .params(queueParams)
-            .query((rs, rowNum) -> new MediaQueueSummary(
-                rs.getInt("tracked_entries"),
-                rs.getInt("ready_to_publish"),
-                rs.getInt("live_published"),
-                rs.getInt("missing_media")
-            ))
-            .single();
+        return new MediaQueueResponse(items, summary, normalizedPage, normalizedPageSize, total);
+    }
 
-        List<MediaQueueItem> items = jdbcClient.sql(
+    private List<MediaQueueItem> loadQueueItems() {
+        return jdbcClient.sql(
                 """
                 SELECT
                     s.id,
                     s.cert_id,
                     COALESCE(NULLIF(s.product_type_code, ''), 'graded_card') AS product_type_code,
+                    COALESCE(NULLIF(s.card_category_code, ''), 'trading_card') AS card_category_code,
                     s.vintage_classification_code,
                     s.merch_description,
                     s.card_name,
+                    s.set_name,
+                    s.brand_name,
+                    s.language_code,
                     s.status_code,
                     s.approved_at,
                     s.published_at,
@@ -253,92 +156,46 @@ public class AdminMediaService {
                     us.error_message AS upload_error,
                     g.final_grade_value,
                     g.final_grade_label,
-                    (
-                        SELECT sm.public_url
-                        FROM submission_media sm
-                        WHERE sm.submission_id = s.id
-                          AND sm.media_stage_code = 'staged'
-                          AND sm.media_side_code = 'front'
-                          AND sm.is_active = 1
-                        LIMIT 1
-                    ) AS staged_front_url,
-                    (
-                        SELECT sm.public_url
-                        FROM submission_media sm
-                        WHERE sm.submission_id = s.id
-                          AND sm.media_stage_code = 'staged'
-                          AND sm.media_side_code = 'back'
-                          AND sm.is_active = 1
-                        LIMIT 1
-                    ) AS staged_back_url,
-                    (
-                        SELECT sm.public_url
-                        FROM submission_media sm
-                        WHERE sm.submission_id = s.id
-                          AND sm.media_stage_code = 'published'
-                          AND sm.media_side_code = 'front'
-                          AND sm.is_active = 1
-                        LIMIT 1
-                    ) AS published_front_url,
-                    (
-                        SELECT sm.public_url
-                        FROM submission_media sm
-                        WHERE sm.submission_id = s.id
-                          AND sm.media_stage_code = 'published'
-                          AND sm.media_side_code = 'back'
-                          AND sm.is_active = 1
-                        LIMIT 1
-                    ) AS published_back_url
+                    sf.storage_provider_code AS sf_provider, sf.storage_bucket AS sf_bucket,
+                    sf.storage_key AS sf_key, sf.storage_object_version AS sf_version, sf.public_url AS sf_url,
+                    sb.storage_provider_code AS sb_provider, sb.storage_bucket AS sb_bucket,
+                    sb.storage_key AS sb_key, sb.storage_object_version AS sb_version, sb.public_url AS sb_url,
+                    pf.storage_provider_code AS pf_provider, pf.storage_bucket AS pf_bucket,
+                    pf.storage_key AS pf_key, pf.storage_object_version AS pf_version, pf.public_url AS pf_url,
+                    pb.storage_provider_code AS pb_provider, pb.storage_bucket AS pb_bucket,
+                    pb.storage_key AS pb_key, pb.storage_object_version AS pb_version, pb.public_url AS pb_url
                 FROM grading_submission s
                 LEFT JOIN grading_score g ON g.submission_id = s.id
                 LEFT JOIN submission_upload_state us ON us.submission_id = s.id
+                LEFT JOIN submission_media sf ON sf.submission_id=s.id AND sf.media_stage_code='staged'
+                    AND sf.media_side_code='front' AND sf.sort_order=1 AND sf.is_active=1
+                LEFT JOIN submission_media sb ON sb.submission_id=s.id AND sb.media_stage_code='staged'
+                    AND sb.media_side_code='back' AND sb.sort_order=1 AND sb.is_active=1
+                LEFT JOIN submission_media pf ON pf.submission_id=s.id AND pf.media_stage_code='published'
+                    AND pf.media_side_code='front' AND pf.sort_order=1 AND pf.is_active=1
+                LEFT JOIN submission_media pb ON pb.submission_id=s.id AND pb.media_stage_code='published'
+                    AND pb.media_side_code='back' AND pb.sort_order=1 AND pb.is_active=1
                 WHERE s.status_code IN ('approved', 'published')
-                  AND (
-                    :query IS NULL
-                    OR UPPER(s.cert_id) LIKE :query
-                    OR UPPER(s.card_name) LIKE :query
-                    OR UPPER(s.set_name) LIKE :query
-                  )
-                  AND (:showClientPushed=1 OR COALESCE(us.status_code, 'not_started')<>'client_pushed')
-                  AND (:uploadStatus IS NULL OR COALESCE(us.status_code, 'not_started')=:uploadStatus)
-                  AND (
-                    :imageStatus IS NULL
-                    OR (:imageStatus='ready' AND
-                        EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='staged' AND sm.media_side_code='front' AND sm.is_active=1)
-                        AND EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='staged' AND sm.media_side_code='back' AND sm.is_active=1))
-                    OR (:imageStatus='published' AND
-                        EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='published' AND sm.media_side_code='front' AND sm.is_active=1)
-                        AND EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='published' AND sm.media_side_code='back' AND sm.is_active=1))
-                    OR (:imageStatus='waiting'
-                        AND NOT (EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='staged' AND sm.media_side_code='front' AND sm.is_active=1)
-                             AND EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='staged' AND sm.media_side_code='back' AND sm.is_active=1))
-                        AND NOT (EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='published' AND sm.media_side_code='front' AND sm.is_active=1)
-                             AND EXISTS (SELECT 1 FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='published' AND sm.media_side_code='back' AND sm.is_active=1)))
-                  )
                 ORDER BY COALESCE(s.approved_at, s.published_at, s.updated_at) DESC, s.id DESC
-                LIMIT :limit OFFSET :offset
                 """
             )
-            .params(queueParams)
-            .param("limit", normalizedPageSize)
-            .param("offset", offset)
             .query((rs, rowNum) -> {
-                String stagedFrontUrl = rs.getString("staged_front_url");
-                String stagedBackUrl = rs.getString("staged_back_url");
-                String publishedFrontUrl = rs.getString("published_front_url");
-                String publishedBackUrl = rs.getString("published_back_url");
-                boolean hasStagedFront = isPresent(stagedFrontUrl);
-                boolean hasStagedBack = isPresent(stagedBackUrl);
-                boolean hasPublishedFront = isPresent(publishedFrontUrl);
-                boolean hasPublishedBack = isPresent(publishedBackUrl);
+                MediaReference stagedFront = inspectReference(rs, "sf", "staged");
+                MediaReference stagedBack = inspectReference(rs, "sb", "staged");
+                MediaReference publishedFront = inspectReference(rs, "pf", "published");
+                MediaReference publishedBack = inspectReference(rs, "pb", "published");
                 String uploadState = rs.getString("upload_status");
                 return new MediaQueueItem(
                     rs.getLong("id"),
                     rs.getString("cert_id"),
                     ProductTypePolicy.normalizeStored(rs.getString("product_type_code")),
+                    rs.getString("card_category_code"),
                     rs.getString("vintage_classification_code"),
                     rs.getString("merch_description"),
                     rs.getString("card_name"),
+                    rs.getString("set_name"),
+                    rs.getString("brand_name"),
+                    rs.getString("language_code"),
                     rs.getString("status_code"),
                     rs.getObject("approved_at", LocalDateTime.class),
                     rs.getObject("published_at", LocalDateTime.class),
@@ -348,28 +205,151 @@ public class AdminMediaService {
                     rs.getString("upload_error"),
                     rs.getBigDecimal("final_grade_value"),
                     rs.getString("final_grade_label"),
-                    stagedFrontUrl,
-                    stagedBackUrl,
-                    publishedFrontUrl,
-                    publishedBackUrl,
-                    hasStagedFront,
-                    hasStagedBack,
-                    hasPublishedFront,
-                    hasPublishedBack,
-                    hasStagedFront && hasStagedBack
+                    stagedFront.publicUrl(),
+                    stagedBack.publicUrl(),
+                    publishedFront.publicUrl(),
+                    publishedBack.publicUrl(),
+                    stagedFront.available(),
+                    stagedBack.available(),
+                    publishedFront.available(),
+                    publishedBack.available(),
+                    stagedFront.missing(),
+                    stagedBack.missing(),
+                    publishedFront.missing(),
+                    publishedBack.missing(),
+                    stagedFront.available() && stagedBack.available()
                         && !"uploading".equals(uploadState)
                         && !"client_pushed".equals(uploadState)
                 );
             })
             .list();
+    }
 
-        return new MediaQueueResponse(
-            items,
-            summary,
-            normalizedPage,
-            normalizedPageSize,
-            total
+    private MediaReference inspectReference(ResultSet rs, String prefix, String stage) throws SQLException {
+        String storageKey = rs.getString(prefix + "_key");
+        String publicUrl = rs.getString(prefix + "_url");
+        boolean recorded = isPresent(storageKey) || isPresent(publicUrl);
+        if (!recorded) {
+            return new MediaReference(publicUrl, false, false);
+        }
+        String providerCode = rs.getString(prefix + "_provider");
+        boolean available = isRemoteUrl(publicUrl)
+            && (!isPresent(providerCode) || mediaStorageRegistry == null || !mediaStorageRegistry.supports(providerCode));
+        if (isPresent(providerCode) && mediaStorageRegistry != null && mediaStorageRegistry.supports(providerCode)) {
+            available = mediaStorageRegistry.providerFor(providerCode).referenceExists(
+                new MediaStorageProvider.StoredMediaLocation(
+                    stage,
+                    rs.getString(prefix + "_bucket"),
+                    storageKey,
+                    rs.getString(prefix + "_version")
+                )
+            );
+        }
+        return new MediaReference(publicUrl, available, !available);
+    }
+
+    private boolean isRemoteUrl(String value) {
+        return value != null && (value.startsWith("https://") || value.startsWith("http://"));
+    }
+
+    private MediaQueueSummary summarizeQueue(List<MediaQueueItem> items) {
+        Map<String, Integer> statusCounts = new LinkedHashMap<>();
+        int ready = 0;
+        int live = 0;
+        int missing = 0;
+        int clientPushed = 0;
+        int hasFront = 0;
+        int hasBack = 0;
+        int waiting = 0;
+        int uploaded = 0;
+        for (MediaQueueItem item : items) {
+            statusCounts.merge(item.uploadStatus(), 1, Integer::sum);
+            boolean stagedComplete = item.hasStagedFront() && item.hasStagedBack();
+            boolean publishedComplete = item.hasPublishedFront() && item.hasPublishedBack();
+            boolean uploadedToServer = "uploaded".equals(item.uploadStatus()) || "client_pushed".equals(item.uploadStatus());
+            boolean hasAnyFront = item.hasStagedFront() || item.hasPublishedFront();
+            boolean hasAnyBack = item.hasStagedBack() || item.hasPublishedBack();
+            ready += item.readyToPublish() ? 1 : 0;
+            live += publishedComplete ? 1 : 0;
+            missing += hasAnyFront && hasAnyBack ? 0 : 1;
+            clientPushed += "client_pushed".equals(item.uploadStatus()) ? 1 : 0;
+            hasFront += item.hasStagedFront() ? 1 : 0;
+            hasBack += item.hasStagedBack() ? 1 : 0;
+            waiting += !stagedComplete && !publishedComplete ? 1 : 0;
+            uploaded += uploadedToServer ? 1 : 0;
+        }
+        return new MediaQueueSummary(
+            items.size(), ready, live, missing, items.size(), clientPushed,
+            hasFront, hasBack, waiting, uploaded, Math.max(items.size() - uploaded, 0), statusCounts
         );
+    }
+
+    private boolean matchesFilters(MediaQueueItem item, QueueFilters filters) {
+        if (!filters.showClientPushed() && "client_pushed".equals(item.uploadStatus())) return false;
+        if (!matchesTextQuery(item, filters.query())) return false;
+        if (!containsIgnoreCase(item.certId(), filters.certId())) return false;
+        if (!containsIgnoreCase(item.cardName(), filters.cardName())) return false;
+        if (!equalsFilter(item.cardCategory(), filters.cardCategory())) return false;
+        if (!equalsFilter(item.productType(), filters.productType())) return false;
+        if (!equalsFilter(item.brandName(), filters.brand())) return false;
+        if (!equalsFilter(item.languageCode(), filters.language())) return false;
+        if (!matchesGrade(item, filters.finalGrade())) return false;
+        if (!matchesUploadStatus(item.uploadStatus(), filters.uploadStatus())) return false;
+        return matchesImageStatus(item, filters.imageStatus());
+    }
+
+    private boolean matchesTextQuery(MediaQueueItem item, String query) {
+        return query == null
+            || containsIgnoreCase(item.certId(), query)
+            || containsIgnoreCase(item.cardName(), query)
+            || containsIgnoreCase(item.setName(), query);
+    }
+
+    private boolean matchesGrade(MediaQueueItem item, String finalGrade) {
+        if (finalGrade == null) return true;
+        if (equalsFilter(item.finalGradeLabel(), finalGrade)) return true;
+        try {
+            return item.finalGradeValue() != null
+                && item.finalGradeValue().compareTo(new BigDecimal(finalGrade)) == 0;
+        } catch (NumberFormatException ignored) {
+            return false;
+        }
+    }
+
+    private boolean matchesUploadStatus(String status, String filter) {
+        if (filter == null) return true;
+        if ("remaining_uploads".equals(filter)) {
+            return !"uploaded".equals(status) && !"client_pushed".equals(status);
+        }
+        if ("uploaded_to_server".equals(filter)) {
+            return "uploaded".equals(status) || "client_pushed".equals(status);
+        }
+        return filter.equals(status);
+    }
+
+    private boolean matchesImageStatus(MediaQueueItem item, String filter) {
+        if (filter == null) return true;
+        boolean stagedComplete = item.hasStagedFront() && item.hasStagedBack();
+        boolean publishedComplete = item.hasPublishedFront() && item.hasPublishedBack();
+        boolean hasAnyFront = item.hasStagedFront() || item.hasPublishedFront();
+        boolean hasAnyBack = item.hasStagedBack() || item.hasPublishedBack();
+        return switch (filter) {
+            case "ready" -> item.readyToPublish();
+            case "waiting" -> !stagedComplete && !publishedComplete;
+            case "published" -> publishedComplete;
+            case "missing_any" -> !hasAnyFront || !hasAnyBack;
+            case "missing_front" -> !hasAnyFront;
+            case "missing_back" -> !hasAnyBack;
+            default -> true;
+        };
+    }
+
+    private boolean containsIgnoreCase(String value, String filter) {
+        return filter == null || (value != null && value.toUpperCase(Locale.ROOT).contains(filter.toUpperCase(Locale.ROOT)));
+    }
+
+    private boolean equalsFilter(String value, String filter) {
+        return filter == null || (value != null && value.equalsIgnoreCase(filter));
     }
 
     public MediaImportResponse importFolder(List<MultipartFile> imageFiles) {
@@ -493,45 +473,47 @@ public class AdminMediaService {
             .filter(certId -> !submissionByCertId.containsKey(certId))
             .toList();
 
-        int savedFiles = 0;
-        int updatedSides = 0;
-        List<Long> updatedSubmissionIds = new ArrayList<>();
-
-        for (MediaCandidate candidate : candidates.values()) {
-            Long submissionId = submissionByCertId.get(candidate.certId());
-            if (submissionId == null) {
-                continue;
+        List<AdminMediaPersistenceService.ImportedMediaReplacement> replacements = new ArrayList<>();
+        List<AdminMediaPersistenceService.ImportedMediaReplaceResult> results;
+        try {
+            // Finish object I/O before acquiring database write locks. No image
+            // reference changes until every file in this batch is ready.
+            for (MediaCandidate candidate : candidates.values()) {
+                Long submissionId = submissionByCertId.get(candidate.certId());
+                if (submissionId != null) {
+                    replacements.add(new AdminMediaPersistenceService.ImportedMediaReplacement(
+                        submissionId, candidate.certId(), candidate.sideCode(), storeUploadedMedia(candidate, "staged")
+                    ));
+                }
             }
-
-            MediaStorageProvider.StoredMediaObject storedFile = storeUploadedMedia(candidate, "staged");
-            AdminMediaPersistenceService.MediaReplaceResult replaceResult;
+            results = adminMediaPersistenceService.replaceImportedMedia(replacements, allowedSubmissionByCertId == null);
+        } catch (RuntimeException exc) {
+            for (AdminMediaPersistenceService.ImportedMediaReplacement replacement : replacements) {
+                try {
+                    if (!adminMediaPersistenceService.isStoredMediaReferenced(replacement.storedMedia())) {
+                        deleteStoredMedia("staged", replacement.storedMedia());
+                    }
+                } catch (RuntimeException cleanupFailure) {
+                    // Preserve the object when commit outcome cannot be verified.
+                    log.warn("Retaining imported media after an uncertain database result", cleanupFailure);
+                }
+            }
+            throw exc;
+        }
+        for (AdminMediaPersistenceService.ImportedMediaReplaceResult result : results) {
             try {
-                replaceResult = adminMediaPersistenceService.replaceMediaRecord(
-                    submissionId,
-                    candidate.certId(),
-                    candidate.sideCode(),
-                    "staged",
-                    storedFile,
-                    null
-                );
-            } catch (RuntimeException exc) {
-                deleteStoredMedia("staged", storedFile);
-                throw exc;
-            }
-
-            deleteStoredMediaIfReplaced(replaceResult.replacedMedia(), storedFile.storageKey());
-
-            savedFiles += 1;
-            updatedSides += 1;
-            if (!updatedSubmissionIds.contains(submissionId)) {
-                updatedSubmissionIds.add(submissionId);
+                deleteStoredMediaIfReplaced(result.replacedMedia(), result.storedMedia().storageKey());
+            } catch (RuntimeException cleanupFailure) {
+                log.warn("Image import committed; obsolete media cleanup can be retried", cleanupFailure);
             }
         }
+        List<Long> updatedSubmissionIds = replacements.stream()
+            .map(AdminMediaPersistenceService.ImportedMediaReplacement::submissionId).distinct().toList();
 
         return new MediaImportResponse(
             submissionByCertId.size(),
-            savedFiles,
-            updatedSides,
+            replacements.size(),
+            replacements.size(),
             missingCertIds,
             invalidNames,
             duplicateNames,
@@ -1118,6 +1100,11 @@ public class AdminMediaService {
         return isPresent(value) ? value.trim() : null;
     }
 
+    private String normalizeCode(String value) {
+        String normalized = normalizeFilter(value);
+        return normalized == null ? null : normalized.toLowerCase(Locale.ROOT).replace('-', '_').replace(' ', '_');
+    }
+
     private String normalizeUploadStatus(String value) {
         String normalized = normalizeFilter(value);
         if (normalized == null) {
@@ -1125,7 +1112,7 @@ public class AdminMediaService {
         }
         normalized = normalized.toLowerCase(Locale.ROOT);
         return switch (normalized) {
-            case "not_started", "uploading", "uploaded", "failed", "client_pushed" -> normalized;
+            case "remaining_uploads", "uploaded_to_server", "not_started", "uploading", "uploaded", "failed", "client_pushed" -> normalized;
             default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported upload status filter.");
         };
     }
@@ -1137,7 +1124,7 @@ public class AdminMediaService {
         }
         normalized = normalized.toLowerCase(Locale.ROOT);
         return switch (normalized) {
-            case "ready", "waiting", "published" -> normalized;
+            case "ready", "waiting", "published", "missing_any", "missing_front", "missing_back" -> normalized;
             default -> throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported image status filter.");
         };
     }
@@ -1191,7 +1178,15 @@ public class AdminMediaService {
         int trackedEntries,
         int readyToPublish,
         int livePublished,
-        int missingMedia
+        int missingMedia,
+        int totalApproved,
+        int clientPushed,
+        int hasFrontImage,
+        int hasBackImage,
+        int waitingForUpload,
+        int uploadedToServer,
+        int remainingUploadCount,
+        Map<String, Integer> statusCounts
     ) {
     }
 
@@ -1199,9 +1194,13 @@ public class AdminMediaService {
         long submissionId,
         String certId,
         String productType,
+        String cardCategory,
         String vintageClassification,
         String merchDescription,
         String cardName,
+        String setName,
+        String brandName,
+        String languageCode,
         String statusCode,
         LocalDateTime approvedAt,
         LocalDateTime publishedAt,
@@ -1219,7 +1218,29 @@ public class AdminMediaService {
         boolean hasStagedBack,
         boolean hasPublishedFront,
         boolean hasPublishedBack,
+        boolean stagedFrontMissing,
+        boolean stagedBackMissing,
+        boolean publishedFrontMissing,
+        boolean publishedBackMissing,
         boolean readyToPublish
+    ) {
+    }
+
+    private record MediaReference(String publicUrl, boolean available, boolean missing) {
+    }
+
+    private record QueueFilters(
+        String query,
+        String certId,
+        String cardName,
+        String cardCategory,
+        String productType,
+        String brand,
+        String language,
+        String finalGrade,
+        String uploadStatus,
+        String imageStatus,
+        boolean showClientPushed
     ) {
     }
 

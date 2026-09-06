@@ -81,6 +81,7 @@ service.interceptors.response.use(res => {
     const code = res.data.code || 200
     // 获取错误信息
     const msg = localizeBackendMessage(errorCode[code] || res.data.msg || errorCode['default'])
+    const suppressErrorMessage = res.config?.suppressErrorMessage === true
     // 二进制数据则直接返回
     if (res.request.responseType ===  'blob' || res.request.responseType ===  'arraybuffer') {
       return res.data
@@ -97,16 +98,35 @@ service.interceptors.response.use(res => {
         isRelogin.show = false
       })
     }
-      return Promise.reject(tx('The session is invalid or has expired. Sign in again.'))
+      const authMessage = tx('The session is invalid or has expired. Sign in again.')
+      if (suppressErrorMessage) {
+        const error = new Error(authMessage)
+        error.response = res
+        error.status = code
+        return Promise.reject(error)
+      }
+      return Promise.reject(authMessage)
     } else if (code === 500) {
-      ElMessage({ message: msg, type: 'error' })
-      return Promise.reject(new Error(msg))
+      if (!suppressErrorMessage) ElMessage({ message: msg, type: 'error' })
+      const error = new Error(msg)
+      error.response = res
+      error.status = code
+      return Promise.reject(error)
     } else if (code === 601) {
-      ElMessage({ message: msg, type: 'warning' })
-      return Promise.reject(new Error(msg))
+      if (!suppressErrorMessage) ElMessage({ message: msg, type: 'warning' })
+      const error = new Error(msg)
+      error.response = res
+      error.status = code
+      return Promise.reject(error)
     } else if (code !== 200) {
-      ElNotification.error({ title: msg })
-      return Promise.reject('error')
+      if (!suppressErrorMessage) {
+        ElNotification.error({ title: msg })
+        return Promise.reject('error')
+      }
+      const error = new Error(msg)
+      error.response = res
+      error.status = code
+      return Promise.reject(error)
     } else {
       return  Promise.resolve(res.data)
     }
@@ -123,7 +143,9 @@ service.interceptors.response.use(res => {
       message = error.response?.data?.message || error.response?.data?.msg || ("Backend request failed with status " + message.slice(-3))
     }
     message = localizeBackendMessage(message)
-    ElMessage({ message: message, type: 'error', duration: 5 * 1000 })
+    if (error.config?.suppressErrorMessage !== true) {
+      ElMessage({ message: message, type: 'error', duration: 5 * 1000 })
+    }
     return Promise.reject(error)
   }
 )

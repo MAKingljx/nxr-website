@@ -27,6 +27,15 @@ public interface MediaStorageProvider {
 
     ResolvedMediaAsset resolve(StoredMediaLocation location);
 
+    /**
+     * Checks a stored reference without requiring remote object-store requests.
+     * Remote providers keep the default optimistic behavior; filesystem-backed
+     * providers override it with a local file check.
+     */
+    default boolean referenceExists(StoredMediaLocation location) {
+        return true;
+    }
+
     void deleteIfPresent(StoredMediaLocation location);
 
     record MediaUpload(

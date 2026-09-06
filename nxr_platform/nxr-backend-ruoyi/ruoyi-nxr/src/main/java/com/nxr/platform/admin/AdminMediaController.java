@@ -30,6 +30,13 @@ public class AdminMediaController {
     @GetMapping("/queue")
     public AjaxResult mediaQueue(
         @RequestParam(required = false) String query,
+        @RequestParam(required = false) String certId,
+        @RequestParam(required = false) String cardName,
+        @RequestParam(required = false) String cardCategory,
+        @RequestParam(required = false) String productType,
+        @RequestParam(required = false) String brand,
+        @RequestParam(required = false) String language,
+        @RequestParam(required = false) String finalGrade,
         @RequestParam(required = false) String uploadStatus,
         @RequestParam(required = false) String imageStatus,
         @RequestParam(defaultValue = "false") boolean showClientPushed,
@@ -37,7 +44,10 @@ public class AdminMediaController {
         @RequestParam(defaultValue = "12") int pageSize
     ) {
         return AjaxResult.success(
-            adminMediaService.loadQueue(query, uploadStatus, imageStatus, showClientPushed, page, pageSize)
+            adminMediaService.loadQueue(
+                query, certId, cardName, cardCategory, productType, brand, language, finalGrade,
+                uploadStatus, imageStatus, showClientPushed, page, pageSize
+            )
         );
     }
 

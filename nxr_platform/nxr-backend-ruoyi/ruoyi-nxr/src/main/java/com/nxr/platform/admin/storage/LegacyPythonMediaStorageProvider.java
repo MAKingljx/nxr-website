@@ -83,6 +83,16 @@ public class LegacyPythonMediaStorageProvider implements MediaStorageProvider {
     }
 
     @Override
+    public boolean referenceExists(StoredMediaLocation location) {
+        try {
+            Path assetPath = resolveAssetPath(location);
+            return Files.isRegularFile(assetPath, LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(assetPath);
+        } catch (ResponseStatusException ignored) {
+            return false;
+        }
+    }
+
+    @Override
     public void deleteIfPresent(StoredMediaLocation location) {
         // Deliberately no-op: Python owns the source queue and its retention.
     }

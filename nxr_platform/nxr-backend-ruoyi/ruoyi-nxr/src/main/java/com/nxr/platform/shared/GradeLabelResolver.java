@@ -14,8 +14,15 @@ public class GradeLabelResolver {
         BigDecimal corners,
         BigDecimal surface
     ) {
-        BigDecimal total = centering.add(edges).add(corners).add(surface);
-        return total.divide(BigDecimal.valueOf(4), 2, RoundingMode.HALF_UP);
+        // Match Python's current calculation exactly: each submitted score is
+        // converted to binary64, added from left to right, then round(avg, 2)
+        // applies ties-to-even to the exact binary64 average.
+        double total = centering.doubleValue();
+        total += edges.doubleValue();
+        total += corners.doubleValue();
+        total += surface.doubleValue();
+        double average = total / 4.0d;
+        return new BigDecimal(average).setScale(2, RoundingMode.HALF_EVEN);
     }
 
     public String resolveLabel(BigDecimal finalGrade) {

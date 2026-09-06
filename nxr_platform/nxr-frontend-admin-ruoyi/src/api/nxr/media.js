@@ -1,4 +1,11 @@
 import request from '@/utils/request'
+import {
+  MEDIA_IMPORT_MAX_ATTEMPTS,
+  createMediaImportProgress,
+  enrichMediaImportError,
+  executeMediaImportBatches,
+  mergeUniqueMediaImportValues
+} from './mediaImportRetry'
 
 // 媒体队列
 export function fetchMediaQueue(query) {
@@ -63,10 +70,6 @@ function chunkMediaFiles(files) {
   return batches
 }
 
-function mergeUnique(existing, incoming) {
-  return Array.from(new Set([...existing, ...(incoming || [])]))
-}
-
 function sendMediaBatch(files, onBatchProgress) {
   const formData = new FormData()
   for (const file of files) {
@@ -78,6 +81,7 @@ function sendMediaBatch(files, onBatchProgress) {
     method: 'post',
     data: formData,
     headers: { 'Content-Type': 'multipart/form-data', repeatSubmit: false },
+    suppressErrorMessage: true,
     timeout: 1000 * 60 * 30,
     onUploadProgress: (event) => {
       if (event.total) {
@@ -102,10 +106,13 @@ export function importSubmissionMedia(submissionId, files) {
   })
 }
 
-// 文件夹导入：分批上传并聚合结果，onProgress(percent, loadedBytes, totalBytes)
+// 文件夹导入：分批上传并聚合结果。
+// onProgress(percent, loadedBytes, totalBytes, metadata) 的第四个参数为可选重试状态，
+// 保持前三个参数与现有调用兼容。
 export async function importMediaFolder(files, onProgress) {
   const batches = chunkMediaFiles(files)
   const totalBytes = files.reduce((sum, file) => sum + file.size, 0)
+  const progress = createMediaImportProgress(totalBytes)
   let completedBytes = 0
   const aggregate = {
     matchedEntries: 0,
@@ -117,27 +124,95 @@ export async function importMediaFolder(files, onProgress) {
     updatedSubmissionIds: []
   }
 
-  for (const batch of batches) {
-    const res = await sendMediaBatch(batch, (batchLoaded) => {
-      const loaded = Math.min(totalBytes, completedBytes + batchLoaded)
-      const percent = totalBytes ? Math.min(100, Math.round((loaded / totalBytes) * 100)) : 0
-      onProgress?.(percent, loaded, totalBytes)
-    })
-    const data = res.data
-    completedBytes += batch.reduce((sum, file) => sum + file.size, 0)
-    aggregate.matchedEntries += data.matchedEntries
-    aggregate.savedFiles += data.savedFiles
-    aggregate.updatedSides += data.updatedSides
-    aggregate.missingCertIds = mergeUnique(aggregate.missingCertIds, data.missingCertIds)
-    aggregate.invalidNames = mergeUnique(aggregate.invalidNames, data.invalidNames)
-    aggregate.duplicateNames = mergeUnique(aggregate.duplicateNames, data.duplicateNames)
-    aggregate.updatedSubmissionIds = mergeUnique(aggregate.updatedSubmissionIds, data.updatedSubmissionIds)
+  const progressMetadata = (phase, context = {}) => ({
+    phase,
+    maxAttempts: MEDIA_IMPORT_MAX_ATTEMPTS,
+    completedBatches: context.completedBatches ?? 0,
+    successfulBatches: context.completedBatches ?? 0,
+    successfulCertificates: aggregate.updatedSubmissionIds.length,
+    successfulSubmissionIds: [...aggregate.updatedSubmissionIds],
+    ...context
+  })
+
+  const reportProgress = (snapshot, metadata) => {
     onProgress?.(
-      Math.min(100, Math.round((completedBytes / Math.max(totalBytes, 1)) * 100)),
-      completedBytes,
-      totalBytes
+      snapshot.percent,
+      snapshot.loadedBytes,
+      snapshot.totalBytes,
+      metadata
     )
   }
+
+  let failedBatchContext = null
+  try {
+    await executeMediaImportBatches(
+      batches,
+      (batch, context) => sendMediaBatch(batch, (batchLoaded) => {
+        reportProgress(
+          progress.update(completedBytes, batchLoaded),
+          progressMetadata('uploading', {
+            batchIndex: context.batchIndex,
+            batchCount: context.batchCount,
+            attempt: context.attempt,
+            completedBatches: context.batchIndex - 1
+          })
+        )
+      }),
+      {
+        onRetry: retry => {
+          reportProgress(
+            progress.update(completedBytes),
+            progressMetadata('retrying', {
+              batchIndex: retry.batchIndex,
+              batchCount: retry.batchCount,
+              attempt: retry.nextAttempt,
+              retryCount: retry.retryCount,
+              retryDelayMs: retry.delayMs,
+              completedBatches: retry.batchIndex - 1
+            })
+          )
+        },
+        onFailure: failure => {
+          failedBatchContext = failure
+        },
+        onBatchSuccess: (res, context) => {
+          const data = res.data
+          completedBytes += context.batch.reduce((sum, file) => sum + file.size, 0)
+          aggregate.savedFiles += data.savedFiles
+          aggregate.updatedSides += data.updatedSides
+          aggregate.missingCertIds = mergeUniqueMediaImportValues(aggregate.missingCertIds, data.missingCertIds)
+          aggregate.invalidNames = mergeUniqueMediaImportValues(aggregate.invalidNames, data.invalidNames)
+          aggregate.duplicateNames = mergeUniqueMediaImportValues(aggregate.duplicateNames, data.duplicateNames)
+          aggregate.updatedSubmissionIds = mergeUniqueMediaImportValues(
+            aggregate.updatedSubmissionIds,
+            data.updatedSubmissionIds
+          )
+          aggregate.matchedEntries = aggregate.updatedSubmissionIds.length
+          reportProgress(
+            progress.update(completedBytes),
+            progressMetadata('batch-complete', {
+              batchIndex: context.batchIndex,
+              batchCount: context.batchCount,
+              attempt: null,
+              completedBatches: context.completedBatches
+            })
+          )
+        }
+      }
+    )
+  } catch (error) {
+    throw enrichMediaImportError(error, aggregate, failedBatchContext, batches.length)
+  }
+
+  reportProgress(
+    progress.finish(),
+    progressMetadata('complete', {
+      batchIndex: batches.length,
+      batchCount: batches.length,
+      attempt: null,
+      completedBatches: batches.length
+    })
+  )
 
   return aggregate
 }
