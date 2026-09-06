@@ -20,7 +20,7 @@ selenium-debug.log
 *.sln
 *.local
 
-package-lock.json
+# npm ci is used by clean release builds; version the application's lockfile.
 yarn.lock
 
 # Keep immutable Phoenix component release sources complete in Git. These
