@@ -17,6 +17,55 @@ import {
 const CERT_A = '7123456789'
 const CERT_B = '8123456789'
 
+test('转换可双线程运行并随时停止，恢复后原文件完整', async ({ page }, testInfo) => {
+  const directoryName = uniqueDirectory(testInfo.title)
+  const photos = [blankPhoto('0001-front.png'), await qrPhoto('0002-back.png', cardUrl(CERT_A))]
+  await installOpfsPicker(page, directoryName)
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'hardwareConcurrency', { value: 8, configurable: true })
+    Object.defineProperty(navigator, 'deviceMemory', { value: 8, configurable: true })
+    const audit = { active: 0, started: 0 }
+    ;(window as any).__conversionAudit = audit
+    const OriginalWorker = window.Worker
+    window.Worker = class extends OriginalWorker {
+      private isConversion: boolean
+      private active = false
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options)
+        this.isConversion = String(url).includes('webp.worker')
+      }
+      postMessage(message: any, transfer: any) {
+        if (!this.isConversion) return super.postMessage(message, transfer)
+        // Hold both jobs indefinitely to exercise user cancellation, independent
+        // of machine speed or a fixed production timer.
+        this.active = true; audit.active++; audit.started++
+      }
+      terminate() {
+        if (this.active) { this.active = false; audit.active-- }
+        super.terminate()
+      }
+    }
+  })
+  await page.goto('/')
+  await seedOpfsDirectory(page, directoryName, photos)
+  await openDirectory(page)
+  await scan(page)
+  await page.getByRole('button', { name: '执行改名', exact: true }).click()
+  await confirmAction(page, '确认改名')
+  await expect.poll(() => page.evaluate(() => (window as any).__conversionAudit.active)).toBe(2)
+  await page.getByRole('button', { name: '停止处理', exact: true }).click()
+  await expect(page.locator('.progress-strip')).toHaveCount(0)
+  expect(await page.evaluate(() => (window as any).__conversionAudit)).toEqual({ active: 0, started: 2 })
+  const cancelled = await directoryFiles(page, directoryName)
+  photos.forEach(photo => expect(cancelled[photo.name].sha256).toBe(photo.sha256))
+  expect(Object.keys(cancelled).filter(name => name.endsWith('.webp'))).toEqual([])
+  await page.getByRole('button', { name: '恢复文件名', exact: true }).click()
+  await confirmAction(page, '确认恢复')
+  await expect(page.locator('.progress-strip')).toHaveCount(0)
+  const restored = await directoryFiles(page, directoryName)
+  photos.forEach(photo => expect(restored[photo.name].sha256).toBe(photo.sha256))
+})
+
 function cardUrl(certId: string): string {
   return `https://nxrgrading.com/card/${certId}`
 }

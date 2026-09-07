@@ -10,7 +10,7 @@ import { scanPhoto, cancelScan } from "./lib/scanner";
 import { scanTextReference, cancelTextReference } from "./lib/text-reference";
 import PhotoReviewDialog from "./components/PhotoReviewDialog.vue";
 import { deepScanCandidates, mergeDeepScanPairs, mergeScanEvidence, type ScanMode } from "./lib/scan-policy";
-import { convertToLosslessWebp } from "./lib/webp-converter";
+import { convertToLosslessWebp, getWebpConcurrency } from "./lib/webp-converter";
 import {
   hashFile,
   listJournals,
@@ -27,6 +27,8 @@ const writable = ref(false);
 const busy = ref("");
 const progress = ref(0);
 const progressText = ref("");
+const stoppingConversion = ref(false);
+let conversionController: AbortController | null = null;
 const notice = ref<{ text: string; tone: string } | null>(null);
 const journals = ref<
   { name: string; state: string; createdAt: string; count: number }[]
@@ -420,6 +422,10 @@ async function confirmDialog() {
   const handle = directory.value;
   if (!handle) return;
   busy.value = dialogKind.value === "rename" ? "正在改名" : "正在恢复";
+  stopTextReferences();
+  const controller = new AbortController();
+  conversionController = dialogKind.value === "rename" ? controller : null;
+  stoppingConversion.value = false;
   progressText.value = "正在检查文件";
   let resultText = "";
   try {
@@ -438,6 +444,7 @@ async function confirmDialog() {
       } else {
         const requests: RenameRequest[] = [];
         for (const item of planned.value) {
+          if (controller.signal.aborted) throw new DOMException("已取消本次改名。", "AbortError");
           requests.push({
             sourceName: item.source.name,
             targetName: item.targetName,
@@ -449,7 +456,10 @@ async function confirmDialog() {
         }
         await renameFiles(handle, requests, (text) => {
           progressText.value = text;
-        }, convertToLosslessWebp);
+        }, convertToLosslessWebp, {
+          signal: controller.signal,
+          conversionConcurrency: getWebpConcurrency(),
+        });
         resultText = `已完成 ${requests.length} 张图片改名，已输出原始尺寸的 WebP。原图已保留，可恢复。`;
       }
     });
@@ -468,10 +478,17 @@ async function confirmDialog() {
       "error",
     );
   } finally {
+    controller.abort();
+    conversionController = null;
+    stoppingConversion.value = false;
     busy.value = "";
     progressText.value = "";
     planned.value = [];
   }
+}
+function stopConversion() {
+  stoppingConversion.value = true;
+  conversionController?.abort();
 }
 function journalState(state: string) {
   return (
@@ -490,11 +507,14 @@ function journalState(state: string) {
   );
 }
 function beforeUnload(event: BeforeUnloadEvent) {
-  if (busy.value.includes("改名") || busy.value.includes("恢复"))
+  if (busy.value.includes("改名") || busy.value.includes("恢复")) {
     event.preventDefault();
+    event.returnValue = "";
+  }
 }
 window.addEventListener("beforeunload", beforeUnload);
 onBeforeUnmount(() => {
+  conversionController?.abort();
   stopScan();
   releasePhotos();
   window.removeEventListener("beforeunload", beforeUnload);
@@ -610,6 +630,7 @@ onBeforeUnmount(() => {
         ></div>
         <span class="spinner"></span><strong>{{ busy }}</strong
         ><span>{{ progressText }}</span>
+        <button v-if="busy === '正在改名'" class="text-button" :disabled="stoppingConversion" @click="stopConversion">{{ stoppingConversion ? '正在停止…' : '停止处理' }}</button>
       </div>
 
       <section class="workspace" :class="{ 'has-photos': photos.length }">
@@ -885,7 +906,7 @@ onBeforeUnmount(() => {
       <footer class="page-footer">
         <span>NXR GRADING</span>
         <p>
-          本地生成 WebP，原图可恢复。执行期间请保持网页打开，不要同时修改所选文件夹。
+          本地生成 WebP，原图可恢复。执行期间请保持窗口打开，不要同时修改所选文件夹。
         </p>
         <button
           v-if="supportsWrite"

@@ -2,6 +2,11 @@ export interface LosslessWebpOptions {
   signal?: AbortSignal
 }
 
+export interface WebpDeviceCapabilities {
+  hardwareConcurrency?: number
+  deviceMemory?: number
+}
+
 interface WorkerSuccess {
   id: number
   ok: true
@@ -16,70 +21,180 @@ interface WorkerFailure {
 
 type WorkerResponse = WorkerSuccess | WorkerFailure
 
-const CONVERSION_TIMEOUT_MS = 120_000
+interface ConversionTask {
+  file: File
+  signal?: AbortSignal
+  state: 'queued' | 'running' | 'settled'
+  resolve: (blob: Blob) => void
+  reject: (error: unknown) => void
+  abort: () => void
+  cancelWorker?: () => void
+}
+
+type ConversionResult =
+  | { ok: true; blob: Blob }
+  | { ok: false; error: unknown }
+
+const pendingConversions: ConversionTask[] = []
 let nextId = 1
-let conversionQueue: Promise<void> = Promise.resolve()
+let activeConversions = 0
+let pumping = false
+
+/**
+ * Keep one worker on low-resource devices and use at most two elsewhere.
+ * Missing capability values use the normal two-worker default.
+ */
+export function getWebpConcurrency(
+  capabilities: WebpDeviceCapabilities = currentDeviceCapabilities(),
+): 1 | 2 {
+  const cores = positiveCapability(capabilities.hardwareConcurrency)
+  const memory = positiveCapability(capabilities.deviceMemory)
+
+  if (cores !== undefined && cores < 4) return 1
+  if (memory !== undefined && memory < 4) return 1
+  return 2
+}
 
 /**
  * Convert one local image to a verified, pixel-lossless WebP in an isolated worker.
- * Calls are serialized so multiple large photos cannot multiply peak WASM memory.
+ * Calls share a bounded worker pool so batches can make progress without unbounded
+ * WASM memory growth.
  */
 export function convertToLosslessWebp(
   file: File,
   options: LosslessWebpOptions = {},
 ): Promise<Blob> {
-  const conversion = conversionQueue.then(() => runConversion(file, options.signal))
-  conversionQueue = conversion.then(
-    () => undefined,
-    () => undefined,
-  )
-  return conversion
-}
-
-function runConversion(file: File, signal?: AbortSignal): Promise<Blob> {
-  if (signal?.aborted) return Promise.reject(abortError())
-
-  const worker = new Worker(new URL('../webp.worker.ts', import.meta.url), { type: 'module' })
-  const id = nextId++
+  if (options.signal?.aborted) return Promise.reject(abortError())
 
   return new Promise<Blob>((resolve, reject) => {
-    let settled = false
-
-    const finish = (action: () => void) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      signal?.removeEventListener('abort', onAbort)
-      worker.terminate()
-      action()
+    const task: ConversionTask = {
+      file,
+      signal: options.signal,
+      state: 'queued',
+      resolve,
+      reject,
+      abort: () => abortTask(task),
     }
 
-    const onAbort = () => finish(() => reject(abortError()))
-    const timer = setTimeout(() => {
-      finish(() => reject(new Error('无损 WebP 转换超过 120 秒，已停止处理以释放内存。')))
-    }, CONVERSION_TIMEOUT_MS)
-
-    worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
-      const response = event.data
-      if (!response || response.id !== id) return
-      if (!response.ok) {
-        finish(() => reject(new Error(response.error)))
-        return
-      }
-      finish(() => resolve(new Blob([response.buffer], { type: 'image/webp' })))
-    }
-
-    worker.onerror = () => {
-      finish(() => reject(new Error('本地无损 WebP 转换程序意外停止。')))
-    }
-
-    signal?.addEventListener('abort', onAbort, { once: true })
-    try {
-      worker.postMessage({ id, file })
-    } catch {
-      finish(() => reject(new Error('无法启动本地无损 WebP 转换。')))
-    }
+    options.signal?.addEventListener('abort', task.abort, { once: true })
+    pendingConversions.push(task)
+    pumpQueue()
   })
+}
+
+function pumpQueue(): void {
+  if (pumping) return
+  pumping = true
+
+  try {
+    const concurrency = getWebpConcurrency()
+    while (activeConversions < concurrency && pendingConversions.length > 0) {
+      const task = pendingConversions.shift()
+      if (!task || task.state !== 'queued') continue
+
+      if (task.signal?.aborted) {
+        settleTask(task, { ok: false, error: abortError() })
+        continue
+      }
+
+      startTask(task)
+    }
+  } finally {
+    pumping = false
+  }
+}
+
+function startTask(task: ConversionTask): void {
+  task.state = 'running'
+  activeConversions += 1
+
+  let worker: Worker
+  try {
+    worker = new Worker(new URL('../webp.worker.ts', import.meta.url), { type: 'module' })
+  } catch {
+    settleTask(task, { ok: false, error: new Error('无法启动本地无损 WebP 转换。') })
+    return
+  }
+
+  const id = nextId++
+  const finish = (result: ConversionResult) => {
+    if (task.state !== 'running') return
+    try {
+      worker.terminate()
+    } catch {
+      // Release the pool slot even if worker cleanup itself fails.
+    }
+    task.cancelWorker = undefined
+    settleTask(task, result)
+  }
+
+  task.cancelWorker = () => finish({ ok: false, error: abortError() })
+
+  worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+    const response = event.data
+    if (!response || response.id !== id) return
+    if (!response.ok) {
+      finish({ ok: false, error: new Error(response.error) })
+      return
+    }
+    finish({
+      ok: true,
+      blob: new Blob([response.buffer], { type: 'image/webp' }),
+    })
+  }
+
+  worker.onerror = () => {
+    finish({ ok: false, error: new Error('本地无损 WebP 转换程序意外停止。') })
+  }
+
+  try {
+    worker.postMessage({ id, file: task.file })
+  } catch {
+    finish({ ok: false, error: new Error('无法启动本地无损 WebP 转换。') })
+  }
+}
+
+function abortTask(task: ConversionTask): void {
+  if (task.state === 'settled') return
+  if (task.state === 'running') {
+    task.cancelWorker?.()
+    return
+  }
+  settleTask(task, { ok: false, error: abortError() })
+}
+
+function settleTask(task: ConversionTask, result: ConversionResult): void {
+  if (task.state === 'settled') return
+
+  const previousState = task.state
+  task.state = 'settled'
+  task.signal?.removeEventListener('abort', task.abort)
+
+  if (previousState === 'queued') {
+    const index = pendingConversions.indexOf(task)
+    if (index >= 0) pendingConversions.splice(index, 1)
+  } else {
+    activeConversions -= 1
+  }
+
+  if (result.ok) task.resolve(result.blob)
+  else task.reject(result.error)
+  pumpQueue()
+}
+
+function currentDeviceCapabilities(): WebpDeviceCapabilities {
+  if (typeof navigator === 'undefined') return {}
+  const browserNavigator = navigator as Navigator & { deviceMemory?: number }
+  return {
+    hardwareConcurrency: browserNavigator.hardwareConcurrency,
+    deviceMemory: browserNavigator.deviceMemory,
+  }
+}
+
+function positiveCapability(value: number | undefined): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? value
+    : undefined
 }
 
 function abortError(): DOMException {

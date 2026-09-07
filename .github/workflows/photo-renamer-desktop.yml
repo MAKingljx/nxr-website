@@ -1,0 +1,53 @@
+name: Photo Renamer Desktop
+
+on:
+  push:
+    branches: [java-version/java-platform]
+    paths:
+      - nxr_platform/nxr-photo-renamer/**
+      - .github/workflows/photo-renamer-desktop.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: nxr_platform/nxr-photo-renamer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: nxr_platform/nxr-photo-renamer/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: npm run test:desktop
+      - run: node scripts/package-desktop.mjs --platform win32 --arch x64
+      - name: Test packaged Windows application
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $env:NXR_DESKTOP_EXECUTABLE = (Resolve-Path "release/$version/win32-x64/NXR-Photo-Renamer-portable/NXR Photo Renamer.exe").Path
+          npm run test:desktop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NXR-Photo-Renamer-Windows-x64
+          path: |
+            nxr_platform/nxr-photo-renamer/release/*/win32-x64/*.zip
+            nxr_platform/nxr-photo-renamer/release/*/win32-x64/manifest.json
+            nxr_platform/nxr-photo-renamer/release/*/win32-x64/SHA256SUMS
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Windows-desktop-test-results
+          path: nxr_platform/nxr-photo-renamer/test-results/
+          if-no-files-found: ignore

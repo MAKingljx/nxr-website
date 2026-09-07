@@ -1,6 +1,10 @@
 import jsQR, { type QRCode } from 'jsqr'
 import { parseCertificateLink } from './lib/pairing'
-import { buildScanRegions, type ScanRegion } from './lib/scan-regions'
+import {
+  buildScanRegions,
+  countsTowardConflictVerification,
+  type ScanRegion,
+} from './lib/scan-regions'
 import { applyPixelTreatment } from './lib/qr-image-processing'
 import { SCAN_LIMITS, type ScanMode } from './lib/scan-policy'
 
@@ -82,8 +86,12 @@ async function scan(file: File, mode: ScanMode): Promise<Omit<ScanResponse, 'id'
         verifyRegionsRemaining = verifyRegionsRemaining ?? (mode === 'deep'
           ? DEEP_VERIFY_REGIONS_AFTER_FIRST_CERT
           : VERIFY_REGIONS_AFTER_FIRST_CERT)
-        verifyRegionsRemaining -= 1
-        if (verifyRegionsRemaining <= 0) break
+        // Low-resolution candidates help find soft codes, but do not replace
+        // the existing full-resolution conflict checks after the first match.
+        if (countsTowardConflictVerification(region)) {
+          verifyRegionsRemaining -= 1
+          if (verifyRegionsRemaining <= 0) break
+        }
       }
     }
 

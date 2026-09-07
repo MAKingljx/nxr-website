@@ -2,6 +2,7 @@ node_modules/
 dist/
 test-results/
 playwright-report/
+release/
 .DS_Store
 **/.PhoenixBrain
 # Keep this tool's documentation despite the repository-wide Readme.md rule.

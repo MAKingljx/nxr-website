@@ -9,7 +9,7 @@ export interface ScanRegion {
   sh: number
   rotation: 0 | 90 | 180 | 270
   maxEdge: number
-  kind: 'overview' | 'coarse' | 'detail' | 'fine' | 'fallback'
+  kind: 'overview' | 'resampled' | 'coarse' | 'detail' | 'fine' | 'fallback'
   treatment: PixelTreatment
 }
 
@@ -22,6 +22,10 @@ export function buildScanRegions(width: number, height: number, mode: ScanMode =
   return mode === 'deep'
     ? buildDeepRegions(safeWidth, safeHeight)
     : buildStandardRegions(safeWidth, safeHeight)
+}
+
+export function countsTowardConflictVerification(region: ScanRegion): boolean {
+  return region.kind !== 'resampled'
 }
 
 function buildStandardRegions(width: number, height: number): ScanRegion[] {
@@ -63,8 +67,12 @@ function buildDeepRegions(width: number, height: number): ScanRegion[] {
   regions.push(whole(width, height, 0, 2400, 'overview', 'contrast'))
   regions.push(whole(width, height, 0, 2400, 'overview', 'local-threshold'))
 
-  // Complete spatial coverage with original pixels before the more expensive
-  // enhanced copies, so one difficult area cannot starve the rest of the image.
+  // A low-resolution copy of the complete 3x3 coverage recovers soft QR module
+  // edges before the more expensive high-resolution regions consume the budget.
+  const resampled = gridRegions(width, height, 3, 0.16, 600, 'resampled')
+
+  // Preserve complete higher-resolution coverage before enhanced copies, so a
+  // small code or one difficult area cannot be weakened by the resampled pass.
   const coarse = gridRegions(width, height, 3, 0.16, 2200, 'coarse')
   const fine = slidingSquareRegions(
     width,
@@ -73,7 +81,7 @@ function buildDeepRegions(width: number, height: number): ScanRegion[] {
     DEEP_FINE_OVERLAP,
     'fine',
   )
-  regions.push(...coarse, ...fine)
+  regions.push(...resampled, ...coarse, ...fine)
   regions.push(...withTreatment(coarse, 'contrast'))
   regions.push(...withTreatment(fine, 'contrast'))
   regions.push(...withTreatment(fine, 'local-threshold'))

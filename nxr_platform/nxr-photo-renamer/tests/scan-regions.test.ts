@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildScanRegions, type ScanRegion } from '../src/lib/scan-regions.ts'
+import {
+  buildScanRegions,
+  countsTowardConflictVerification,
+  type ScanRegion,
+} from '../src/lib/scan-regions.ts'
 
 test('detail windows cover a portrait image completely with overlap and top-first order', () => {
   const width = 3648
@@ -63,6 +67,8 @@ test('deep scan uses distinct scale, denser complete coverage, and deferred enha
   const standard = buildScanRegions(width, height)
   const deep = buildScanRegions(width, height, 'deep')
   const standardDetail = standard.filter(region => region.kind === 'detail')
+  const resampled = deep.filter(region => region.kind === 'resampled')
+  const coarse = deep.filter(region => region.kind === 'coarse' && region.treatment === 'original')
   const deepFineOriginal = deep.filter(region => region.kind === 'fine' && region.treatment === 'original')
 
   assert.equal(deep[0].maxEdge, 2400)
@@ -71,6 +77,19 @@ test('deep scan uses distinct scale, denser complete coverage, and deferred enha
     'contrast',
     'local-threshold',
   ])
+  assert.equal(resampled.length, 9)
+  assert.ok(resampled.every(region => region.maxEdge === 600))
+  assert.ok(resampled.every(region => region.treatment === 'original'))
+  assert.equal(deep.findIndex(region => region.kind === 'resampled'), 3)
+  assert.ok(deep.findLastIndex(region => region.kind === 'resampled')
+    < deep.findIndex(region => region.kind === 'coarse'))
+  assert.deepEqual(
+    resampled.map(regionGeometry),
+    coarse.map(regionGeometry),
+  )
+  assertCoverage(resampled, width, height)
+  assert.ok(resampled.every(region => !countsTowardConflictVerification(region)))
+  assert.ok(coarse.every(countsTowardConflictVerification))
   assert.ok(deepFineOriginal.length > standardDetail.length)
   assert.ok(deepFineOriginal.every(region => region.sw === 730 && region.sh === 730))
   assertCoverage(deepFineOriginal, width, height)
@@ -91,6 +110,16 @@ test('deep scan keeps every generated crop inside a very small image', () => {
     assert.ok(region.sy + region.sh <= 29)
   }
 })
+
+function regionGeometry(region: ScanRegion) {
+  return {
+    sx: region.sx,
+    sy: region.sy,
+    sw: region.sw,
+    sh: region.sh,
+    rotation: region.rotation,
+  }
+}
 
 function assertCoverage(regions: ScanRegion[], width: number, height: number) {
   const sampleStep = Math.max(1, Math.floor(Math.min(width, height) / 25))

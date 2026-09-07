@@ -212,6 +212,88 @@ async function fakeLosslessWebp(file: File): Promise<Blob> {
   return new Blob(['webp:', await file.arrayBuffer()], { type: 'image/webp' })
 }
 
+function parallelFixture() {
+  const directory = new MemoryDirectory()
+  const requests = ['one.jpg', 'two.jpg', 'three.jpg', 'four.jpg'].map((name, index) => {
+    directory.add(name, `original ${index}`)
+    return conversionRequest(directory, name, `PAR${Math.floor(index / 2)}_${index % 2 ? 'B' : 'A'}.webp`)
+  })
+  return { directory, requests }
+}
+
+test('parallel encoding is bounded and every original survives until all outputs are verified', async () => {
+  const { directory, requests } = parallelFixture()
+  let active = 0, maximum = 0
+  const journal = await renameFiles(directory.handle(), requests, undefined, async file => {
+    active++; maximum = Math.max(maximum, active)
+    for (const item of requests) assert(directory.files.has(item.sourceName))
+    const persisted = JSON.parse(directory.text(journalName(directory)))
+    const entry = persisted.entries.find((item: { sourceName: string }) => item.sourceName === file.name)
+    assert.equal(directory.directory(persisted.backupDirectory).text(entry.backupName), await file.text())
+    await new Promise<void>(resolve => setImmediate(resolve))
+    const output = await fakeLosslessWebp(file)
+    active--
+    return output
+  }, { conversionConcurrency: 2 })
+  assert.equal(maximum, 2)
+  assert.equal(journal.state, 'complete')
+  assert(journal.entries.every(entry => entry.state === 'deleted' && entry.targetHash))
+  await restoreJournal(directory.handle(), journal.name)
+  requests.forEach((item, index) => assert.equal(directory.text(item.sourceName), `original ${index}`))
+})
+
+test('parallel failure aborts its sibling and waits for cleanup before returning a recoverable journal', async () => {
+  const { directory, requests } = parallelFixture()
+  let calls = 0, siblingStopped = false
+  await assert.rejects(renameFiles(directory.handle(), requests, undefined, async (_file, options) => {
+    calls++
+    if (calls === 1) {
+      await new Promise<void>(resolve => setImmediate(resolve))
+      throw new Error('primary encoding failure')
+    }
+    await new Promise<void>(resolve => options!.signal!.addEventListener('abort', () => setImmediate(resolve), { once: true }))
+    siblingStopped = true
+    throw new DOMException('sibling stopped', 'AbortError')
+  }, { conversionConcurrency: 2 }), /primary encoding failure/)
+  assert.equal(calls, 2)
+  assert(siblingStopped)
+  requests.forEach(item => assert(directory.files.has(item.sourceName) && !directory.files.has(item.targetName)))
+  const name = journalName(directory)
+  assert.equal(JSON.parse(directory.text(name)).state, 'failed')
+  await restoreJournal(directory.handle(), name)
+  assert.equal(directory.directories.size, 0)
+})
+
+test('cancelling a later batch stops both encoders and restores previously written outputs', async () => {
+  const { directory, requests } = parallelFixture()
+  const controller = new AbortController()
+  let calls = 0, cancelled = 0
+  await assert.rejects(renameFiles(directory.handle(), requests, undefined, async (file, options) => {
+    calls++
+    if (calls <= 2) return fakeLosslessWebp(file)
+    if (calls === 4) queueMicrotask(() => controller.abort())
+    await new Promise<void>(resolve => options!.signal!.addEventListener('abort', () => setImmediate(resolve), { once: true }))
+    cancelled++
+    throw new DOMException('cancelled', 'AbortError')
+  }, { conversionConcurrency: 2, signal: controller.signal }), /cancelled/)
+  assert.equal(cancelled, 2)
+  requests.forEach(item => assert(directory.files.has(item.sourceName)))
+  assert(directory.files.has(requests[0]!.targetName))
+  await restoreJournal(directory.handle(), journalName(directory))
+  requests.forEach((item, index) => {
+    assert.equal(directory.text(item.sourceName), `original ${index}`)
+    assert(!directory.files.has(item.targetName))
+  })
+})
+
+test('an already cancelled operation creates no files or backup directory', async () => {
+  const { directory, requests } = parallelFixture()
+  const controller = new AbortController(); controller.abort()
+  await assert.rejects(renameFiles(directory.handle(), requests, undefined, fakeLosslessWebp, { signal: controller.signal }), /已取消/)
+  assert.equal(directory.files.size, 4)
+  assert.equal(directory.directories.size, 0)
+})
+
 function journalName(directory: MemoryDirectory): string {
   const names = [...directory.files.keys()].filter((name) => name.endsWith('.json'))
   assert.equal(names.length, 1)

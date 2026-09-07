@@ -1,6 +1,6 @@
 {
   "name": "nxr-photo-renamer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,7 +11,10 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1 --port 4317 --strictPort",
     "test": "node --import tsx --test tests/*.test.ts",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "desktop": "npm run build && electron .",
+    "test:desktop": "node --import tsx scripts/test-desktop.mjs",
+    "package:desktop": "npm run build && node scripts/package-desktop.mjs"
   },
   "dependencies": {
     "@jsquash/webp": "1.5.0",
@@ -23,15 +26,19 @@
     "vue": "3.5.32"
   },
   "devDependencies": {
+    "@electron/asar": "4.3.0",
+    "@electron/packager": "20.3.0",
     "@playwright/test": "1.58.2",
     "@types/node": "24.12.2",
     "@types/qrcode": "1.5.5",
     "@types/wicg-file-system-access": "2023.10.7",
     "@vitejs/plugin-vue": "6.0.6",
+    "electron": "44.2.0",
     "qrcode": "1.5.4",
     "tsx": "4.20.5",
     "typescript": "6.0.2",
-    "vite": "8.0.10",
+    "vite": "8.2.2",
     "vue-tsc": "3.2.7"
-  }
+  },
+  "main": "desktop/main.cjs"
 }
