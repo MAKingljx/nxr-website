@@ -6,7 +6,7 @@ import {
   naturalCompare,
   validatePairs,
 } from "./lib/pairing";
-import { scanPhoto, cancelScan } from "./lib/scanner";
+import { scanPhoto, cancelScan, getScanConcurrency } from "./lib/scanner";
 import { scanTextReference, cancelTextReference } from "./lib/text-reference";
 import PhotoReviewDialog from "./components/PhotoReviewDialog.vue";
 import { deepScanCandidates, mergeDeepScanPairs, mergeScanEvidence, type ScanMode } from "./lib/scan-policy";
@@ -295,12 +295,28 @@ async function startScan() {
     return true;
   };
   try {
-    for (let index = 0; index < targets.length && run === scanGeneration; index++) {
-      const photo = targets[index]!;
-      progressText.value = `${index + 1} / ${targets.length} · ${photo.name}`;
-      if (!await scanOne(photo, "standard")) break;
-      progress.value = Math.round(((index + 1) / targets.length) * 100);
-    }
+    let nextIndex = 0;
+    let completed = 0;
+    const active = new Map<number, string>();
+    const updateProgress = () => {
+      const names = [...active].sort(([a], [b]) => a - b).map(([, name]) => name);
+      progressText.value = `${completed} / ${targets.length}${names.length ? ` · ${names.join("、")}` : ""}`;
+      progress.value = Math.round((completed / targets.length) * 100);
+    };
+    // Each lane takes the next photo as soon as it is free. Completion order
+    // never changes the photo array or the natural-order pairing rule.
+    await Promise.all(Array.from({ length: Math.min(getScanConcurrency(), targets.length) }, async () => {
+      while (nextIndex < targets.length && run === scanGeneration) {
+        const index = nextIndex++;
+        const photo = targets[index]!;
+        active.set(index, photo.name);
+        updateProgress();
+        if (!await scanOne(photo, "standard")) break;
+        active.delete(index);
+        completed++;
+        updateProgress();
+      }
+    }));
     updatePairs(manualPairs, new Set(targets.map((photo) => photo.id)));
     // Finish the ordinary pass first so known A/B pairs do not need a retry.
     // Scan remaining files from the end: a recovered B also resolves its A.

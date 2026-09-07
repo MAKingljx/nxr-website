@@ -17,6 +17,76 @@ import {
 const CERT_A = '7123456789'
 const CERT_B = '8123456789'
 
+test('并行扫码可停止，乱序完成仍按原图配对且补扫跳过已配对正图', async ({ page }, testInfo) => {
+  const directoryName = uniqueDirectory(testInfo.title)
+  const names = ['0001-front.png', '0002-back.png', '0003-front.png', '0004-back.png']
+  await installOpfsPicker(page, directoryName)
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'hardwareConcurrency', { value: 8, configurable: true })
+    Object.defineProperty(navigator, 'deviceMemory', { value: 8, configurable: true })
+    const jobs: any[] = []
+    const audit = (window as any).__qrQueue = { jobs, maxActive: 0 }
+    const OriginalWorker = window.Worker
+    window.Worker = class extends OriginalWorker {
+      private isQr: boolean
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options)
+        this.isQr = String(url).includes('qr.worker')
+      }
+      postMessage(message: any, transfer: any) {
+        if (!this.isQr) return super.postMessage(message, transfer)
+        // Control completion order to test the scheduler, independently of QR
+        // decoding (real decoder cases are covered by the tests below).
+        jobs.push({ ...message, name: message.file.name, worker: this, done: false })
+        audit.maxActive = Math.max(audit.maxActive, jobs.filter(job => !job.done).length)
+      }
+      terminate() {
+        jobs.filter(job => job.worker === this).forEach(job => { job.done = true })
+        super.terminate()
+      }
+    }
+    audit.finish = (name: string, mode: string, certIds: string[]) => {
+      const job = jobs.find(job => !job.done && job.name === name && job.mode === mode)
+      if (!job) throw new Error(`missing pending ${name} ${mode}`)
+      job.done = true
+      job.worker.dispatchEvent(new MessageEvent('message', { data: {
+        id: job.id, certIds, qrTexts: certIds.map(id => `https://nxrgrading.com/card/${id}`),
+      } }))
+    }
+  })
+  await page.goto('/')
+  await seedOpfsDirectory(page, directoryName, names.map(name => blankPhoto(name)))
+  await openDirectory(page)
+  const pending = () => page.evaluate(() => (window as any).__qrQueue.jobs
+    .filter((job: any) => !job.done).map((job: any) => `${job.mode}:${job.name}`))
+  const finish = (name: string, mode: string, ids: string[] = []) => page.evaluate(
+    ({ name, mode, ids }) => (window as any).__qrQueue.finish(name, mode, ids), { name, mode, ids })
+  await page.getByRole('button', { name: '开始识别', exact: true }).click()
+  await expect.poll(pending).toEqual(['standard:0001-front.png', 'standard:0002-back.png'])
+  await page.getByRole('button', { name: '停止识别', exact: true }).click()
+  await expect(page.locator('.progress-strip')).toHaveCount(0)
+  expect(await pending()).toEqual([])
+  await page.evaluate(() => { (window as any).__qrQueue.jobs.length = 0 })
+  await page.getByRole('button', { name: '开始识别', exact: true }).click()
+  await expect.poll(pending).toHaveLength(2)
+  await finish(names[1], 'standard')
+  await expect.poll(pending).toEqual(['standard:0001-front.png', 'standard:0003-front.png'])
+  await finish(names[2], 'standard')
+  await expect.poll(pending).toEqual(['standard:0001-front.png', 'standard:0004-back.png'])
+  await finish(names[3], 'standard', [CERT_B])
+  await finish(names[0], 'standard')
+  await expect.poll(pending).toEqual(['deep:0002-back.png'])
+  await finish(names[1], 'deep', [CERT_A])
+  await expect(page.locator('.progress-strip')).toHaveCount(0)
+  await expect(page.getByTestId('pair-row')).toHaveCount(2)
+  await expect(page.getByTestId('pair-row').nth(0).getByLabel(/^证书号 /)).toHaveValue(CERT_A)
+  await expect(page.getByTestId('pair-row').nth(1).getByLabel(/^证书号 /)).toHaveValue(CERT_B)
+  expect(await page.evaluate(() => {
+    const audit = (window as any).__qrQueue
+    return { maxActive: audit.maxActive, deep: audit.jobs.filter((job: any) => job.mode === 'deep').map((job: any) => job.name) }
+  })).toEqual({ maxActive: 2, deep: ['0002-back.png'] })
+})
+
 test('转换可双线程运行并随时停止，恢复后原文件完整', async ({ page }, testInfo) => {
   const directoryName = uniqueDirectory(testInfo.title)
   const photos = [blankPhoto('0001-front.png'), await qrPhoto('0002-back.png', cardUrl(CERT_A))]
