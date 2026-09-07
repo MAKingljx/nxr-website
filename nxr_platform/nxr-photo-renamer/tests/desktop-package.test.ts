@@ -12,6 +12,7 @@ import {
   auditAppAsar,
   auditDesktopStage,
   auditZipArchive,
+  asarLookupPath,
   inventoryReleasePayload,
 } from '../scripts/audit-desktop.mjs'
 import {
@@ -108,6 +109,12 @@ test('stage audit rejects reserved metadata, photo-like files and symlinks', asy
     throw error
   }
   await assert.rejects(() => auditDesktopStage(stage), /must not contain symlinks/)
+})
+
+test('ASAR lookup paths use the host separator without a root separator', () => {
+  assert.equal(asarLookupPath('/dist/assets/main.js', '/'), 'dist/assets/main.js')
+  assert.equal(asarLookupPath('\\dist\\assets\\main.js', '\\'), 'dist\\assets\\main.js')
+  assert.equal(asarLookupPath('/dist/assets/main.js', '\\'), 'dist\\assets\\main.js')
 })
 
 test('ASAR audit compares exact members and hashes with the audited stage', async (context) => {

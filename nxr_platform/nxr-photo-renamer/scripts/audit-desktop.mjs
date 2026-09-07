@@ -33,6 +33,16 @@ export async function sha256File(filePath) {
   return sha256(await readFile(filePath))
 }
 
+export function asarLookupPath(archiveMember, separator = path.sep) {
+  if (separator !== '/' && separator !== '\\') {
+    throw new Error(`unsupported ASAR path separator: ${separator}`)
+  }
+  return archiveMember
+    .replace(/^[/\\]+/, '')
+    .replaceAll('/', separator)
+    .replaceAll('\\', separator)
+}
+
 export function assertSafePackagedPath(relativePath, label = 'packaged path') {
   if (typeof relativePath !== 'string' || !relativePath || relativePath.includes('\\')
     || relativePath.includes('\0') || path.posix.isAbsolute(relativePath)
@@ -153,7 +163,8 @@ export async function auditAppAsar({
   for (const archiveMember of listPackage(asarPath, { isPack: false })) {
     const relative = archiveMember.replace(/^[/\\]+/, '').replaceAll('\\', '/')
     assertSafePackagedPath(relative, 'ASAR member')
-    const metadata = statFile(asarPath, relative, false)
+    const lookupPath = asarLookupPath(archiveMember)
+    const metadata = statFile(asarPath, lookupPath, false)
     if ('link' in metadata) throw new Error(`ASAR contains a symlink: ${relative}`)
     if ('files' in metadata) {
       actualDirectories.push(relative)
@@ -162,7 +173,7 @@ export async function auditAppAsar({
     if ('unpacked' in metadata && metadata.unpacked) {
       throw new Error(`ASAR contains an unpacked member: ${relative}`)
     }
-    const bytes = extractFile(asarPath, relative, false)
+    const bytes = extractFile(asarPath, lookupPath, false)
     actualFiles[relative] = { size: bytes.length, sha256: sha256(bytes) }
   }
   actualDirectories.sort()
