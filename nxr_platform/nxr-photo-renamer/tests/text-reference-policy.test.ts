@@ -23,14 +23,14 @@ test('accepts a normalized certificate or exact NXR card link without guessing',
 
 test('extracts conservative candidates with digits and ignores brand words', () => {
   assert.deepEqual(
-    extractTextReferenceCandidates('Pokemon NXR 643 661 7959\nREFERENCE9'),
-    ['6436617959', 'REFERENCE9'],
+    extractTextReferenceCandidates('Pokemon NXR 712 345 6789\nREFERENCE9'),
+    ['7123456789', 'REFERENCE9'],
   )
 })
 
 test('classifies OCR as a silent reference while the QR remains authoritative', () => {
-  assert.equal(classifyTextReference('8630289503', '8630289503').state, 'matched')
-  assert.equal(classifyTextReference('8630289508', '8630289503').state, 'mismatch')
-  assert.equal(classifyTextReference('8630289503').state, 'reference')
+  assert.equal(classifyTextReference('7987654321', '7987654321').state, 'matched')
+  assert.equal(classifyTextReference('7987654328', '7987654321').state, 'mismatch')
+  assert.equal(classifyTextReference('7987654321').state, 'reference')
   assert.equal(classifyTextReference('Pokemon NXR').state, 'unreadable')
 })

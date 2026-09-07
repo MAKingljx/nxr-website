@@ -55,15 +55,24 @@ python3 deploy/publish.py --rollback "$RELEASE_ID" --apply
 
 首次安装和每次切换前的共享 vhost、snippet 与旧 `current` 记录保存在 `/var/www/nxr-photo-renamer/operations/<操作ID>/`，目录权限为 `0700`。发布目录可由 Nginx 读取，项目元数据、manifest 和运维记录不在公开 `current/` 下。
 
-WebP 编解码 WASM 内联在专属 worker 中。基础版构建为五个文件；包含文字参考识别的本地新版为十四个文件，增加 OCR worker、六种兼容 core、延迟加载的语言模型 JS 和许可证。发布审计限定这些文件名、完整组成、单文件 8 MiB 和总量 32 MiB；旧版四文件、五文件和新版十四文件均可核验后回滚。仅本工具的 CSP 增加 `script-src 'wasm-unsafe-eval'` 来运行本地编码器，不放宽 JavaScript eval 或图片上传限制。
+WebP 编解码 WASM 内联在专属 worker 中。基础版构建为五个文件；包含文字参考识别的新版为十四个文件，增加 OCR worker、六种兼容 core、延迟加载的语言模型 JS 和许可证。发布审计限定这些文件名、完整组成、单文件 8 MiB 和总量 32 MiB；旧版四文件、五文件和新版十四文件均可核验后回滚。仅本工具的 CSP 增加 `script-src 'wasm-unsafe-eval'` 来运行本地编码器，不放宽 JavaScript eval 或图片上传限制。
 
 页面响应统一 `Cache-Control: no-store, no-transform`，避免缓存混用并禁止 CDN 修改 HTML；CSP 的 `connect-src 'none'` 禁止页面向服务器或第三方发起上传/API 连接。File System Access API 仍要求桌面 Chrome/Edge、HTTPS、用户手势和用户对所选目录的明确读写授权。
 
 ## 当前已验证发布
 
+- 上线时间：2026-09-07 16:24（北京时间），发布版本 `20260907T082242Z-b429ff7db2b0`。
+- 源码已先提交并推送至 [GitHub ce8d48e](https://github.com/MAKingljx/nxr-website/commit/ce8d48e3e5fb1c4d6a8da7ede331a2eae8103cc4)，分支 `java-version/java-platform`。随后从该提交重新构建，产物与本地已验收版本一致。后续发布记录与合成测试编号整理不改变运行源码或构建。
+- 当前目录：`/var/www/nxr-photo-renamer/releases/20260907T082242Z-b429ff7db2b0/dist`；保留旧版 `20260907T051820Z-b5dea7760fa1` 和 `20260907T051504Z-2b4e50374bed`。
+- 本次只发布独立静态工具，十四个文件共 31,306,104 字节，公网与源站逐文件 SHA-256 校验通过；Nginx 配置字节未变，没有 reload。主站、后台、Nginx master PID 保持不变，主站和后台 HTTP 均为 200。
+- 发布证据：仓库根目录 `output/nxr-photo-renamer/deploy/20260907T082436Z-1b3e8eda.json`。线上两张真实背图均正确配对：第一张自动深度补扫恢复，第二张普通扫描成功；后台 OCR 均读到相应标签证号。原始图片 SHA-256 与发布前一致。
+- 线上合成样本验证文字不一致时保留二维码，不显示差异、不增加待检查数；只有文字时不自动配对，可在人工录入中带入参考。待检查直达、切图、放大、全角空白整理及前导零保留均通过，390px 窄屏可操作。网络仅有本站 GET 静态资源，无上传、外域请求、页面异常或 CSP 违规。浏览器证据为 `output/nxr-photo-renamer/deploy/browser-20260907T082242Z.json`；本轮只读识别和命名预览，未再次执行 WebP 文件写入。
+
+## 上一版 WebP 发布验收记录
+
 - 上线日期：2026-09-07（北京时间）。
-- 当前发布版本：`20260907T051820Z-b5dea7760fa1`（版本时间使用 UTC）。
-- 服务器目录：`/var/www/nxr-photo-renamer/releases/20260907T051820Z-b5dea7760fa1/dist`；保留 `20260907T051504Z-2b4e50374bed` 和 `20260907T051055Z-de4a55ee1dce` 两个已验证历史版本。
+- 当时发布版本：`20260907T051820Z-b5dea7760fa1`（版本时间使用 UTC）。
+- 当时服务器目录：`/var/www/nxr-photo-renamer/releases/20260907T051820Z-b5dea7760fa1/dist`；当时保留 `20260907T051504Z-2b4e50374bed` 和 `20260907T051055Z-de4a55ee1dce` 两个已验证历史版本，现存可回滚版本以上方当前记录为准。
 - 无损 WebP 更新只在工具 snippet 中增加 WASM 执行许可，经过 `nginx -t` 后平滑 reload 一次。随后仅修正示例扩展名、页脚与确认标题的静态发布没有再次重载。TLS vhost、默认 vhost、Java snippet 均未改变。
 - 主站 PID `1750942`、后台 PID `1839302`、Nginx master PID `1750134` 在发布前后相同，主站与后台 HTTP 均为 200；生产数据库和 Python/Java 应用文件未改动。
 - 源站与公网五个静态文件逐文件 SHA-256 一致；308、404、POST 403 及安全响应头检查通过。

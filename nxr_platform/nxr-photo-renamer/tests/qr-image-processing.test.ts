@@ -26,7 +26,7 @@ test('contrast treatment recovers a valid QR below jsQR dynamic range without ch
 })
 
 test('local threshold separates low-contrast modules under uneven illumination', () => {
-  const text = 'https://nxrgrading.com/card/8630289503'
+  const text = 'https://nxrgrading.com/card/7987654321'
   const { pixels, width, height } = renderQr(text, (isDark, x, imageWidth) => {
     const illumination = 80 + Math.round(120 * x / Math.max(1, imageWidth - 1))
     return isDark ? illumination : illumination + 16
