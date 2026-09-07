@@ -1,0 +1,13 @@
+node_modules/
+dist/
+test-results/
+playwright-report/
+.DS_Store
+**/.PhoenixBrain
+# Keep this tool's documentation despite the repository-wide Readme.md rule.
+!/README.md
+!/deploy/README.md
+# Rebuilt from pinned npm packages by prepare:ocr-assets.
+/public/assets/ocr.worker-*.js
+/public/assets/tesseract-core*.wasm.js
+/public/assets/ocr.third-party-licenses.txt

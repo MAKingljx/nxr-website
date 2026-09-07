@@ -1,0 +1,37 @@
+{
+  "name": "nxr-photo-renamer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare:ocr-assets": "node scripts/copy-tesseract-assets.mjs",
+    "predev": "npm run prepare:ocr-assets",
+    "dev": "vite --host 127.0.0.1 --port 4317 --strictPort",
+    "prebuild": "npm run prepare:ocr-assets",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 4317 --strictPort",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "test:browser": "playwright test"
+  },
+  "dependencies": {
+    "@jsquash/webp": "1.5.0",
+    "@tesseract.js-data/eng": "1.0.0",
+    "idb-keyval": "6.3.0",
+    "jsqr": "1.4.0",
+    "tesseract.js": "7.0.0",
+    "tesseract.js-core": "7.0.0",
+    "vue": "3.5.32"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.58.2",
+    "@types/node": "24.12.2",
+    "@types/qrcode": "1.5.5",
+    "@types/wicg-file-system-access": "2023.10.7",
+    "@vitejs/plugin-vue": "6.0.6",
+    "qrcode": "1.5.4",
+    "tsx": "4.20.5",
+    "typescript": "6.0.2",
+    "vite": "8.0.10",
+    "vue-tsc": "3.2.7"
+  }
+}

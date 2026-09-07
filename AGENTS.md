@@ -58,3 +58,18 @@ Important override:
 - Public site is served through Nginx and proxied to `127.0.0.1:8080`
 - Public admin path is served through Nginx rewrite/proxy to `127.0.0.1:8081`
 - Preferred remote restart helper: `/Users/phoenix/Documents/Phoenxi/nxr_website/scripts/restart_remote_apps.sh`
+
+## Independent Photo Renamer
+
+- User requirement recorded on 2026-09-06: the photo-renaming webpage is a separately managed static tool. Its deployment and maintenance must not conflict with or disrupt the existing production systems.
+- Its source and dedicated deployment rules are under `nxr_platform/nxr-photo-renamer/`; read that directory's `AGENTS.md` before changing or deploying the tool.
+- Its verified standalone production root is `/var/www/nxr-photo-renamer`, served at `https://nxrgrading.com/tools/photo-renamer/` through `/etc/nginx/snippets/nxr-photo-renamer.conf`. Preserve this dedicated include and URL prefix during unrelated Nginx work.
+- Keep its release files and configuration separate from `/root/nxr_website`. Do not use the main project sync/restart scripts to deploy it, and do not change production databases, Python application processes, Java traffic switching, or existing synchronization jobs for this tool.
+- Any shared Nginx change must preserve existing routes and configuration, check for concurrent edits, pass `nginx -t`, and use a graceful reload. Verify the existing public site and admin service before and after the change.
+
+## Network Routing Preference
+
+- User preference recorded on 2026-09-07: ordinary requests should use a direct connection. Use Clash proxy nodes only for specific services or scenarios that need them, with explicit domain/IP rules when necessary.
+- Preserve rule-based routing and existing unrelated rules. Do not switch all traffic to a global VPN/proxy or globally disable the user's network setup for a single task.
+- Keep localhost, private networks, and this project's production server on direct routes. When a TUN interface intercepts traffic, removing proxy environment variables alone is not proof of direct routing; verify the actual route or connection.
+- The photo-renamer deployment helper supports macOS `--direct-interface` for SSH/SCP. Determine the current physical interface before using it; do not assume an interface name from an earlier session.
