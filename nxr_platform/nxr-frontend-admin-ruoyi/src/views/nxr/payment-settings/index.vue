@@ -1,18 +1,18 @@
 <template>
   <main class="nxr-workspace payment-settings">
     <nxr-page-header
-      kicker="FINANCE"
-      title="支付渠道"
-      summary="选择支付渠道并配置商户信息。启用且配置完整的渠道会显示在客户结算页。"
+      :kicker="t('paymentSettings.finance')"
+      :title="t('nav.paymentChannels')"
+      :summary="t('paymentSettings.summary')"
     >
       <template #actions>
-        <el-button icon="Refresh" plain :disabled="loading || hasUnsavedChanges || channels.some(channel => channel.saving)" @click="load">刷新</el-button>
+        <el-button icon="Refresh" plain :disabled="loading || hasUnsavedChanges || channels.some(channel => channel.saving)" @click="load">{{ t('common.refresh') }}</el-button>
       </template>
     </nxr-page-header>
 
     <section v-loading="loading" class="payment-settings__layout">
-      <nav class="payment-settings__nav" aria-label="支付渠道选择">
-        <div class="payment-settings__nav-heading">选择渠道</div>
+      <nav class="payment-settings__nav" :aria-label="t('paymentSettings.channelSelection')">
+        <div class="payment-settings__nav-heading">{{ t('paymentSettings.selectChannel') }}</div>
         <button
           v-for="channel in channels"
           :key="channel.provider"
@@ -23,15 +23,15 @@
           aria-controls="payment-channel-config"
           @click="selectedProvider = channel.provider"
         >
-          <span class="payment-settings__nav-title">{{ providerLabels[channel.provider] || channel.displayName }}</span>
-          <span class="payment-settings__nav-description">{{ providerDescriptions[channel.provider] }}</span>
+          <span class="payment-settings__nav-title">{{ providerLabels[channel.provider] ? t(providerLabels[channel.provider]) : channel.displayName }}</span>
+          <span class="payment-settings__nav-description">{{ providerDescriptions[channel.provider] ? t(providerDescriptions[channel.provider]) : '' }}</span>
           <span class="payment-settings__nav-status">
             <span class="payment-settings__status-dot" :class="{ 'is-ready': channel.enabled && channel.ready }" />
-            {{ channel.enabled ? '已启用' : '已停用' }} · {{ channel.ready ? '配置完整' : '待配置' }}
+            {{ t(channel.enabled ? 'paymentSettings.enabled' : 'paymentSettings.disabled') }} · {{ t(channel.ready ? 'paymentSettings.configured' : 'paymentSettings.needsConfiguration') }}
           </span>
-          <span v-if="isDirty(channel)" class="payment-settings__draft">未保存</span>
+          <span v-if="isDirty(channel)" class="payment-settings__draft">{{ t('paymentSettings.unsaved') }}</span>
         </button>
-        <p class="payment-settings__nav-hint">切换渠道会保留未保存的内容。</p>
+        <p class="payment-settings__nav-hint">{{ t('paymentSettings.switchHint') }}</p>
       </nav>
 
       <div id="payment-channel-config" class="payment-settings__content">
@@ -39,44 +39,44 @@
           <template #header>
             <div class="payment-channel-card__header">
               <div>
-                <h2>{{ providerLabels[channel.provider] || channel.displayName }}</h2>
-                <p>{{ providerDescriptions[channel.provider] }}</p>
+                <h2>{{ providerLabels[channel.provider] ? t(providerLabels[channel.provider]) : channel.displayName }}</h2>
+                <p>{{ providerDescriptions[channel.provider] ? t(providerDescriptions[channel.provider]) : '' }}</p>
               </div>
               <div class="payment-channel-card__status">
-                <el-tag :type="channel.ready ? 'success' : 'info'">{{ channel.ready ? '配置完整' : '待配置' }}</el-tag>
-                <el-switch v-model="channel.form.enabled" :disabled="channel.saving" active-text="启用" inactive-text="停用" />
+                <el-tag :type="channel.ready ? 'success' : 'info'">{{ t(channel.ready ? 'paymentSettings.configured' : 'paymentSettings.needsConfiguration') }}</el-tag>
+                <el-switch v-model="channel.form.enabled" :disabled="channel.saving" :active-text="t('paymentSettings.enable')" :inactive-text="t('paymentSettings.disable')" />
               </div>
             </div>
           </template>
 
           <el-form :model="channel.form" :disabled="channel.saving" label-position="top">
-            <section class="payment-settings__section" aria-label="基本设置">
-              <h3>基本设置</h3>
+            <section class="payment-settings__section" :aria-label="t('paymentSettings.basicSettings')">
+              <h3>{{ t('paymentSettings.basicSettings') }}</h3>
               <div class="payment-settings__row">
-                <el-form-item label="显示名称">
+                <el-form-item :label="t('paymentSettings.displayName')">
                   <el-input v-model="channel.form.displayName" maxlength="80" />
                 </el-form-item>
-                <el-form-item label="运行模式">
+                <el-form-item :label="t('paymentSettings.mode')">
                   <el-select v-model="channel.form.mode" :disabled="channel.provider === 'wechat_pay_native'" @change="handleModeChange(channel)">
                     <el-option v-for="mode in modesFor(channel.provider)" :key="mode" :label="modeLabel(mode)" :value="mode" />
                   </el-select>
                 </el-form-item>
               </div>
-              <el-form-item label="支持币种">
+              <el-form-item :label="t('paymentSettings.supportedCurrencies')">
                 <el-select v-model="channel.form.supportedCurrencies" multiple :disabled="channel.provider !== 'paypal'">
                   <el-option v-for="currency in currenciesFor(channel.provider)" :key="currency" :label="currency" :value="currency" />
                 </el-select>
               </el-form-item>
             </section>
 
-            <section class="payment-settings__section" aria-label="商户凭据">
-              <h3>商户凭据</h3>
-              <p class="payment-settings__section-hint">已保存的凭据不会回显原文，留空即可保留当前值。</p>
+            <section class="payment-settings__section" :aria-label="t('paymentSettings.merchantCredentials')">
+              <h3>{{ t('paymentSettings.merchantCredentials') }}</h3>
+              <p class="payment-settings__section-hint">{{ t('paymentSettings.credentialsHint') }}</p>
               <div class="payment-settings__credentials">
                 <el-form-item
                   v-for="field in credentialFields(channel.provider)"
                   :key="field.key"
-                  :label="field.label"
+                  :label="t(field.label)"
                   class="credential-field"
                   :class="{ 'credential-field--wide': field.multiline }"
                 >
@@ -86,11 +86,11 @@
                     :rows="field.multiline ? 3 : undefined"
                     :show-password="!field.multiline"
                     autocomplete="new-password"
-                    placeholder="留空表示保持当前值"
+                    :placeholder="t('paymentSettings.keepCurrentValue')"
                   />
                   <div class="credential-field__state">
                     <el-tag size="small" :type="channel.credentialConfigured[field.key] ? 'success' : 'info'">
-                      {{ channel.credentialConfigured[field.key] ? '已保存' : '未配置' }}
+                      {{ t(channel.credentialConfigured[field.key] ? 'paymentSettings.saved' : 'paymentSettings.notConfigured') }}
                     </el-tag>
                     <span v-if="channel.maskedCredentials[field.key]">{{ channel.maskedCredentials[field.key] }}</span>
                   </div>
@@ -98,81 +98,83 @@
               </div>
             </section>
 
-            <section class="payment-settings__section" aria-label="接口与回调">
-              <h3>接口与回调</h3>
-              <el-form-item label="API 地址（仅允许官方地址）">
+            <section class="payment-settings__section" :aria-label="t('paymentSettings.apiAndCallbacks')">
+              <h3>{{ t('paymentSettings.apiAndCallbacks') }}</h3>
+              <el-form-item :label="t('paymentSettings.apiUrl')">
                 <el-input v-model="channel.form.apiBaseUrl" />
               </el-form-item>
-              <el-form-item label="支付通知 URL">
+              <el-form-item :label="t('paymentSettings.notifyUrl')">
                 <el-input v-model="channel.form.notifyUrl" placeholder="https://your-domain.example/api/payments/webhooks/provider" />
               </el-form-item>
-              <el-form-item v-if="channel.provider === 'paypal'" label="付款完成返回 URL">
+              <el-form-item v-if="channel.provider === 'paypal'" :label="t('paymentSettings.returnUrl')">
                 <el-input v-model="channel.form.returnUrl" placeholder="https://your-domain.example/account/orders" />
               </el-form-item>
             </section>
 
             <div class="payment-settings__footer">
-              <span class="payment-settings__save-hint">{{ isDirty(channel) ? '当前渠道有未保存的修改' : '修改后仅保存当前渠道' }}</span>
+              <span class="payment-settings__save-hint">{{ t(isDirty(channel) ? 'paymentSettings.unsavedHint' : 'paymentSettings.saveHint') }}</span>
               <div class="payment-settings__actions">
-                <el-button :disabled="!isDirty(channel)" @click="reset(channel)">还原修改</el-button>
+                <el-button :disabled="!isDirty(channel)" @click="reset(channel)">{{ t('paymentSettings.revertChanges') }}</el-button>
                 <el-button
                   type="primary"
                   :loading="channel.saving"
                   v-hasPermi="['nxr:payment:config']"
                   @click="save(channel)"
-                >保存配置</el-button>
+                >{{ t('paymentSettings.saveConfiguration') }}</el-button>
               </div>
             </div>
           </el-form>
         </el-card>
-        <el-empty v-if="!loading && !channels.length" description="暂无支付渠道配置" />
+        <el-empty v-if="!loading && !channels.length" :description="t('paymentSettings.empty')" />
       </div>
     </section>
   </main>
 </template>
 
 <script setup name="NxrPaymentSettings">
+import { useI18n } from 'vue-i18n'
 import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
 import { fetchPaymentSettings, updatePaymentSetting } from '@/api/nxr/paymentSettings'
 
 const { proxy } = getCurrentInstance()
+const { t } = useI18n()
 const loading = ref(false)
 const channels = ref([])
 const selectedProvider = ref('wechat_pay_native')
 const activeChannels = computed(() => channels.value.filter((channel) => channel.provider === selectedProvider.value))
 const hasUnsavedChanges = computed(() => channels.value.some(isDirty))
 const providerLabels = {
-  wechat_pay_native: '微信支付',
-  alipay: '支付宝',
-  paypal: 'PayPal'
+  wechat_pay_native: 'paymentSettings.providers.wechat',
+  alipay: 'paymentSettings.providers.alipay',
+  paypal: 'paymentSettings.providers.paypal'
 }
 const providerDescriptions = {
-  wechat_pay_native: 'Native 扫码支付 · CNY',
-  alipay: '当面付 · CNY',
-  paypal: '海外支付 · 多币种'
+  wechat_pay_native: 'paymentSettings.descriptions.wechat',
+  alipay: 'paymentSettings.descriptions.alipay',
+  paypal: 'paymentSettings.descriptions.paypal'
 }
 
 const paypalCurrencies = ['AUD', 'BRL', 'CAD', 'CNY', 'CZK', 'DKK', 'EUR', 'HKD', 'HUF', 'ILS', 'JPY', 'MYR', 'MXN', 'TWD', 'NZD', 'NOK', 'PHP', 'PLN', 'GBP', 'SGD', 'SEK', 'CHF', 'THB', 'USD']
 const fields = {
   wechat_pay_native: [
-    { key: 'appId', label: 'AppID' },
-    { key: 'merchantId', label: '商户号' },
-    { key: 'merchantSerialNo', label: '商户 API 证书序列号' },
-    { key: 'merchantPrivateKey', label: '商户 PKCS#8 私钥', multiline: true },
-    { key: 'apiV3Key', label: 'API v3 密钥' },
-    { key: 'platformSerialNo', label: '微信支付平台证书序列号 / 公钥 ID' },
-    { key: 'platformPublicKey', label: '微信支付平台公钥 / 平台证书', multiline: true }
+    { key: 'appId', label: 'paymentSettings.fields.wechatAppId' },
+    { key: 'merchantId', label: 'paymentSettings.fields.merchantId' },
+    { key: 'merchantSerialNo', label: 'paymentSettings.fields.merchantSerialNo' },
+    { key: 'merchantPrivateKey', label: 'paymentSettings.fields.merchantPrivateKey', multiline: true },
+    { key: 'apiV3Key', label: 'paymentSettings.fields.apiV3Key' },
+    { key: 'platformSerialNo', label: 'paymentSettings.fields.platformSerialNo' },
+    { key: 'platformPublicKey', label: 'paymentSettings.fields.platformPublicKey', multiline: true }
   ],
   alipay: [
-    { key: 'appId', label: '应用 AppID' },
-    { key: 'sellerId', label: '收款账号 PID / seller_id' },
-    { key: 'merchantPrivateKey', label: '应用 PKCS#8 私钥', multiline: true },
-    { key: 'alipayPublicKey', label: '支付宝公钥', multiline: true }
+    { key: 'appId', label: 'paymentSettings.fields.alipayAppId' },
+    { key: 'sellerId', label: 'paymentSettings.fields.sellerId' },
+    { key: 'merchantPrivateKey', label: 'paymentSettings.fields.applicationPrivateKey', multiline: true },
+    { key: 'alipayPublicKey', label: 'paymentSettings.fields.alipayPublicKey', multiline: true }
   ],
   paypal: [
-    { key: 'clientId', label: 'Client ID' },
-    { key: 'clientSecret', label: 'Client Secret' },
-    { key: 'webhookId', label: 'Webhook ID' }
+    { key: 'clientId', label: 'paymentSettings.fields.clientId' },
+    { key: 'clientSecret', label: 'paymentSettings.fields.clientSecret' },
+    { key: 'webhookId', label: 'paymentSettings.fields.webhookId' }
   ]
 }
 
@@ -227,7 +229,7 @@ function save(channel) {
     .then((response) => {
       const updated = toEditable(response.data)
       channels.value = channels.value.map((item) => (item.provider === channel.provider ? updated : item))
-      proxy.$modal.msgSuccess('支付渠道设置已保存')
+      proxy.$modal.msgSuccess(t('paymentSettings.savedMessage'))
     })
     .finally(() => {
       channel.saving = false
@@ -239,7 +241,7 @@ function modesFor(provider) {
 }
 
 function modeLabel(mode) {
-  return mode === 'sandbox' ? '沙箱' : '正式'
+  return t(mode === 'sandbox' ? 'paymentSettings.sandbox' : 'paymentSettings.live')
 }
 
 function handleModeChange(channel) {

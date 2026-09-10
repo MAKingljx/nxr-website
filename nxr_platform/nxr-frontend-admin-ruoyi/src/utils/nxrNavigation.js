@@ -28,6 +28,7 @@ const MENU_TITLE_KEYS = new Map([
   ['Excel 导出', 'nav.excelExport'],
   ['Excel导出', 'nav.excelExport'],
   ['系统设置', 'nav.systemSettings'],
+  ['支付渠道', 'nav.paymentChannels'],
   ['系统管理', 'nav.systemManagement'],
   ['管理员用户', 'nav.adminUsers'],
   ['用户管理', 'nav.adminUsers'],

@@ -12,7 +12,7 @@
       <template v-if="appStore.device !== 'mobile'">
         <header-search id="header-search" class="right-menu-item" />
 
-        <language-switcher class="right-menu-item language-menu" />
+        <language-switcher v-if="showLanguageSwitcher" class="right-menu-item language-menu" />
 
         <el-tooltip :content="t('shell.themeToggle')" effect="dark" placement="bottom">
           <div class="right-menu-item hover-effect theme-switch-wrapper" @click="toggleTheme">
@@ -70,6 +70,7 @@ const userStore = useUserStore()
 const lockStore = useLockStore()
 const settingsStore = useSettingsStore()
 const { t } = useI18n()
+const showLanguageSwitcher = ['development', 'java-stage'].includes(import.meta.env.VITE_APP_ENV)
 
 function toggleSideBar() {
   appStore.toggleSideBar()
