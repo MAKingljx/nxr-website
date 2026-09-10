@@ -192,9 +192,12 @@ SQLite index or business table is altered. Julian-day cursor values are stored
 as JSON strings to preserve their exact floating-point value through MySQL's
 JSON serialization; existing numeric cursor values remain readable. Progress
 logs identify preparation, staging, merge, verification and commit durations.
-These technical changes retain the existing midnight schedule and service
-resource limits. Validate changes against isolated source/target copies;
-do not start an extra daytime production sync without explicit authorization.
+The existing midnight schedule remains in force. CPU/memory quotas and reduced
+CPU/I/O priority are disabled by the user's explicit request; their example
+settings remain commented out for optional future use. `TimeoutStartSec=infinity`
+removes the execution deadline. Filesystem protections remain enabled. Validate
+changes against isolated source/target copies; do not start an extra daytime
+production sync without explicit authorization.
 
 ## Optional HTTPS access
 
