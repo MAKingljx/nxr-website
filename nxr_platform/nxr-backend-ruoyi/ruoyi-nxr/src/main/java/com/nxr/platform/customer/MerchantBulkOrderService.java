@@ -21,6 +21,7 @@ public class MerchantBulkOrderService {
     }
 
     public OrderFulfillmentService.MerchantImportResult createOrders(long customerId, BulkOrderRequest request) {
+        orderFulfillmentService.requireMerchant(customerId);
         List<CustomerPortalService.CreateOrderRequest> orders = request == null || request.orders() == null
             ? List.of() : request.orders();
         if (orders.isEmpty() || orders.size() > 200) {

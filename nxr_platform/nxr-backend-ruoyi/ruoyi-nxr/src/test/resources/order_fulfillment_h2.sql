@@ -16,6 +16,9 @@ CREATE TABLE customer_account (
 CREATE TABLE grading_submission (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     cert_id VARCHAR(32) NOT NULL,
+    product_type_code VARCHAR(32) NOT NULL DEFAULT 'graded_card',
+    vintage_classification_code VARCHAR(64),
+    merch_description TEXT,
     status_code VARCHAR(32) NOT NULL DEFAULT 'pending'
 );
 
@@ -24,6 +27,7 @@ CREATE TABLE grading_order (
     order_no VARCHAR(40) NOT NULL UNIQUE,
     customer_id BIGINT NOT NULL,
     status_code VARCHAR(32) NOT NULL,
+    admission_status_code VARCHAR(32),
     service_level_code VARCHAR(32) NOT NULL,
     return_shipping_option_code VARCHAR(32),
     return_shipping_option_name VARCHAR(128),
@@ -65,6 +69,33 @@ CREATE TABLE grading_order_item (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (order_id, item_no)
+);
+
+CREATE TABLE merchant_order_batch (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    batch_no VARCHAR(48) NOT NULL UNIQUE,
+    merchant_customer_id BIGINT NOT NULL,
+    batch_name VARCHAR(191) NOT NULL,
+    source_name VARCHAR(255),
+    status_code VARCHAR(32) NOT NULL,
+    total_rows INT NOT NULL,
+    accepted_rows INT NOT NULL DEFAULT 0,
+    rejected_rows INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE merchant_order_batch_item (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    batch_id BIGINT NOT NULL,
+    order_id BIGINT NOT NULL UNIQUE,
+    row_no INT NOT NULL,
+    client_reference VARCHAR(128) NOT NULL,
+    client_display_name VARCHAR(128),
+    client_contact_hint VARCHAR(191),
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT uk_base_batch_row UNIQUE (batch_id, row_no),
+    CONSTRAINT uk_base_batch_reference UNIQUE (batch_id, client_reference)
 );
 
 CREATE TABLE payment_record (

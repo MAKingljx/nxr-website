@@ -42,7 +42,7 @@ onMounted(() => void loadCards())
   <main class="portal-page">
     <div class="portal-heading">
       <div><p class="section-tag">Collector portal</p><h1>My Cards</h1><p>Verified certificates currently bound to your collector account.</p></div>
-      <router-link class="btn-secondary" to="/account/orders">View orders</router-link>
+      <div class="form-row form-actions"><router-link class="btn-secondary" to="/account/email-verification">Email verification</router-link><router-link class="btn-secondary" to="/account/orders">View orders</router-link></div>
     </div>
     <p v-if="errorMessage" class="form-error">{{ errorMessage }}</p>
     <div v-if="loading" class="portal-empty">Loading your cards...</div>

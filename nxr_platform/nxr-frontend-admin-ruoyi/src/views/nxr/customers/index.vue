@@ -60,6 +60,7 @@
       :detail="detail"
       :loading="detailLoading"
       :can-manage="canManage"
+      :can-finance="canFinance"
       :status-changing-id="statusChangingId"
       :revoking-sessions="revokingSessions"
       @toggle-status="confirmStatus"
@@ -96,6 +97,7 @@ const statusOptions = [
   { label: tx('Inactive'), value: 'inactive' }
 ]
 const canManage = auth.hasPermi('nxr:customer:manage')
+const canFinance = auth.hasPermi('nxr:customer:finance')
 const hasQuery = computed(() => Boolean(queryParams.status || queryParams.query))
 
 async function loadCustomers(resetPage = false) {

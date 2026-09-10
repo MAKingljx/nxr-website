@@ -1,5 +1,6 @@
 package com.nxr.platform.admin;
 
+import com.nxr.platform.commerce.OrderAccessScopeService;
 import com.nxr.platform.shared.CertificateIdPolicy;
 import com.nxr.platform.shared.GradeLabelResolver;
 import com.nxr.platform.shared.NxrDictionaryService;
@@ -148,6 +149,12 @@ public class AdminSubmissionService {
     }
 
     public SubmissionListResponse listSubmissions(SubmissionListFilter filter) {
+        return listSubmissions(filter, new OrderAccessScopeService.AccessScope(true, List.of(), List.of()));
+    }
+
+    public SubmissionListResponse listSubmissions(
+        SubmissionListFilter filter, OrderAccessScopeService.AccessScope accessScope
+    ) {
         SubmissionListFilter resolvedFilter = filter == null ? SubmissionListFilter.empty() : filter;
         int resolvedPage = Math.max(resolvedFilter.page(), 1);
         int resolvedPageSize = Math.min(Math.max(resolvedFilter.pageSize(), 1), 50);
@@ -211,6 +218,11 @@ public class AdminSubmissionService {
                 OR UPPER(COALESCE(u.nick_name, '')) LIKE :enteredBy
               )
             """.formatted(ProductTypePolicy.canonicalSql("s.product_type_code"), CANONICAL_GRADE_SQL);
+        if (accessScope != null && !accessScope.unrestricted()) {
+            params.put("scopeLineIds", accessScope.safeBusinessLineIds());
+            params.put("scopeCenterIds", accessScope.safeWorkCenterIds());
+            whereClause += OrderAccessScopeService.submissionSqlPredicate("s");
+        }
         String joins = """
             LEFT JOIN grading_score g ON g.submission_id = s.id
             LEFT JOIN sys_user u ON u.user_id = s.entry_by_user_id

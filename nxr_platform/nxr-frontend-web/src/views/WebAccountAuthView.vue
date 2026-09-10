@@ -57,6 +57,7 @@ onMounted(() => {
         <label>Password<input v-model="password" type="password" required minlength="8" autocomplete="current-password" placeholder="At least 8 characters" /></label>
         <button class="btn-primary form-submit" type="submit" :disabled="submitting">{{ submitting ? 'Please wait...' : mode === 'register' ? 'Create account' : 'Sign in' }}</button>
       </form>
+      <p v-if="mode === 'login'" class="account-switch"><router-link to="/account/password-recovery">Forgot your password?</router-link></p>
       <p class="account-switch">
         <template v-if="mode === 'register'">Already have an account? <router-link to="/account/login">Sign in</router-link></template>
         <template v-else>New to NXR? <router-link to="/account/register">Create an account</router-link></template>

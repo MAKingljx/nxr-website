@@ -133,6 +133,29 @@ The active slot is recorded in `/var/lib/nxr-java-deploy/active-slot`.
 `18089` as appropriate. Do not manually repoint `current`, edit the active
 Nginx file, or start both slots outside the deployment command.
 
+## Commerce schema upgrades
+
+The release contains every numbered SQL migration from 10 onward, including
+20-22 for workbench, commerce policy and private customer photos. Check the
+actual Java database schema before selecting missing migrations: an older
+parallel deployment may also lack 13 (order fulfillment) even when its media
+and grading migrations are current. Do not run the development `init-db.sh`
+against a deployed database.
+
+Production migration requires a verified backup and explicit approval for the
+identified Java database and selected scripts. Rehearse those scripts against
+an isolated copy of the deployed schema, check preservation of existing fields
+and records, and verify application rollback compatibility before switching
+the inactive Java slot. Existing Flask databases are outside this workflow.
+
+Migration 13 leaves sample tariffs absent unless the SQL session explicitly
+sets `@nxr_seed_development_prices = 1`; only the local initialization helper
+opts in automatically. Production upgrades must leave this variable unset or
+zero. Configure approved prices in the admin application before accepting paid
+orders. Payment providers remain disabled until merchant configuration and
+channel acceptance are complete; email delivery remains disabled until its
+separate configuration and acceptance are complete.
+
 ## Python data synchronization
 
 Install `08_nxr_python_sync.sql` only in the cloned Java database selected for

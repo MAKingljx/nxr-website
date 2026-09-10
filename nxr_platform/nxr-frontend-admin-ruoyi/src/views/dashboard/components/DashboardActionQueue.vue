@@ -61,6 +61,8 @@ const kindLabels = {
 }
 
 const statusLabels = {
+  admission_review: 'Application Review', terms_confirmation: 'Awaiting Order Confirmation',
+  payment_expired: 'Payment Expired', payment_exception: 'Payment Exception',
   pending: 'Pending Review',
   review: 'In Review',
   ready_to_publish: 'Ready to Publish',

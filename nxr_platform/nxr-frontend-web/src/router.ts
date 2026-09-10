@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
+    { path: "/track/:token", name: "private-order-tracking", component: () => import("./views/WebPrivateOrderTrackingView.vue"), props: true },
     { path: '/', component: () => import('./views/WebHomeView.vue') },
     { path: '/services', component: () => import('./views/WebServicesView.vue') },
     { path: '/submit', component: () => import('./views/WebSubmitView.vue') },
@@ -13,11 +14,14 @@ const router = createRouter({
     { path: '/card/:certId', component: () => import('./views/WebCardView.vue'), props: true },
     { path: '/account/login', component: () => import('./views/WebAccountAuthView.vue'), props: { mode: 'login' } },
     { path: '/account/register', component: () => import('./views/WebAccountAuthView.vue'), props: { mode: 'register' } },
+    { path: '/account/password-recovery', component: () => import('./views/WebPasswordRecoveryView.vue') },
+    { path: '/account/email-verification', component: () => import('./views/WebEmailVerificationView.vue') },
     { path: '/account/cards', component: () => import('./views/WebAccountCardsView.vue') },
     { path: '/account/orders', component: () => import('./views/WebOrdersView.vue') },
     { path: '/account/orders/:orderNo', component: () => import('./views/WebOrderDetailView.vue'), props: true },
     { path: '/account/addresses', component: () => import('./views/WebAddressesView.vue') },
     { path: '/account/merchant-orders', component: () => import('./views/WebMerchantOrdersView.vue') },
+    { path: '/account/company', component: () => import('./views/WebMerchantWalletView.vue') },
   ],
 })
 

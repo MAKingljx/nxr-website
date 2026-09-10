@@ -235,6 +235,112 @@ class OrderFulfillmentWorkflowTest {
         assertThat(next.totalAmount()).isEqualByComparingTo("34.50");
     }
 
+    @Test
+    void returnShippingPriceChangeOnlyAffectsNewOrderAndPaymentSnapshots() {
+        OrderFulfillmentService.CustomerAddress address = fulfillmentService.saveAddress(
+            1L,
+            null,
+            new OrderFulfillmentService.AddressRequest(
+                "Home", "Merchant User", "+1 555 0100", "1 Shipping Snapshot Street", null,
+                "Los Angeles", "CA", "90001", "US", true
+            )
+        );
+        CustomerPortalService.OrderDetailResponse original = portalService.createOrder(
+            1L, orderRequest(address.id(), "economy_line", "EN", 1, "Original return price")
+        );
+        long optionId = fulfillmentService.listShippingOptions("US", true).stream()
+            .filter(option -> option.optionCode().equals("economy_line"))
+            .findFirst()
+            .orElseThrow()
+            .id();
+
+        fulfillmentService.saveShippingOption(optionId, new OrderFulfillmentService.ShippingOptionRequest(
+            "economy_line", "Economy Plus", "Updated tracked economy return", "*", "USD",
+            new BigDecimal("18.50"), 10, true
+        ));
+        CustomerPortalService.OrderDetailResponse next = portalService.createOrder(
+            1L, orderRequest(address.id(), "economy_line", "JA", 1, "Updated return price")
+        );
+        CustomerPortalService.OrderDetailResponse persistedOriginal =
+            portalService.requireCustomerOrder(1L, original.orderNo());
+
+        assertThat(persistedOriginal.returnShippingOptionName()).isEqualTo("Economy Line");
+        assertThat(persistedOriginal.returnShippingFee()).isEqualByComparingTo("12.00");
+        assertThat(persistedOriginal.totalAmount()).isEqualByComparingTo("32.00");
+        assertThat(persistedOriginal.payments()).singleElement()
+            .satisfies(payment -> assertThat(payment.amount()).isEqualByComparingTo("32.00"));
+
+        assertThat(next.returnShippingOptionName()).isEqualTo("Economy Plus");
+        assertThat(next.returnShippingFee()).isEqualByComparingTo("18.50");
+        assertThat(next.totalAmount()).isEqualByComparingTo("38.50");
+        assertThat(next.payments()).singleElement()
+            .satisfies(payment -> assertThat(payment.amount()).isEqualByComparingTo("38.50"));
+    }
+
+    @Test
+    void merchantBatchChildRejectsEveryIndividualShipmentMutation() {
+        OrderFulfillmentService.CustomerAddress address = fulfillmentService.saveAddress(
+            1L,
+            null,
+            new OrderFulfillmentService.AddressRequest(
+                "Agent", "Merchant User", "+1 555 0100", "20 Merchant Way", null,
+                "Seattle", "WA", "98101", "US", true
+            )
+        );
+        CustomerPortalService.OrderDetailResponse order = portalService.createOrder(
+            1L, orderRequest(address.id(), "economy_line", "EN", 1, "Batch child")
+        );
+        jdbcTemplate.update("UPDATE grading_order SET status_code = 'awaiting_inbound' WHERE id = ?", order.id());
+        jdbcTemplate.update(
+            "INSERT INTO order_shipment (order_id, direction_code, carrier_name, tracking_number, status_code) VALUES (?, 'outbound', 'DHL', 'OLD-OUT', 'shipped')",
+            order.id()
+        );
+        long shipmentId = jdbcTemplate.queryForObject(
+            "SELECT id FROM order_shipment WHERE order_id = ?", Long.class, order.id()
+        );
+        jdbcTemplate.update(
+            "INSERT INTO merchant_order_batch (id, batch_no, merchant_customer_id, batch_name, status_code, total_rows, accepted_rows, rejected_rows) VALUES (91, 'MB-TEST', 1, 'Test batch', 'open', 1, 1, 0)"
+        );
+        jdbcTemplate.update(
+            "INSERT INTO merchant_order_batch_item (batch_id, order_id, row_no, client_reference) VALUES (91, ?, 1, 'client-1')",
+            order.id()
+        );
+
+        CustomerPortalService.CreateShipmentRequest inbound =
+            new CustomerPortalService.CreateShipmentRequest("inbound", "UPS", "IN-CHILD", null);
+        CustomerPortalService.CreateShipmentRequest outbound =
+            new CustomerPortalService.CreateShipmentRequest("outbound", "DHL", "OUT-CHILD", null);
+
+        assertThatThrownBy(() -> portalService.addInboundShipment(1L, order.orderNo(), inbound))
+            .isInstanceOf(ResponseStatusException.class)
+            .hasMessageContaining("shared shipment workflow");
+        assertThatThrownBy(() -> portalService.createAdminShipment(order.id(), 901L, inbound))
+            .isInstanceOf(ResponseStatusException.class)
+            .hasMessageContaining("shared shipment workflow");
+        assertThatThrownBy(() -> portalService.createAdminShipment(order.id(), 901L, outbound))
+            .isInstanceOf(ResponseStatusException.class)
+            .hasMessageContaining("shared shipment workflow");
+        assertThatThrownBy(() -> portalService.markShipmentDelivered(order.id(), shipmentId, 901L))
+            .isInstanceOf(ResponseStatusException.class)
+            .hasMessageContaining("shared shipment workflow");
+        assertThatThrownBy(() -> fulfillmentService.addTrackingEvent(
+            order.id(), shipmentId, 901L,
+            new OrderFulfillmentService.TrackingEventRequest("delivered", null, null, null, null)
+        ))
+            .isInstanceOf(ResponseStatusException.class)
+            .hasMessageContaining("shared shipment workflow");
+
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM order_shipment WHERE order_id = ?", Integer.class, order.id()
+        )).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT status_code FROM order_shipment WHERE id = ?", String.class, shipmentId
+        )).isEqualTo("shipped");
+        assertThat(jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM shipment_tracking_event WHERE shipment_id = ?", Integer.class, shipmentId
+        )).isZero();
+    }
+
     private CustomerPortalService.CreateOrderRequest orderRequest(
         long addressId,
         String shippingOptionCode,

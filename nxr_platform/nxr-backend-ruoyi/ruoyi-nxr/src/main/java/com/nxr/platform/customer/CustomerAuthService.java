@@ -174,6 +174,27 @@ public class CustomerAuthService {
             .update();
     }
 
+    /** Applies a recovered password and invalidates every customer session atomically. */
+    @Transactional
+    public void resetPasswordAndRevokeSessions(long customerId, String newPassword) {
+        String password = newPassword == null ? "" : newPassword;
+        if (password.length() < 8 || password.length() > 200) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Password must contain 8 to 200 characters");
+        }
+        int updated = jdbcClient.sql(
+                "UPDATE customer_account SET password_hash = :passwordHash WHERE id = :customerId AND is_active = 1"
+            )
+            .param("passwordHash", passwordEncoder.encode(password))
+            .param("customerId", customerId)
+            .update();
+        if (updated != 1) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Password reset link is invalid or expired");
+        }
+        jdbcClient.sql("DELETE FROM customer_session WHERE customer_id = :customerId")
+            .param("customerId", customerId)
+            .update();
+    }
+
     private CustomerAuthResponse createAuthenticatedResponse(CustomerAccount account) {
         String rawToken = generateRawToken();
         LocalDateTime expiresAt = LocalDateTime.now().plusDays(Math.max(1, sessionDays));

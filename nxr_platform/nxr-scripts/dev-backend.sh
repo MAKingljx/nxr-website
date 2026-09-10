@@ -15,6 +15,15 @@ cd "$PLATFORM_ROOT/nxr-backend-ruoyi"
 export NXR_DB_PASSWORD="${NXR_DB_PASSWORD:-nxr_dev_password}"
 export NXR_TOKEN_SECRET="${NXR_TOKEN_SECRET:-local-development-token-change-me}"
 
+# Local payment credentials use an OS-private key kept outside the repository.
+# Never replace a configured key: existing encrypted settings depend on it.
+LOCAL_PAYMENT_KEY="${XDG_CONFIG_HOME:-$HOME/.config}/nxr-local/payment-master.key"
+if [ -z "${NXR_PAYMENT_MASTER_KEY:-}" ] && [ -z "${NXR_PAYMENT_MASTER_KEY_FILE:-}" ] && [ -f "$LOCAL_PAYMENT_KEY" ]; then
+  export NXR_PAYMENT_MASTER_KEY_FILE="$LOCAL_PAYMENT_KEY"
+fi
+# Customer emails remain opt-in while the mailbox/provider setup is pending.
+export NXR_NOTIFICATION_DELIVERY_ENABLED="${NXR_NOTIFICATION_DELIVERY_ENABLED:-false}"
+
 # Keep the Druid console opt-in outside production, but make the local
 # "数据监控" menu usable. The servlet remains loopback-only and protected by
 # its own credentials; every value can still be overridden by the caller.

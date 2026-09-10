@@ -84,9 +84,11 @@ export function listReturnShippingOptions(country) {
   return request({ url: '/api/admin/orders/shipping-options', method: 'get', params: { country } })
 }
 
-export function getGradingServicePrice() {
-  return request({ url: '/api/admin/orders/service-price', method: 'get' })
+export function getGradingServicePrice(currencyCode = 'USD') {
+  return request({ url: '/api/admin/orders/service-price', method: 'get', params: { currencyCode } })
 }
+
+export const listGradingServicePrices = () => request({ url: '/api/admin/orders/service-prices', method: 'get' })
 
 export function saveGradingServicePrice(data) {
   return request({ url: '/api/admin/orders/service-price', method: 'post', data })

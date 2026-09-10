@@ -61,6 +61,12 @@ export type OrderItem = {
   id: number
   itemNo: number
   cardName: string
+  year?: string | null
+  rarity?: string | null
+  productType?: string | null
+  category?: string | null
+  frontPhotoId?: number | null
+  backPhotoId?: number | null
   brandName: string | null
   setName: string | null
   cardNumber: string | null
@@ -115,6 +121,7 @@ export type GradingOrder = {
   id: number
   orderNo: string
   statusCode: string
+  admissionStatus?: string | null
   serviceLevelCode: string
   returnShippingOptionCode: string | null
   returnShippingOptionName: string | null
@@ -261,6 +268,7 @@ export type ShippingChange = {
 }
 
 export type CustomerOrderOperations = {
+  merchantBatchNo?: string | null
   packingSlip: PackingSlip | null
   exceptions: OrderException[]
   trackingEvents: TrackingEvent[]
@@ -275,7 +283,7 @@ export type CustomerOrderOperations = {
 }
 
 export type GradingOrderList = {
-  items: Array<Pick<GradingOrder, 'id' | 'orderNo' | 'statusCode' | 'serviceLevelCode' | 'totalCardCount' | 'totalAmount' | 'currencyCode' | 'createdAt' | 'updatedAt'>>
+  items: Array<Pick<GradingOrder, 'id' | 'orderNo' | 'statusCode' | 'admissionStatus' | 'serviceLevelCode' | 'totalCardCount' | 'totalAmount' | 'currencyCode' | 'createdAt' | 'updatedAt'>>
   page: number
   pageSize: number
   total: number
@@ -306,6 +314,10 @@ function storeSession(nextSession: CustomerSession | null) {
   }
 }
 
+export function clearCustomerSession() {
+  storeSession(null)
+}
+
 async function readError(response: Response) {
   try {
     const payload = await response.json()
@@ -317,7 +329,7 @@ async function readError(response: Response) {
 
 export async function customerRequest<T>(path: string, init: RequestInit = {}, requiresSession = true): Promise<T> {
   const headers = new Headers(init.headers)
-  if (!headers.has('Content-Type') && init.body) headers.set('Content-Type', 'application/json')
+  if (!headers.has('Content-Type') && init.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
   if (requiresSession) {
     const token = customerSession.value?.token
     if (!token) throw new Error('Please sign in to continue.')
@@ -413,23 +425,25 @@ export function deleteCustomerAddress(addressId: number) {
   return customerRequest<{ success: boolean }>(`/api/customer/addresses/${addressId}`, { method: 'DELETE' })
 }
 
-export function fetchShippingOptions(country = '') {
-  const query = country.trim() ? `?country=${encodeURIComponent(country.trim())}` : ''
-  return customerRequest<ShippingOption[]>(`/api/customer/shipping-options${query}`, {}, false)
+export function fetchShippingOptions(country = '', currencyCode = '') {
+  const query = new URLSearchParams()
+  if (country.trim()) query.set('country', country.trim())
+  if (currencyCode) query.set('currencyCode', currencyCode)
+  return customerRequest<ShippingOption[]>(`/api/customer/shipping-options?${query}`, {}, false)
 }
 
-export function fetchServicePrice() {
-  return customerRequest<{
-    priceCode: string
-    displayName: string
-    unitPrice: number
-    currencyCode: string
-    versionNo: number
-  }>('/api/customer/service-price', {}, false)
+export type ServicePrice = { priceCode: string; displayName: string; unitPrice: number; currencyCode: string; versionNo: number }
+
+export function fetchServicePrice(currencyCode = '') {
+  return customerRequest<ServicePrice>(`/api/customer/service-price?currencyCode=${encodeURIComponent(currencyCode)}`, {}, false)
 }
 
-export function fetchCustomerOrders() {
-  return customerRequest<GradingOrderList>('/api/customer/orders')
+export function fetchServicePrices() {
+  return customerRequest<ServicePrice[]>('/api/customer/service-prices', {}, false)
+}
+
+export function fetchCustomerOrders(page = 1) {
+  return customerRequest<GradingOrderList>(`/api/customer/orders?page=${page}&pageSize=20`)
 }
 
 export function fetchCustomerOrder(orderNo: string) {

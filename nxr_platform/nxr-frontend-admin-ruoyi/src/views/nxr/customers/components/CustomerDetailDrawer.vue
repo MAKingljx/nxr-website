@@ -61,6 +61,9 @@
             </div>
           </el-tab-pane>
 
+          <el-tab-pane v-if="detail.customer.accountTypeCode === 'merchant' && canFinance" label="公司与预充值" name="wallet" lazy>
+            <CustomerWalletPanel :customer-id="detail.customer.id" />
+          </el-tab-pane>
           <el-tab-pane :label="$tx('Cards {count}', { count: detail.cards.length })" name="cards">
             <el-table :data="detail.cards" size="small">
               <el-table-column :label="$tx('Certificate')" prop="certId" min-width="130" />
@@ -136,6 +139,7 @@
 import { Key } from '@element-plus/icons-vue'
 import { useWindowSize } from '@vueuse/core'
 import NxrStatusTag from '@/components/NxrWorkspace/StatusTag.vue'
+import CustomerWalletPanel from './CustomerWalletPanel.vue'
 import {
   avatarColor,
   avatarText,
@@ -153,6 +157,7 @@ const props = defineProps({
   detail: { type: Object, default: null },
   loading: { type: Boolean, default: false },
   canManage: { type: Boolean, default: false },
+  canFinance: { type: Boolean, default: false },
   statusChangingId: { type: [Number, String], default: null },
   revokingSessions: { type: Boolean, default: false }
 })

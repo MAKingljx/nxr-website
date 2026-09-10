@@ -15,6 +15,7 @@ import java.util.HexFormat;
 import java.util.Locale;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
@@ -26,17 +27,25 @@ public class LocalMediaStorageProvider implements MediaStorageProvider {
     private final Path storageRoot;
     private final String mediaPublicBaseUrl;
     private final String storageBucket;
+    private final MediaCapacityService capacity;
 
+    @Autowired
     public LocalMediaStorageProvider(
         @Value("${nxr.media.storage-root:./.local-data/media}") String storageRoot,
         @Value("${nxr.media.public-base-url:http://127.0.0.1:8088}") String mediaPublicBaseUrl,
-        @Value("${nxr.media.local-bucket:local-media}") String storageBucket
+        @Value("${nxr.media.local-bucket:local-media}") String storageBucket,
+        MediaCapacityService capacity
     ) {
         this.storageRoot = Path.of(storageRoot).toAbsolutePath().normalize();
         this.mediaPublicBaseUrl = trimTrailingSlash(mediaPublicBaseUrl);
         this.storageBucket = storageBucket == null || storageBucket.isBlank()
             ? "local-media"
             : storageBucket.trim();
+        this.capacity = capacity;
+    }
+
+    public LocalMediaStorageProvider(String storageRoot, String publicBaseUrl, String storageBucket) {
+        this(storageRoot, publicBaseUrl, storageBucket, new MediaCapacityService(536870912));
     }
 
     @Override
@@ -66,7 +75,7 @@ public class LocalMediaStorageProvider implements MediaStorageProvider {
         Path outputPath = resolveStagePath(normalizedStage, storageKey);
         Path pendingPath = outputPath.resolveSibling("." + outputPath.getFileName() + ".part");
 
-        try {
+        try (MediaCapacityService.Reservation reservation = capacity.reserve(storageRoot, mediaUpload.contentLength())) {
             Files.createDirectories(outputPath.getParent());
             MessageDigest messageDigest = MessageDigest.getInstance("SHA-256");
             long fileSizeBytes = 0L;
@@ -78,6 +87,9 @@ public class LocalMediaStorageProvider implements MediaStorageProvider {
                 byte[] buffer = new byte[8192];
                 int bytesRead;
                 while ((bytesRead = digestInputStream.read(buffer)) != -1) {
+                    if (fileSizeBytes + bytesRead > mediaUpload.contentLength()) {
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Upload length exceeds its declared size.");
+                    }
                     outputStream.write(buffer, 0, bytesRead);
                     fileSizeBytes += bytesRead;
                 }
@@ -136,7 +148,7 @@ public class LocalMediaStorageProvider implements MediaStorageProvider {
         Path targetPath = resolveStagePath(normalizedStage, storageKey);
         Path pendingPath = targetPath.resolveSibling("." + targetPath.getFileName() + ".part");
 
-        try {
+        try (MediaCapacityService.Reservation reservation = capacity.reserve(storageRoot, Files.size(sourcePath))) {
             Files.createDirectories(targetPath.getParent());
             Files.copy(sourcePath, pendingPath);
             forceFile(pendingPath);

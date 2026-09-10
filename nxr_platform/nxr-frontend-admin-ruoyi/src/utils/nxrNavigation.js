@@ -1,6 +1,6 @@
 import { i18n } from '@/i18n'
 
-const HIDDEN_TOOL_COMPONENTS = new Set(['tool/build/index', 'tool/gen/index'])
+const HIDDEN_TOOL_COMPONENTS = new Set(['tool/build/index', 'tool/gen/index', 'tool/swagger/index'])
 
 const MENU_TITLE_KEYS = new Map([
   ['NXR后台', 'nav.nxrAdmin'],
@@ -109,6 +109,9 @@ function normalizeRoute(route) {
     normalized.children = route.children
       .map((child) => normalizeRoute(child))
       .filter(Boolean)
+    if (route.children.length > 0 && normalized.children.length === 0) {
+      return null
+    }
   }
 
   return normalized

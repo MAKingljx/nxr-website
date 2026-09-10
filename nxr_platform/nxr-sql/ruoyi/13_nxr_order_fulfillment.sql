@@ -281,17 +281,24 @@ CREATE TABLE IF NOT EXISTS merchant_import_row (
     CONSTRAINT fk_merchant_import_row_order FOREIGN KEY (order_id) REFERENCES grading_order(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Sample tariffs require an explicit local-development opt-in. A production
+-- schema upgrade must not activate unapproved grading or shipping prices.
 INSERT INTO grading_service_price (price_code, display_name, unit_price, currency_code, is_active, version_no)
-VALUES ('basic_grading', 'Basic grading', 20.00, 'USD', 1, 1)
+SELECT 'basic_grading', 'Basic grading', 20.00, 'USD', 1, 1
+WHERE COALESCE(@nxr_seed_development_prices, 0) = 1
 ON DUPLICATE KEY UPDATE price_code = price_code;
 
 INSERT INTO return_shipping_option
     (option_code, display_name, description, country_scope, currency_code, price_amount, sort_order, is_active)
-VALUES
-    ('economy_line', 'Economy Line', 'Lower-cost tracked return shipping.', '*', 'USD', 12.00, 10, 1),
-    ('standard_express', 'Standard Express', 'Tracked standard express return shipping.', '*', 'USD', 25.00, 20, 1),
-    ('dhl_international', 'DHL International Express', 'Priority international return shipping.', '*', 'USD', 60.00, 30, 1)
-ON DUPLICATE KEY UPDATE option_code = option_code;
+SELECT sample.option_code, sample.display_name, sample.description, '*', 'USD', sample.price_amount, sample.sort_order, 1
+FROM (
+    SELECT 'economy_line' AS option_code, 'Economy Line' AS display_name,
+        'Lower-cost tracked return shipping.' AS description, 12.00 AS price_amount, 10 AS sort_order
+    UNION ALL SELECT 'standard_express', 'Standard Express', 'Tracked standard express return shipping.', 25.00, 20
+    UNION ALL SELECT 'dhl_international', 'DHL International Express', 'Priority international return shipping.', 60.00, 30
+) AS sample
+WHERE COALESCE(@nxr_seed_development_prices, 0) = 1
+ON DUPLICATE KEY UPDATE option_code = return_shipping_option.option_code;
 
 DROP PROCEDURE IF EXISTS nxr_add_index_if_missing;
 DELIMITER $$

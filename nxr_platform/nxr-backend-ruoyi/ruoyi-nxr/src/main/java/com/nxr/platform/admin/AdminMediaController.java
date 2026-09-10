@@ -1,10 +1,12 @@
 package com.nxr.platform.admin;
 
+import com.nxr.platform.commerce.OrderAccessScopeService;
 import com.ruoyi.common.annotation.Log;
 import com.ruoyi.common.core.domain.AjaxResult;
 import com.ruoyi.common.enums.BusinessType;
 import com.ruoyi.common.utils.SecurityUtils;
 import java.util.List;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -21,9 +23,16 @@ import org.springframework.web.multipart.MultipartFile;
 public class AdminMediaController {
 
     private final AdminMediaService adminMediaService;
+    private final OrderAccessScopeService accessScopeService;
 
     public AdminMediaController(AdminMediaService adminMediaService) {
+        this(adminMediaService, null);
+    }
+
+    @Autowired
+    public AdminMediaController(AdminMediaService adminMediaService, OrderAccessScopeService accessScopeService) {
         this.adminMediaService = adminMediaService;
+        this.accessScopeService = accessScopeService;
     }
 
     @PreAuthorize("@ss.hasPermi('nxr:media:list')")
@@ -46,7 +55,8 @@ public class AdminMediaController {
         return AjaxResult.success(
             adminMediaService.loadQueue(
                 query, certId, cardName, cardCategory, productType, brand, language, finalGrade,
-                uploadStatus, imageStatus, showClientPushed, page, pageSize
+                uploadStatus, imageStatus, showClientPushed, page, pageSize,
+                submissionId -> accessScopeService.canAccessSubmission(SecurityUtils.getUserId(), submissionId)
             )
         );
     }
@@ -57,6 +67,7 @@ public class AdminMediaController {
     public AjaxResult importFolder(
         @RequestPart(name = "image_files", required = false) List<MultipartFile> imageFiles
     ) {
+        accessScopeService.requireUnrestricted(SecurityUtils.getUserId(), "Folder-wide media import");
         return AjaxResult.success(adminMediaService.importFolder(imageFiles));
     }
 
@@ -67,6 +78,7 @@ public class AdminMediaController {
         @PathVariable long submissionId,
         @RequestPart(name = "image_files", required = false) List<MultipartFile> imageFiles
     ) {
+        accessScopeService.requireAccessibleSubmission(submissionId);
         return AjaxResult.success(adminMediaService.importSubmissionMedia(submissionId, imageFiles));
     }
 
@@ -74,6 +86,7 @@ public class AdminMediaController {
     @Log(title = "媒体发布", businessType = BusinessType.UPDATE)
     @PostMapping("/submissions/{submissionId}/publish")
     public AjaxResult publishSubmission(@PathVariable long submissionId) {
+        accessScopeService.requireAccessibleSubmission(submissionId);
         return AjaxResult.success(adminMediaService.publishSubmission(submissionId, SecurityUtils.getUserId()));
     }
 
@@ -81,6 +94,7 @@ public class AdminMediaController {
     @Log(title = "标记客户端已推送", businessType = BusinessType.UPDATE)
     @PostMapping("/submissions/{submissionId}/client-pushed")
     public AjaxResult markClientPushed(@PathVariable long submissionId) {
+        accessScopeService.requireAccessibleSubmission(submissionId);
         return AjaxResult.success(adminMediaService.markClientPushed(submissionId, SecurityUtils.getUserId()));
     }
 
@@ -88,6 +102,7 @@ public class AdminMediaController {
     @Log(title = "媒体批量发布", businessType = BusinessType.UPDATE)
     @PostMapping("/batch-publish")
     public AjaxResult publishSubmissions(@RequestBody AdminMediaService.MediaBatchPublishRequest request) {
+        accessScopeService.requireAccessibleSubmissions(SecurityUtils.getUserId(), request == null ? null : request.submissionIds());
         return AjaxResult.success(
             adminMediaService.publishSubmissions(
                 request == null ? null : request.submissionIds(),

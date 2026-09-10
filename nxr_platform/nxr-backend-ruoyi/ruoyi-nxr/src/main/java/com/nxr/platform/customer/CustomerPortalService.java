@@ -1,6 +1,11 @@
 package com.nxr.platform.customer;
 
+import com.nxr.platform.admission.OrderAdmissionService;
+import com.nxr.platform.commerce.CommercePolicyService;
+import com.nxr.platform.commerce.OrderAccessScopeService;
 import com.nxr.platform.shared.ProductTypePolicy;
+import com.nxr.platform.notifications.NotificationOutboxService;
+import com.ruoyi.common.utils.SecurityUtils;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
@@ -20,6 +25,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.core.simple.SimpleJdbcInsert;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -28,10 +34,17 @@ import org.springframework.web.server.ResponseStatusException;
 public class CustomerPortalService {
 
     private static final Set<String> OWNERSHIP_VISIBILITIES = Set.of("public", "anonymous", "private");
-    private static final Set<String> PAYMENT_PROVIDERS = Set.of("manual_transfer", "bank_transfer", "wechat_transfer", "alipay_transfer", "stripe");
+    private static final Set<String> PAYMENT_PROVIDERS = Set.of(
+        "manual_transfer", "bank_transfer", "wechat_transfer", "wechat_pay_native",
+        "alipay_transfer", "alipay", "stripe", "paypal"
+    );
     private static final Set<String> SHIPMENT_DIRECTIONS = Set.of("inbound", "outbound");
     private static final Map<String, Set<String>> ALLOWED_STATUS_TRANSITIONS = Map.ofEntries(
+        Map.entry("admission_review", Set.of("cancelled")),
+        Map.entry("terms_confirmation", Set.of("cancelled")),
+        Map.entry("payment_expired", Set.of("cancelled")),
         Map.entry("awaiting_payment", Set.of("payment_review", "cancelled")),
+        Map.entry("payment_exception", Set.of()),
         Map.entry("payment_review", Set.of("awaiting_inbound", "awaiting_payment", "cancelled")),
         Map.entry("awaiting_inbound", Set.of("inbound_shipped", "received", "intake_exception", "cancelled")),
         Map.entry("inbound_shipped", Set.of("received", "intake_exception", "cancelled")),
@@ -54,19 +67,37 @@ public class CustomerPortalService {
     private final SimpleJdbcInsert paymentInsert;
     private final SimpleJdbcInsert shipmentInsert;
     private final OrderFulfillmentService orderFulfillmentService;
+    private final MerchantWalletService merchantWalletService;
+    private final NotificationOutboxService notificationOutboxService;
+    private OrderAdmissionService orderAdmissionService;
+    private CustomerOrderPhotoService customerOrderPhotoService;
+    private CommercePolicyService commercePolicyService;
+    private OrderAccessScopeService orderAccessScopeService;
 
     public CustomerPortalService(JdbcClient jdbcClient, JdbcTemplate jdbcTemplate) {
-        this(jdbcClient, jdbcTemplate, null);
+        this(jdbcClient, jdbcTemplate, null, null, null);
+    }
+
+    public CustomerPortalService(
+        JdbcClient jdbcClient,
+        JdbcTemplate jdbcTemplate,
+        OrderFulfillmentService orderFulfillmentService
+    ) {
+        this(jdbcClient, jdbcTemplate, orderFulfillmentService, null, null);
     }
 
     @Autowired
     public CustomerPortalService(
         JdbcClient jdbcClient,
         JdbcTemplate jdbcTemplate,
-        OrderFulfillmentService orderFulfillmentService
+        OrderFulfillmentService orderFulfillmentService,
+        MerchantWalletService merchantWalletService,
+        NotificationOutboxService notificationOutboxService
     ) {
         this.jdbcClient = jdbcClient;
         this.orderFulfillmentService = orderFulfillmentService;
+        this.merchantWalletService = merchantWalletService;
+        this.notificationOutboxService = notificationOutboxService;
         this.ownershipInsert = new SimpleJdbcInsert(jdbcTemplate)
             .withTableName("certificate_ownership")
             .usingColumns("cert_id", "active_cert_id", "customer_id", "ownership_status_code", "visibility_code", "note")
@@ -101,6 +132,26 @@ public class CustomerPortalService {
                 "carrier_name", "tracking_number", "status_code", "shipped_by_user_id", "note"
             )
             .usingGeneratedKeyColumns("id");
+    }
+
+    @Autowired(required = false)
+    public void setOrderAdmissionService(OrderAdmissionService orderAdmissionService) {
+        this.orderAdmissionService = orderAdmissionService;
+    }
+
+    @Autowired(required = false)
+    public void setCustomerOrderPhotoService(CustomerOrderPhotoService customerOrderPhotoService) {
+        this.customerOrderPhotoService = customerOrderPhotoService;
+    }
+
+    @Autowired(required = false)
+    public void setCommercePolicyService(CommercePolicyService commercePolicyService) {
+        this.commercePolicyService = commercePolicyService;
+    }
+
+    @Autowired(required = false)
+    public void setOrderAccessScopeService(OrderAccessScopeService orderAccessScopeService) {
+        this.orderAccessScopeService = orderAccessScopeService;
     }
 
     public CardCommunityResponse loadCardCommunity(String certificateId) {
@@ -227,14 +278,39 @@ public class CustomerPortalService {
 
     @Transactional
     public OrderDetailResponse createOrder(long customerId, CreateOrderRequest request) {
+        return createOrderInternal(customerId, request, null, null);
+    }
+
+    /** Internal merchant-batch path. The quote and allocation are created server-side by CommercePolicyService. */
+    @Transactional
+    public OrderDetailResponse createOrderWithBatchQuote(
+        long customerId,
+        CreateOrderRequest request,
+        CommercePolicyService.QuoteResult aggregateQuote,
+        CommercePolicyService.AllocatedBatchQuote allocation
+    ) {
+        if (aggregateQuote == null || allocation == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A server-issued batch quote allocation is required");
+        }
+        return createOrderInternal(customerId, request, aggregateQuote, allocation);
+    }
+
+    private OrderDetailResponse createOrderInternal(
+        long customerId,
+        CreateOrderRequest request,
+        CommercePolicyService.QuoteResult aggregateQuote,
+        CommercePolicyService.AllocatedBatchQuote allocation
+    ) {
         if (request == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Grading order details are required");
         }
         OrderFulfillmentService fulfillment = requireFulfillmentService();
-        List<OrderItemRequest> requestedItems = resolveOrderItems(request);
-        if (requestedItems.isEmpty() || requestedItems.size() > 30) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "An order must include between 1 and 30 cards");
+        int maxCards = orderAdmissionService == null ? 30 : orderAdmissionService.maxCardsPerOrder();
+        List<OrderItemRequest> requestedItems = resolveOrderItems(request, maxCards);
+        if (requestedItems.isEmpty() || requestedItems.size() > maxCards) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "An order must include between 1 and " + maxCards + " cards");
         }
+        validateOrderPhotos(customerId, requestedItems);
         String serviceLevel = "basic_grading";
 
         OrderFulfillmentService.CustomerAddress savedAddress = request.returnAddressId() == null
@@ -264,30 +340,47 @@ public class CustomerPortalService {
             ));
         }
 
-        OrderFulfillmentService.ShippingOption shippingOption = selectShippingOption(
-            fulfillment, request.returnShippingOptionCode(), country
-        );
-        OrderFulfillmentService.ServicePrice servicePrice = fulfillment.activeServicePrice();
-        if (!servicePrice.currencyCode().equalsIgnoreCase(shippingOption.currencyCode())) {
+        String requestedCurrency = request.currencyCode() == null || request.currencyCode().isBlank()
+            ? "USD" : request.currencyCode();
+        CommercePolicyService.QuoteResult commerceQuote = aggregateQuote != null ? aggregateQuote
+            : commercePolicyService == null ? null : commercePolicyService.quoteForOrder(
+                customerId, country, requestedCurrency, requestedItems.size(), request.returnShippingOptionCode()
+            );
+        OrderFulfillmentService.ShippingOption shippingOption = commerceQuote == null
+            ? selectShippingOption(fulfillment, request.returnShippingOptionCode(), country) : null;
+        OrderFulfillmentService.ServicePrice servicePrice = commerceQuote == null
+            ? fulfillment.activeServicePrice(requestedCurrency) : null;
+        if (commerceQuote == null && !servicePrice.currencyCode().equalsIgnoreCase(shippingOption.currencyCode())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Grading and return shipping currencies do not match");
         }
-        BigDecimal serviceFee = servicePrice.unitPrice().multiply(BigDecimal.valueOf(requestedItems.size()));
-        BigDecimal returnShippingFee = shippingOption.priceAmount();
-        BigDecimal totalAmount = serviceFee.add(returnShippingFee).setScale(2, RoundingMode.HALF_UP);
+        if (allocation != null) {
+            validateBatchAllocation(customerId, requestedItems.size(), country, requestedCurrency,
+                request.returnShippingOptionCode(), commerceQuote, allocation);
+        }
+        BigDecimal serviceFee = allocation != null ? allocation.serviceFee() : commerceQuote == null
+            ? servicePrice.unitPrice().multiply(BigDecimal.valueOf(requestedItems.size())) : commerceQuote.serviceFee();
+        BigDecimal returnShippingFee = allocation != null ? allocation.returnShippingFee()
+            : commerceQuote == null ? shippingOption.priceAmount() : commerceQuote.returnShippingFee();
+        BigDecimal totalAmount = allocation != null ? allocation.totalAmount() : commerceQuote == null
+            ? serviceFee.add(returnShippingFee).setScale(2, RoundingMode.HALF_UP) : commerceQuote.totalAmount();
+        String quoteCurrency = commerceQuote == null ? servicePrice.currencyCode() : commerceQuote.currencyCode();
+        String shippingOptionCode = commerceQuote == null ? shippingOption.optionCode() : commerceQuote.shippingOptionCode();
+        String shippingOptionName = commerceQuote == null ? shippingOption.displayName() : commerceQuote.shippingDisplayName();
+        validatePresentedQuote(request, totalAmount, quoteCurrency);
         String orderNo = generateOrderNumber();
 
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("order_no", orderNo);
         values.put("customer_id", customerId);
-        values.put("status_code", "awaiting_payment");
+        values.put("status_code", orderAdmissionService == null ? "awaiting_payment" : "admission_review");
         values.put("service_level_code", serviceLevel);
-        values.put("return_shipping_option_code", shippingOption.optionCode());
-        values.put("return_shipping_option_name", shippingOption.displayName());
+        values.put("return_shipping_option_code", shippingOptionCode);
+        values.put("return_shipping_option_name", shippingOptionName);
         values.put("total_card_count", requestedItems.size());
         values.put("service_fee", serviceFee);
         values.put("return_shipping_fee", returnShippingFee);
         values.put("total_amount", totalAmount);
-        values.put("currency_code", servicePrice.currencyCode());
+        values.put("currency_code", quoteCurrency);
         values.put("contact_name", contactName);
         values.put("contact_phone", contactPhone);
         values.put("return_address_line1", addressLine1);
@@ -303,6 +396,27 @@ public class CustomerPortalService {
         } catch (DataIntegrityViolationException exception) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Please submit the order again", exception);
         }
+        if (commerceQuote != null) {
+            CommercePolicyService.RoutingAssignment routing = commerceQuote.routing();
+            jdbcClient.sql(
+                    """
+                    UPDATE grading_order
+                    SET order_origin_code = :origin, business_line_id = :lineId, work_center_id = :centerId,
+                        commerce_price_policy_id = :pricePolicyId, commerce_shipping_policy_id = :shippingPolicyId,
+                        quoted_unit_price = :unitPrice, quoted_card_weight_grams = :cardWeight,
+                        quoted_packaging_weight_grams = :packagingWeight,
+                        quoted_chargeable_weight_grams = :chargeableWeight,
+                        pricing_source_code = :pricingSource, shipping_source_code = :shippingSource
+                    WHERE id = :orderId
+                    """
+                )
+                .param("origin", routing.orderOriginCode()).param("lineId", routing.businessLineId())
+                .param("centerId", routing.workCenterId()).param("pricePolicyId", commerceQuote.pricePolicyId())
+                .param("shippingPolicyId", commerceQuote.shippingPolicyId()).param("unitPrice", commerceQuote.unitPrice())
+                .param("cardWeight", commerceQuote.perCardWeightGrams()).param("packagingWeight", commerceQuote.packagingWeightGrams())
+                .param("chargeableWeight", commerceQuote.chargeableWeightGrams()).param("pricingSource", commerceQuote.pricingSourceCode())
+                .param("shippingSource", commerceQuote.shippingSourceCode()).param("orderId", orderId).update();
+        }
 
         int itemNo = 1;
         for (OrderItemRequest item : requestedItems) {
@@ -317,8 +431,33 @@ public class CustomerPortalService {
             itemValues.put("declared_value", normalizeDeclaredValue(item.declaredValue()));
             itemValues.put("item_note", blankToNull(clean(item.itemNote(), 1000)));
             itemValues.put("status_code", "awaiting_inbound");
-            orderItemInsert.execute(itemValues);
+            if (orderAdmissionService == null) {
+                orderItemInsert.execute(itemValues);
+            } else {
+                jdbcClient.sql(
+                        """
+                        INSERT INTO grading_order_item
+                            (order_id, item_no, card_name, brand_name, year_label, rarity, product_type, category,
+                             set_name, card_number, language_code, declared_value, item_note,
+                             front_photo_id, back_photo_id, status_code)
+                        VALUES
+                            (:orderId, :itemNo, :cardName, :brandName, :year, :rarity, :productType, :category,
+                             :setName, :cardNumber, :languageCode, :declaredValue, :itemNote,
+                             :frontPhotoId, :backPhotoId, 'awaiting_inbound')
+                        """
+                    )
+                    .param("orderId", orderId).param("itemNo", itemNo - 1)
+                    .param("cardName", itemValues.get("card_name")).param("brandName", itemValues.get("brand_name"))
+                    .param("year", blankToNull(clean(item.year(), 32))).param("rarity", blankToNull(clean(item.rarity(), 128)))
+                    .param("productType", blankToNull(clean(item.productType(), 64)))
+                    .param("category", blankToNull(clean(item.category(), 128)))
+                    .param("setName", itemValues.get("set_name")).param("cardNumber", itemValues.get("card_number"))
+                    .param("languageCode", itemValues.get("language_code")).param("declaredValue", itemValues.get("declared_value"))
+                    .param("itemNote", itemValues.get("item_note")).param("frontPhotoId", item.frontPhotoId())
+                    .param("backPhotoId", item.backPhotoId()).update();
+            }
         }
+        attachOrderPhotos(customerId, orderId, requestedItems);
 
         String paymentNo = "PAY-" + orderNo;
         paymentInsert.execute(Map.of(
@@ -329,28 +468,51 @@ public class CustomerPortalService {
             "provider_code", "manual_transfer",
             "status_code", "pending",
             "amount", totalAmount,
-            "currency_code", servicePrice.currencyCode(),
+            "currency_code", quoteCurrency,
             "payment_url", "/account/orders/" + orderNo + "#payment",
             "qr_payload", "nxr://payment/" + paymentNo
         ));
-        addTimelineEvent(orderId, "order_created", "Order created", "Your grading order is ready for payment.", "awaiting_payment", true, "customer", customerId, null);
-        addTimelineEvent(orderId, "payment_pending", "Awaiting payment", "Submit a transfer reference after payment so our team can confirm it.", "awaiting_payment", true, "system", null, null);
+        if (orderAdmissionService == null) {
+            addTimelineEvent(orderId, "order_created", "Order created", "Your grading order is ready for payment.", "awaiting_payment", true, "customer", customerId, null);
+            addTimelineEvent(orderId, "payment_pending", "Awaiting payment", "Submit a transfer reference after payment so our team can confirm it.", "awaiting_payment", true, "system", null, null);
+            enqueueOrderNotification(customerId, orderNo, "created", "Your grading order has been created and is ready for payment.");
+        } else {
+            addTimelineEvent(orderId, "application_submitted", "Application submitted",
+                "NXR will review the item list and quoted amount before payment opens.", "admission_review", true, "customer", customerId, null);
+            orderAdmissionService.initialize(orderId, customerId, orderNo);
+        }
         return requireCustomerOrder(customerId, orderNo);
     }
 
     public OrderListResponse listCustomerOrders(long customerId, int page, int pageSize) {
-        return listOrders(page, pageSize, null, null, customerId);
+        return listOrders(page, pageSize, null, null, customerId, null);
     }
 
     public OrderDetailResponse requireCustomerOrder(long customerId, String orderNo) {
         return loadOrderDetailByOrderNo(orderNo)
             .filter(order -> order.customer().id() == customerId)
+            .map(this::sanitizeCustomerOrder)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Grading order not found"));
     }
 
-    @Transactional
+    private OrderDetailResponse sanitizeCustomerOrder(OrderDetailResponse order) {
+        return new OrderDetailResponse(
+            order.id(), order.orderNo(), order.statusCode(), order.admissionStatus(), order.serviceLevelCode(),
+            order.returnShippingOptionCode(), order.returnShippingOptionName(), order.totalCardCount(),
+            order.serviceFee(), order.returnShippingFee(), order.totalAmount(), order.currencyCode(),
+            order.contactName(), order.contactPhone(), order.returnAddressLine1(), order.returnAddressLine2(),
+            order.returnCity(), order.returnRegion(), order.returnPostalCode(), order.returnCountry(),
+            order.customerNote(), null, order.intakeCode(), order.packingSlipCode(), order.shippingLabelCreatedAt(),
+            order.customer(), order.createdAt(), order.updatedAt(), order.items(), order.payments(), order.shipments(), order.timeline()
+        );
+    }
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public OrderDetailResponse submitPaymentProof(long customerId, String orderNo, SubmitPaymentProofRequest request) {
+        long orderId = lockCustomerOrderForPayment(customerId, orderNo);
+        requireAdmissionPaymentAllowed(orderId, customerId);
         OrderDetailResponse order = requireCustomerOrder(customerId, orderNo);
+        assertNoActiveGatewayPayment(order.id());
         if (!Set.of("awaiting_payment", "payment_review").contains(order.statusCode())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This order is not waiting for payment confirmation");
         }
@@ -376,8 +538,10 @@ public class CustomerPortalService {
         return requireCustomerOrder(customerId, orderNo);
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public PaymentSessionResponse createPaymentSession(long customerId, String orderNo, PaymentSessionRequest request) {
+        long orderId = lockCustomerOrderForPayment(customerId, orderNo);
+        requireAdmissionPaymentAllowed(orderId, customerId);
         OrderDetailResponse order = requireCustomerOrder(customerId, orderNo);
         if (!Set.of("awaiting_payment", "payment_review").contains(order.statusCode())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This order is not waiting for payment");
@@ -385,6 +549,14 @@ public class CustomerPortalService {
         String provider = normalizePaymentProvider(request == null ? null : request.provider());
         PaymentRecord payment = findReceivablePayment(order.id())
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Payment record not found"));
+        if (!Set.of("pending", "rejected", "failed").contains(payment.statusCode())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "The order already has payment activity that requires financial review");
+        }
+        if (payment.amount().compareTo(order.totalAmount()) != 0
+            || !payment.currencyCode().equalsIgnoreCase(order.currencyCode())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Order payment amount is inconsistent");
+        }
         String paymentNo = payment.paymentNo() == null || payment.paymentNo().isBlank()
             ? "PAY-" + order.orderNo() : payment.paymentNo();
         String paymentUrl = "/account/orders/" + order.orderNo() + "?provider=" + provider + "#payment";
@@ -408,9 +580,56 @@ public class CustomerPortalService {
         return new PaymentSessionResponse(payment.id(), paymentNo, provider, paymentUrl, qrPayload, payment.amount(), payment.currencyCode());
     }
 
-    @Transactional
-    public OrderDetailResponse addInboundShipment(long customerId, String orderNo, CreateShipmentRequest request) {
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public OrderDetailResponse payOrderFromWallet(long customerId, String orderNo, WalletPaymentRequest request) {
+        MerchantWalletService wallet = requireMerchantWalletService();
+        long orderId = lockCustomerOrderForPayment(customerId, orderNo);
+        requireAdmissionPaymentAllowed(orderId, customerId);
+        wallet.debitOrder(customerId, orderId, request == null ? null : request.idempotencyKey());
+        String currentStatus = currentLockedOrderStatus(orderId);
+        if (Set.of("awaiting_payment", "payment_review").contains(currentStatus)) {
+            updateOrderStatus(orderId, "awaiting_inbound", "Payment confirmed",
+                "Your prepaid wallet payment was confirmed. Please send your cards to NXR.",
+                true, "customer", customerId, null, false);
+            requireFulfillmentService().ensureIntakeCodes(orderId);
+        } else if (!"awaiting_inbound".equals(currentStatus)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Order payment state changed while wallet payment was being processed");
+        }
+        return requireCustomerOrder(customerId, orderNo);
+    }
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public OrderDetailResponse cancelCustomerOrder(long customerId, String orderNo, CancelOrderRequest request) {
+        lockCustomerOrderForPayment(customerId, orderNo);
         OrderDetailResponse order = requireCustomerOrder(customerId, orderNo);
+        if ("cancelled".equals(order.statusCode())) {
+            return order;
+        }
+        String reason = requireText(request == null ? null : request.reason(), "Cancellation reason", 1000);
+        assertNoActiveGatewayPayment(order.id());
+        MerchantWalletService wallet = merchantWalletService;
+        boolean walletPaid = wallet != null && wallet.hasPaidWalletOrder(order.id());
+        if (walletPaid) {
+            if (!"awaiting_inbound".equals(order.statusCode())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "A wallet-paid order can only be cancelled before cards are shipped or received");
+            }
+            wallet.refundOrder(order.id(), "customer", customerId, null, reason);
+        } else {
+            if (!Set.of("admission_review", "terms_confirmation", "payment_expired", "awaiting_payment", "payment_review")
+                .contains(order.statusCode())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "This order can no longer be cancelled online");
+            }
+            requireNoRecordedFundsForCancellation(order.id());
+        }
+        updateOrderStatus(order.id(), "cancelled", "Order cancelled", reason, true, "customer", customerId, null, true);
+        return requireCustomerOrder(customerId, orderNo);
+    }
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public OrderDetailResponse addInboundShipment(long customerId, String orderNo, CreateShipmentRequest request) {
+        lockCustomerOrderForPayment(customerId, orderNo);
+        OrderDetailResponse order = requireCustomerOrder(customerId, orderNo);
+        assertIndividualShipmentAllowed(order.id());
         if (!Set.of("awaiting_inbound", "inbound_shipped").contains(order.statusCode())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Inbound tracking can be added after payment has been confirmed");
         }
@@ -432,7 +651,16 @@ public class CustomerPortalService {
     }
 
     public OrderListResponse listAdminOrders(int page, int pageSize, String status, String query) {
-        return listOrders(page, pageSize, status, query, null);
+        OrderAccessScopeService.AccessScope scope = orderAccessScopeService == null
+            ? new OrderAccessScopeService.AccessScope(true, List.of(), List.of())
+            : orderAccessScopeService.scopeForUser(SecurityUtils.getUserId());
+        return listAdminOrders(page, pageSize, status, query, scope);
+    }
+
+    OrderListResponse listAdminOrders(
+        int page, int pageSize, String status, String query, OrderAccessScopeService.AccessScope scope
+    ) {
+        return listOrders(page, pageSize, status, query, null, scope);
     }
 
     public OrderDetailResponse requireAdminOrder(long orderId) {
@@ -440,10 +668,16 @@ public class CustomerPortalService {
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Grading order not found"));
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public OrderDetailResponse confirmPayment(long orderId, long paymentId, long adminUserId, ConfirmPaymentRequest request) {
+        lockOrderForPayment(orderId);
+        assertNoActiveGatewayPayment(orderId);
         OrderDetailResponse order = requireAdminOrder(orderId);
         PaymentRecord payment = requireOrderPayment(order.id(), paymentId);
+        if (!"receivable".equals(payment.directionCode()) || !"grading_fee".equals(payment.paymentTypeCode())
+            || !Set.of("awaiting_payment", "payment_review", "payment_expired").contains(order.statusCode())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only an order's initial grading payment can be confirmed here");
+        }
         if (!Set.of("pending", "proof_submitted").contains(payment.statusCode())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This payment cannot be confirmed in its current state");
         }
@@ -463,15 +697,20 @@ public class CustomerPortalService {
             .param("adminUserId", adminUserId)
             .param("paymentId", paymentId)
             .update();
-        updateOrderStatus(order.id(), "awaiting_inbound", "Payment confirmed", "Payment has been confirmed. Please send your cards to NXR and add inbound tracking.", true, "admin", null, adminUserId, false);
-        requireFulfillmentService().ensureIntakeCodes(order.id());
+        completeConfirmedPaymentOrder(order.id(), "admin", null, adminUserId);
         return requireAdminOrder(orderId);
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public OrderDetailResponse rejectPayment(long orderId, long paymentId, long adminUserId, RejectPaymentRequest request) {
+        lockOrderForPayment(orderId);
+        assertNoActiveGatewayPayment(orderId);
         OrderDetailResponse order = requireAdminOrder(orderId);
         PaymentRecord payment = requireOrderPayment(order.id(), paymentId);
+        if (!"receivable".equals(payment.directionCode()) || !"grading_fee".equals(payment.paymentTypeCode())
+            || !Set.of("awaiting_payment", "payment_review", "payment_expired").contains(order.statusCode())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only an order's initial grading payment can be rejected here");
+        }
         if (!Set.of("pending", "proof_submitted").contains(payment.statusCode())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This payment cannot be rejected in its current state");
         }
@@ -488,22 +727,46 @@ public class CustomerPortalService {
             .param("adminUserId", adminUserId)
             .param("paymentId", paymentId)
             .update();
-        updateOrderStatus(order.id(), "awaiting_payment", "Payment needs attention", note, true, "admin", null, adminUserId, false);
+        String targetStatus = "payment_expired".equals(order.statusCode()) ? "payment_expired" : "awaiting_payment";
+        updateOrderStatus(order.id(), targetStatus, "Payment needs attention", note, true, "admin", null, adminUserId, false);
         return requireAdminOrder(orderId);
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public OrderDetailResponse updateOrderStatusByAdmin(long orderId, long adminUserId, UpdateOrderStatusRequest request) {
+        lockOrderForPayment(orderId);
         OrderDetailResponse order = requireAdminOrder(orderId);
         String targetStatus = normalizeStatus(request.statusCode());
+        requireFulfillmentService().assertManualStatusTransitionAllowed(orderId, targetStatus);
+        if (order.admissionStatus() != null
+            && Set.of("awaiting_payment", "payment_review", "awaiting_inbound").contains(targetStatus)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Admission, payment proof and payment confirmation must use their dedicated workflows");
+        }
+        if (!"cancelled".equals(targetStatus) && orderAdmissionService != null) {
+            orderAdmissionService.requireGenericStatusChangeAllowed(order.id());
+        }
         String detail = blankToNull(clean(request.detail(), 1000));
+        if ("cancelled".equals(targetStatus)) {
+            assertNoActiveGatewayPayment(order.id());
+        }
+        if ("cancelled".equals(targetStatus) && merchantWalletService != null && merchantWalletService.hasPaidWalletOrder(order.id())) {
+            if (!"awaiting_inbound".equals(order.statusCode())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "A wallet-paid order can only be refunded before inbound shipment");
+            }
+            merchantWalletService.refundOrder(order.id(), "admin", null, adminUserId, detail);
+        } else if ("cancelled".equals(targetStatus)) {
+            requireNoRecordedFundsForCancellation(order.id());
+        }
         updateOrderStatus(order.id(), targetStatus, statusTitle(targetStatus), detail, true, "admin", null, adminUserId, true);
         return requireAdminOrder(orderId);
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public OrderDetailResponse createAdminShipment(long orderId, long adminUserId, CreateShipmentRequest request) {
+        lockOrderForPayment(orderId);
         OrderDetailResponse order = requireAdminOrder(orderId);
+        assertIndividualShipmentAllowed(order.id());
         String direction = normalizeShipmentDirection(request.direction());
         String carrier = requireText(request.carrierName(), "Carrier", 128);
         String tracking = requireText(request.trackingNumber(), "Tracking number", 255);
@@ -584,9 +847,11 @@ public class CustomerPortalService {
         return requireAdminOrder(orderId);
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public OrderDetailResponse markShipmentDelivered(long orderId, long shipmentId, long adminUserId) {
+        lockOrderForPayment(orderId);
         OrderDetailResponse order = requireAdminOrder(orderId);
+        assertIndividualShipmentAllowed(order.id());
         ShipmentRecord shipment = requireOrderShipment(order.id(), shipmentId);
         if (shipment.deliveredAt() != null) {
             return order;
@@ -600,37 +865,176 @@ public class CustomerPortalService {
             )
             .param("shipmentId", shipmentId)
             .update();
-        if (shipment.directionCode().equals("outbound")) {
+        if (shipment.directionCode().equals("outbound") && "return_shipped".equals(order.statusCode())) {
+            jdbcClient.sql("UPDATE grading_order_item SET status_code = 'delivered', updated_at = CURRENT_TIMESTAMP WHERE order_id = :orderId")
+                .param("orderId", order.id())
+                .update();
             updateOrderStatus(order.id(), "delivered", "Return shipment delivered", "Carrier delivery was confirmed.", true, "admin", null, adminUserId, true);
         } else {
-            addTimelineEvent(order.id(), "inbound_delivery_confirmed", "Inbound delivery confirmed", "Carrier delivery was confirmed.", "received", true, "admin", null, adminUserId);
+            String eventCode = shipment.directionCode().equals("outbound") ? "outbound_delivery_confirmed" : "inbound_delivery_confirmed";
+            addTimelineEvent(order.id(), eventCode, "Delivery confirmed", "Carrier delivery was confirmed.", order.statusCode(), true, "admin", null, adminUserId);
         }
         return requireAdminOrder(orderId);
     }
 
-    @Transactional
-    public OrderDetailResponse linkOrderItemSubmission(long orderId, long itemId, long submissionId, long adminUserId) {
-        OrderDetailResponse order = requireAdminOrder(orderId);
-        Integer existing = jdbcClient.sql("SELECT COUNT(*) FROM grading_submission WHERE id = :submissionId")
-            .param("submissionId", submissionId)
-            .query(Integer.class)
-            .single();
-        if (existing == null || existing == 0) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Grading submission not found");
+    private void assertIndividualShipmentAllowed(long orderId) {
+        String batchNo = jdbcClient.sql(
+                """
+                SELECT b.batch_no
+                FROM merchant_order_batch_item bi
+                JOIN merchant_order_batch b ON b.id = bi.batch_id
+                WHERE bi.order_id = :orderId AND b.status_code <> 'cancelled'
+                LIMIT 1
+                """
+            )
+            .param("orderId", orderId)
+            .query(String.class)
+            .optional()
+            .orElse(null);
+        if (batchNo != null) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "Order belongs to merchant batch " + batchNo + "; use the batch's shared shipment workflow"
+            );
         }
-        int updated = jdbcClient.sql(
+    }
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public OrderDetailResponse linkOrderItemSubmission(long orderId, long itemId, long submissionId, long adminUserId) {
+        return linkOrderItemSubmission(orderId, itemId, submissionId, adminUserId, false);
+    }
+
+    /**
+     * Trusted service seam for a submission created for the locked order item in the caller's transaction.
+     * The new row must belong to this staff user and already carry the order's exact customer-submission route.
+     */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public OrderDetailResponse linkNewOrderItemSubmission(
+        long orderId, long itemId, long submissionId, long adminUserId
+    ) {
+        return linkOrderItemSubmission(orderId, itemId, submissionId, adminUserId, true);
+    }
+
+    private OrderDetailResponse linkOrderItemSubmission(
+        long orderId, long itemId, long submissionId, long adminUserId, boolean newlyCreatedForOrder
+    ) {
+        lockOrderForPayment(orderId);
+        OrderDetailResponse order = requireAdminOrder(orderId);
+        if (orderAccessScopeService != null && newlyCreatedForOrder) {
+            orderAccessScopeService.requireAccessibleOrder(adminUserId, orderId);
+        } else if (orderAccessScopeService != null) {
+            orderAccessScopeService.requireAccessibleSubmission(adminUserId, submissionId);
+        }
+        if ("payment_exception".equals(order.statusCode())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Order work is paused while payment needs attention");
+        }
+        if (!Set.of("received", "grading", "review", "quality_check", "quality_hold").contains(order.statusCode())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "A grading submission can only be linked after intake");
+        }
+        OrderItemLinkRow itemLink = jdbcClient.sql(
+                "SELECT grading_submission_id FROM grading_order_item WHERE id = :itemId AND order_id = :orderId FOR UPDATE"
+            )
+            .param("itemId", itemId)
+            .param("orderId", orderId)
+            .query((rs, rowNum) -> new OrderItemLinkRow(rs.getObject("grading_submission_id", Long.class)))
+            .optional()
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Order item not found"));
+        Long currentSubmissionId = itemLink.submissionId();
+        if (currentSubmissionId != null && currentSubmissionId != submissionId) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Order item is already linked to another grading submission");
+        }
+
+        if (commercePolicyService == null) {
+            jdbcClient.sql("SELECT id FROM grading_submission WHERE id = :submissionId FOR UPDATE")
+                .param("submissionId", submissionId)
+                .query(Long.class)
+                .optional()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Grading submission not found"));
+        } else {
+            OrderRoutingRow orderRouting = jdbcClient.sql(
+                "SELECT business_line_id, work_center_id FROM grading_order WHERE id = :orderId"
+            )
+            .param("orderId", orderId)
+            .query((rs, rowNum) -> new OrderRoutingRow(
+                rs.getObject("business_line_id", Long.class), rs.getObject("work_center_id", Long.class)
+            ))
+            .single();
+            if (orderRouting.businessLineId() == null || orderRouting.workCenterId() == null) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Order routing must be assigned before linking grading work");
+            }
+            SubmissionRoutingRow submission = jdbcClient.sql(
+                "SELECT order_origin_code, business_line_id, work_center_id, entry_by_user_id FROM grading_submission WHERE id = :submissionId FOR UPDATE"
+            )
+            .param("submissionId", submissionId)
+            .query((rs, rowNum) -> new SubmissionRoutingRow(
+                rs.getString("order_origin_code"), rs.getObject("business_line_id", Long.class),
+                rs.getObject("work_center_id", Long.class), rs.getObject("entry_by_user_id", Long.class)
+            ))
+            .optional()
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Grading submission not found"));
+            if (newlyCreatedForOrder && (!"customer_submission".equals(submission.orderOriginCode())
+                || submission.entryByUserId() == null || submission.entryByUserId() != adminUserId
+                || !orderRouting.businessLineId().equals(submission.businessLineId())
+                || !orderRouting.workCenterId().equals(submission.workCenterId()))) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "New grading submission must be created by this staff user for the order's exact route");
+            }
+            if ((submission.businessLineId() != null && !submission.businessLineId().equals(orderRouting.businessLineId()))
+            || (submission.workCenterId() != null && !submission.workCenterId().equals(orderRouting.workCenterId()))) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Grading submission routing does not match this order's business line and work center");
+            }
+            String origin = blankToNull(clean(submission.orderOriginCode(), 32));
+            if ("owned_inventory".equals(origin)
+            && (submission.businessLineId() == null || submission.workCenterId() == null)) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Owned-inventory grading work must retain its assigned business line and work center");
+            }
+            jdbcClient.sql(
+                """
+                UPDATE grading_submission
+                SET order_origin_code = COALESCE(NULLIF(order_origin_code, ''), 'customer_submission'),
+                    business_line_id = COALESCE(business_line_id, :lineId),
+                    work_center_id = COALESCE(work_center_id, :centerId)
+                WHERE id = :submissionId
+                """
+            )
+            .param("lineId", orderRouting.businessLineId())
+            .param("centerId", orderRouting.workCenterId())
+            .param("submissionId", submissionId)
+            .update();
+        }
+        boolean linkedElsewhere = !jdbcClient.sql(
+                "SELECT id FROM grading_order_item WHERE grading_submission_id = :submissionId AND id <> :itemId FOR UPDATE"
+            )
+            .param("submissionId", submissionId)
+            .param("itemId", itemId)
+            .query(Long.class)
+            .list()
+            .isEmpty();
+        if (linkedElsewhere) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Grading submission is already linked to another order item");
+        }
+        int updated;
+        try {
+            updated = jdbcClient.sql(
                 """
                 UPDATE grading_order_item
                 SET grading_submission_id = :submissionId, status_code = 'grading', updated_at = CURRENT_TIMESTAMP
                 WHERE id = :itemId AND order_id = :orderId
+                  AND (grading_submission_id IS NULL OR grading_submission_id = :submissionId)
                 """
-            )
-            .param("submissionId", submissionId)
-            .param("itemId", itemId)
-            .param("orderId", order.id())
-            .update();
+                )
+                .param("submissionId", submissionId)
+                .param("itemId", itemId)
+                .param("orderId", order.id())
+                .update();
+        } catch (DataIntegrityViolationException exception) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Grading submission is already linked to another order item", exception);
+        }
         if (updated == 0) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Order item not found");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Order item changed before the grading work was linked");
         }
         if (order.statusCode().equals("received")) {
             updateOrderStatus(order.id(), "grading", "Grading in progress", "A grading work record has been linked to an order item.", true, "admin", null, adminUserId, true);
@@ -641,18 +1045,15 @@ public class CustomerPortalService {
         return requireAdminOrder(orderId);
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public PaymentCallbackResponse receivePaymentCallback(String provider, PaymentCallbackRequest request) {
         String normalizedProvider = normalizePaymentProvider(provider);
         String eventId = requireText(request.providerEventId(), "Provider event id", 255);
         String transactionId = requireText(request.providerTransactionId(), "Provider transaction id", 255);
         String paymentNo = clean(request.paymentNo(), 48).toUpperCase(Locale.ROOT);
-        PaymentRecord payment = jdbcClient.sql(
+        long orderId = jdbcClient.sql(
                 """
-                SELECT id, order_id, direction_code, payment_type_code, payment_no, provider_code, method_label, status_code,
-                       amount, currency_code, payer_reference, proof_reference, payment_url, qr_payload, provider_transaction_id,
-                       confirmed_by_user_id, submitted_at, confirmed_at, callback_received_at, note, created_at
-                FROM payment_record
+                SELECT order_id FROM payment_record
                 WHERE provider_code = :provider
                   AND ((:paymentNo <> '' AND UPPER(payment_no) = :paymentNo)
                        OR (:paymentNo = '' AND provider_transaction_id = :transactionId))
@@ -661,10 +1062,40 @@ public class CustomerPortalService {
             .param("provider", normalizedProvider)
             .param("paymentNo", paymentNo)
             .param("transactionId", transactionId)
+            .query(Long.class)
+            .optional()
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Payment transaction not found"));
+
+        // Keep the same lock order as wallet/manual settlement: order first,
+        // then the payment row. Re-read after acquiring both locks so a stale
+        // pending snapshot can never overwrite a concurrent confirmation.
+        lockOrderForPayment(orderId);
+        PaymentRecord payment = jdbcClient.sql(
+                """
+                SELECT id, order_id, direction_code, payment_type_code, payment_no, provider_code, method_label, status_code,
+                       amount, currency_code, payer_reference, proof_reference, payment_url, qr_payload, provider_transaction_id,
+                       confirmed_by_user_id, submitted_at, confirmed_at, callback_received_at, note, created_at
+                FROM payment_record
+                WHERE order_id = :orderId AND provider_code = :provider
+                  AND ((:paymentNo <> '' AND UPPER(payment_no) = :paymentNo)
+                       OR (:paymentNo = '' AND provider_transaction_id = :transactionId))
+                FOR UPDATE
+                """
+            )
+            .param("orderId", orderId)
+            .param("provider", normalizedProvider)
+            .param("paymentNo", paymentNo)
+            .param("transactionId", transactionId)
             .query((rs, rowNum) -> mapPayment(rs))
             .optional()
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Payment transaction not found"));
-        if (request.amount() == null || payment.amount().compareTo(request.amount().setScale(2, RoundingMode.HALF_UP)) != 0) {
+        BigDecimal callbackAmount;
+        try {
+            callbackAmount = request.amount() == null ? null : request.amount().setScale(2, RoundingMode.UNNECESSARY);
+        } catch (ArithmeticException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Payment callback amount has unsupported precision");
+        }
+        if (callbackAmount == null || payment.amount().compareTo(callbackAmount) != 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Payment callback amount does not match");
         }
         if (!payment.currencyCode().equalsIgnoreCase(clean(request.currencyCode(), 8))) {
@@ -687,32 +1118,38 @@ public class CustomerPortalService {
         }
 
         String callbackStatus = clean(request.status(), 32).toLowerCase(Locale.ROOT);
-        if (Set.of("confirmed", "paid", "succeeded").contains(callbackStatus)) {
+        boolean successful = Set.of("confirmed", "paid", "succeeded").contains(callbackStatus);
+        if ("confirmed".equals(payment.statusCode())) {
+            if (!successful) {
+                return new PaymentCallbackResponse(false, payment.orderId(), "Late non-success callback ignored for confirmed payment");
+            }
+            if (!transactionId.equals(payment.providerTransactionId())) {
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "Payment was already confirmed with another provider transaction");
+            }
+            return new PaymentCallbackResponse(false, payment.orderId(), "Payment was already confirmed");
+        }
+        if (successful) {
             jdbcClient.sql(
                     """
                     UPDATE payment_record
                     SET status_code = 'confirmed', callback_received_at = CURRENT_TIMESTAMP,
                         callback_payload = :payload, provider_transaction_id = :transactionId,
                         confirmed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = :paymentId
+                    WHERE id = :paymentId AND status_code <> 'confirmed'
                     """
                 )
                 .param("payload", clean(request.rawPayload(), 20000))
                 .param("transactionId", transactionId)
                 .param("paymentId", payment.id())
                 .update();
-            OrderDetailResponse order = requireAdminOrder(payment.orderId());
-            if (Set.of("awaiting_payment", "payment_review").contains(order.statusCode())) {
-                updateOrderStatus(order.id(), "awaiting_inbound", "Payment confirmed", "A verified payment callback was received.", true, "payment_callback", null, null, false);
-                requireFulfillmentService().ensureIntakeCodes(order.id());
-            }
+            completeConfirmedPaymentOrder(payment.orderId(), "payment_callback", null, null);
         } else {
             jdbcClient.sql(
                     """
                     UPDATE payment_record
                     SET status_code = :status, callback_received_at = CURRENT_TIMESTAMP,
                         callback_payload = :payload, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = :paymentId
+                    WHERE id = :paymentId AND status_code <> 'confirmed'
                     """
                 )
                 .param("status", callbackStatus.isBlank() ? "failed" : callbackStatus)
@@ -723,7 +1160,10 @@ public class CustomerPortalService {
         return new PaymentCallbackResponse(false, payment.orderId(), "Callback recorded");
     }
 
-    private OrderListResponse listOrders(int page, int pageSize, String status, String query, Long customerId) {
+    private OrderListResponse listOrders(
+        int page, int pageSize, String status, String query, Long customerId,
+        OrderAccessScopeService.AccessScope accessScope
+    ) {
         int resolvedPage = Math.max(1, page);
         int resolvedPageSize = Math.min(Math.max(1, pageSize), 100);
         int offset = (resolvedPage - 1) * resolvedPageSize;
@@ -739,10 +1179,24 @@ public class CustomerPortalService {
             customerCondition = " AND o.customer_id = :customerId";
             params.put("customerId", customerId);
         }
+        String scopeCondition = "";
+        if (customerId == null && accessScope != null) {
+            scopeCondition = """
+                 AND (:scopeAll = 1 OR (
+                   o.business_line_id IN (:scopeLineIds)
+                   AND o.work_center_id IN (:scopeCenterIds)
+                   AND EXISTS (SELECT 1 FROM commerce_business_line bl WHERE bl.id = o.business_line_id AND bl.is_active = 1)
+                   AND EXISTS (SELECT 1 FROM commerce_work_center wc WHERE wc.id = o.work_center_id AND wc.is_active = 1)
+                 ))
+                """;
+            params.put("scopeAll", accessScope.unrestricted() ? 1 : 0);
+            params.put("scopeLineIds", accessScope.safeBusinessLineIds());
+            params.put("scopeCenterIds", accessScope.safeWorkCenterIds());
+        }
         String whereClause = """
             WHERE (:status IS NULL OR o.status_code = :status)
               AND (:query IS NULL OR UPPER(o.order_no) LIKE :query OR UPPER(c.email) LIKE :query OR UPPER(c.display_name) LIKE :query)
-            """ + customerCondition;
+            """ + customerCondition + scopeCondition;
         Integer total = jdbcClient.sql(
                 "SELECT COUNT(*) FROM grading_order o JOIN customer_account c ON c.id = o.customer_id " + whereClause
             )
@@ -751,19 +1205,22 @@ public class CustomerPortalService {
             .single();
         List<OrderListItem> items = jdbcClient.sql(
                 """
-                SELECT o.id, o.order_no, o.status_code, o.service_level_code,
+                SELECT o.id, o.order_no, o.status_code, %s AS admission_status_code,
+                       o.service_level_code,
                        o.return_shipping_option_code, o.return_shipping_option_name, o.total_card_count,
                        o.total_amount, o.currency_code, o.created_at, o.updated_at,
                        c.id AS customer_id, c.email AS customer_email, c.display_name AS customer_display_name
                 FROM grading_order o
                 JOIN customer_account c ON c.id = o.customer_id
-                """ + whereClause + " ORDER BY o.created_at DESC, o.id DESC LIMIT :limit OFFSET :offset"
+                """.formatted(orderAdmissionService == null ? "NULL" : "o.admission_status_code")
+                + whereClause + " ORDER BY o.created_at DESC, o.id DESC LIMIT :limit OFFSET :offset"
             )
             .params(params)
             .query((rs, rowNum) -> new OrderListItem(
                 rs.getLong("id"),
                 rs.getString("order_no"),
                 rs.getString("status_code"),
+                rs.getString("admission_status_code"),
                 rs.getString("service_level_code"),
                 rs.getInt("total_card_count"),
                 rs.getBigDecimal("total_amount"),
@@ -788,7 +1245,8 @@ public class CustomerPortalService {
     private Optional<OrderDetailResponse> loadOrderDetail(String predicate, Map<String, Object> params) {
         return jdbcClient.sql(
                 """
-                SELECT o.id, o.order_no, o.status_code, o.service_level_code, o.total_card_count,
+                SELECT o.id, o.order_no, o.status_code, %s AS admission_status_code,
+                       o.service_level_code, o.total_card_count,
                        o.return_shipping_option_code, o.return_shipping_option_name,
                        o.service_fee, o.return_shipping_fee, o.total_amount, o.currency_code,
                        o.contact_name, o.contact_phone, o.return_address_line1, o.return_address_line2,
@@ -798,13 +1256,15 @@ public class CustomerPortalService {
                        c.id AS customer_id, c.email AS customer_email, c.display_name AS customer_display_name
                 FROM grading_order o
                 JOIN customer_account c ON c.id = o.customer_id
-                """ + " WHERE " + predicate
+                """.formatted(orderAdmissionService == null ? "NULL" : "o.admission_status_code")
+                + " WHERE " + predicate
             )
             .params(params)
             .query((rs, rowNum) -> new OrderDetailResponse(
                 rs.getLong("id"),
                 rs.getString("order_no"),
                 rs.getString("status_code"),
+                rs.getString("admission_status_code"),
                 rs.getString("service_level_code"),
                 rs.getString("return_shipping_option_code"),
                 rs.getString("return_shipping_option_name"),
@@ -837,7 +1297,7 @@ public class CustomerPortalService {
 
     private OrderDetailResponse withOrderRelations(OrderDetailResponse base) {
         return new OrderDetailResponse(
-            base.id(), base.orderNo(), base.statusCode(), base.serviceLevelCode(),
+            base.id(), base.orderNo(), base.statusCode(), base.admissionStatus(), base.serviceLevelCode(),
             base.returnShippingOptionCode(), base.returnShippingOptionName(), base.totalCardCount(),
             base.serviceFee(), base.returnShippingFee(), base.totalAmount(), base.currencyCode(),
             base.contactName(), base.contactPhone(), base.returnAddressLine1(), base.returnAddressLine2(),
@@ -849,6 +1309,31 @@ public class CustomerPortalService {
     }
 
     private List<OrderItemResponse> listOrderItems(long orderId) {
+        if (orderAdmissionService != null) {
+            return jdbcClient.sql(
+                    """
+                    SELECT i.id, i.item_no, i.card_name, i.brand_name, i.year_label, i.rarity, i.product_type,
+                           i.category, i.set_name, i.card_number, i.language_code, i.declared_value, i.item_note,
+                           i.front_photo_id, i.back_photo_id, i.status_code, i.grading_submission_id,
+                           s.cert_id AS grading_cert_id, s.status_code AS grading_status_code
+                    FROM grading_order_item i
+                    LEFT JOIN grading_submission s ON s.id = i.grading_submission_id
+                    WHERE i.order_id = :orderId
+                    ORDER BY i.item_no ASC
+                    """
+                )
+                .param("orderId", orderId)
+                .query((rs, rowNum) -> new OrderItemResponse(
+                    rs.getLong("id"), rs.getInt("item_no"), rs.getString("card_name"), rs.getString("brand_name"),
+                    rs.getString("year_label"), rs.getString("rarity"), rs.getString("product_type"), rs.getString("category"),
+                    rs.getString("set_name"), rs.getString("card_number"), rs.getString("language_code"),
+                    rs.getBigDecimal("declared_value"), rs.getString("item_note"),
+                    rs.getObject("front_photo_id", Long.class), rs.getObject("back_photo_id", Long.class),
+                    rs.getString("status_code"), rs.getObject("grading_submission_id", Long.class),
+                    rs.getString("grading_cert_id"), rs.getString("grading_status_code")
+                ))
+                .list();
+        }
         return jdbcClient.sql(
                 """
                 SELECT i.id, i.item_no, i.card_name, i.brand_name, i.set_name, i.card_number, i.language_code,
@@ -1089,6 +1574,31 @@ public class CustomerPortalService {
             .param("orderId", orderId)
             .update();
         addTimelineEvent(orderId, "status_changed", title, detail, targetStatus, visibleToCustomer, actorType, customerId, adminUserId);
+        if (visibleToCustomer) {
+            String notificationStatus = notificationStatus(targetStatus);
+            if (notificationStatus != null) {
+                enqueueOrderNotification(order.customer().id(), order.orderNo(), notificationStatus,
+                    detail == null || detail.isBlank() ? title : detail);
+            }
+        }
+    }
+
+    private void enqueueOrderNotification(long customerId, String orderNo, String statusCode, String message) {
+        if (notificationOutboxService != null) {
+            notificationOutboxService.enqueueOrderStatus(customerId, orderNo, statusCode, message);
+        }
+    }
+
+    private static String notificationStatus(String orderStatus) {
+        return switch (orderStatus) {
+            case "awaiting_inbound" -> "paid";
+            case "received" -> "received";
+            case "grading" -> "grading";
+            case "review" -> "review";
+            case "return_shipped" -> "return_shipped";
+            case "delivered" -> "delivered";
+            default -> null;
+        };
     }
 
     private void addTimelineEvent(
@@ -1161,19 +1671,21 @@ public class CustomerPortalService {
         return OWNERSHIP_VISIBILITIES.contains(visibility) ? visibility : "public";
     }
 
-    private static List<OrderItemRequest> resolveOrderItems(CreateOrderRequest request) {
+    private static List<OrderItemRequest> resolveOrderItems(CreateOrderRequest request, int maxCards) {
         List<LanguageGroupRequest> groups = request.languageGroups() == null ? List.of() : request.languageGroups();
         if (!groups.isEmpty()) {
             List<OrderItemRequest> items = new ArrayList<>();
             for (LanguageGroupRequest group : groups) {
                 String languageCode = requireText(group.languageCode(), "Card language", 32).toUpperCase(Locale.ROOT);
                 int quantity = group.quantity() == null ? 0 : group.quantity();
-                if (quantity < 1 || quantity > 30) {
-                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Each language quantity must be between 1 and 30");
+                if (quantity < 1 || quantity > maxCards) {
+                    throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "Each language quantity must be between 1 and " + maxCards);
                 }
                 for (int index = 0; index < quantity; index += 1) {
-                    if (items.size() >= 30) {
-                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "An order cannot include more than 30 cards");
+                    if (items.size() >= maxCards) {
+                        throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                            "An order cannot include more than " + maxCards + " cards");
                     }
                     items.add(new OrderItemRequest(
                         languageCode + " card " + (index + 1), null, null, null, languageCode, null, null
@@ -1202,6 +1714,171 @@ public class CustomerPortalService {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Order fulfillment service is unavailable");
         }
         return orderFulfillmentService;
+    }
+
+    private MerchantWalletService requireMerchantWalletService() {
+        if (merchantWalletService == null) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Merchant wallet service is unavailable");
+        }
+        return merchantWalletService;
+    }
+
+    private void requireAdmissionPaymentAllowed(long orderId, long customerId) {
+        if (orderAdmissionService != null) {
+            orderAdmissionService.requirePaymentAllowed(orderId, customerId);
+        }
+    }
+
+    private void completeConfirmedPaymentOrder(long orderId, String actorType, Long customerId, Long adminUserId) {
+        String currentStatus = currentLockedOrderStatus(orderId);
+        boolean validOperationalState = Set.of("awaiting_payment", "payment_review").contains(currentStatus);
+        if (!validOperationalState
+            || (orderAdmissionService != null && orderAdmissionService.verifiedPaymentRequiresReview(orderId))) {
+            jdbcClient.sql("UPDATE grading_order SET status_code = 'payment_exception', updated_at = CURRENT_TIMESTAMP WHERE id = :orderId")
+                .param("orderId", orderId).update();
+            addTimelineEvent(orderId, "late_payment_received", "Payment received after admission window",
+                "The verified funds were recorded, but fulfillment is paused for financial review.", "payment_exception",
+                true, actorType, customerId, adminUserId);
+            return;
+        }
+        updateOrderStatus(orderId, "awaiting_inbound", "Payment confirmed",
+            "Payment has been confirmed. Please send your cards to NXR and add inbound tracking.",
+            true, actorType, customerId, adminUserId, false);
+        requireFulfillmentService().ensureIntakeCodes(orderId);
+    }
+
+    private void validateOrderPhotos(long customerId, List<OrderItemRequest> items) {
+        if (customerOrderPhotoService == null) return;
+        for (OrderItemRequest item : items) {
+            customerOrderPhotoService.requireOwnedPhoto(customerId, item.frontPhotoId());
+            customerOrderPhotoService.requireOwnedPhoto(customerId, item.backPhotoId());
+        }
+    }
+
+    private void attachOrderPhotos(long customerId, long orderId, List<OrderItemRequest> items) {
+        if (customerOrderPhotoService == null) return;
+        List<Long> ids = items.stream()
+            .flatMap(item -> java.util.stream.Stream.of(item.frontPhotoId(), item.backPhotoId()))
+            .filter(java.util.Objects::nonNull)
+            .toList();
+        customerOrderPhotoService.attachToOrder(customerId, orderId, ids);
+    }
+
+    private static void validateBatchAllocation(
+        long customerId,
+        int cardCount,
+        String country,
+        String requestedCurrency,
+        String requestedShippingOptionCode,
+        CommercePolicyService.QuoteResult aggregate,
+        CommercePolicyService.AllocatedBatchQuote allocation
+    ) {
+        if (aggregate.customerId() != customerId || allocation.cardCount() != cardCount
+            || !clean(country, 128).equalsIgnoreCase(aggregate.destinationCountry())
+            || !clean(requestedCurrency, 8).equalsIgnoreCase(aggregate.currencyCode())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "The batch allocation does not match this order");
+        }
+        if (requestedShippingOptionCode != null && !requestedShippingOptionCode.isBlank()
+            && !clean(requestedShippingOptionCode, 64).equalsIgnoreCase(aggregate.shippingOptionCode())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "The batch shipping option changed");
+        }
+        BigDecimal serviceFee = requireBatchAmount(allocation.serviceFee(), false, "Batch grading fee");
+        BigDecimal shippingFee = requireBatchAmount(allocation.returnShippingFee(), true, "Batch return shipping fee");
+        BigDecimal total = requireBatchAmount(allocation.totalAmount(), false, "Batch total");
+        BigDecimal expectedServiceFee = aggregate.unitPrice().multiply(BigDecimal.valueOf(cardCount));
+        if (serviceFee.compareTo(expectedServiceFee) != 0
+            || serviceFee.add(shippingFee).compareTo(total) != 0
+            || shippingFee.compareTo(aggregate.returnShippingFee()) > 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "The batch allocation amounts are inconsistent");
+        }
+    }
+
+    private static BigDecimal requireBatchAmount(BigDecimal value, boolean allowZero, String label) {
+        if (value == null || value.signum() < 0 || (!allowZero && value.signum() == 0) || value.scale() > 2) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, label + " is invalid");
+        }
+        return value.setScale(2, RoundingMode.UNNECESSARY);
+    }
+
+    private static void validatePresentedQuote(CreateOrderRequest request, BigDecimal calculatedTotal, String calculatedCurrency) {
+        if (request.quotedTotalAmount() == null && (request.quotedCurrencyCode() == null || request.quotedCurrencyCode().isBlank())) return;
+        if (request.quotedTotalAmount() == null || request.quotedCurrencyCode() == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Both quoted total and currency are required");
+        }
+        BigDecimal presented;
+        try {
+            presented = request.quotedTotalAmount().setScale(2, RoundingMode.UNNECESSARY);
+        } catch (ArithmeticException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Quoted total has unsupported precision");
+        }
+        if (presented.compareTo(calculatedTotal) != 0
+            || !clean(request.quotedCurrencyCode(), 8).equalsIgnoreCase(calculatedCurrency)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "The quote changed; refresh the order quote before submitting");
+        }
+    }
+
+    private void lockOrderForPayment(long orderId) {
+        jdbcClient.sql("SELECT id FROM grading_order WHERE id = :orderId FOR UPDATE")
+            .param("orderId", orderId)
+            .query(Long.class)
+            .optional()
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Grading order not found"));
+    }
+
+    private long lockCustomerOrderForPayment(long customerId, String orderNo) {
+        return jdbcClient.sql(
+                "SELECT id FROM grading_order WHERE customer_id = :customerId AND order_no = :orderNo FOR UPDATE"
+            )
+            .param("customerId", customerId)
+            .param("orderNo", requireText(orderNo, "Order number", 48).toUpperCase(Locale.ROOT))
+            .query(Long.class)
+            .optional()
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Grading order not found"));
+    }
+
+    private String currentLockedOrderStatus(long orderId) {
+        return jdbcClient.sql("SELECT status_code FROM grading_order WHERE id = :orderId FOR UPDATE")
+            .param("orderId", orderId)
+            .query(String.class)
+            .optional()
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Grading order not found"));
+    }
+
+    private void assertNoActiveGatewayPayment(long orderId) {
+        boolean active = !jdbcClient.sql(
+                """
+                SELECT id FROM payment_attempt
+                WHERE order_id = :orderId
+                  AND status_code IN ('creating', 'created', 'approved', 'pending', 'payer_action_required', 'creation_unknown', 'capture_unknown', 'capturing')
+                FOR UPDATE
+                """
+            )
+            .param("orderId", orderId)
+            .query(Long.class)
+            .list()
+            .isEmpty();
+        if (active) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "An online payment attempt is still active for this order");
+        }
+    }
+
+    private void requireNoRecordedFundsForCancellation(long orderId) {
+        boolean fundsRecorded = jdbcClient.sql(
+                """
+                SELECT status_code FROM payment_record
+                WHERE order_id = :orderId AND direction_code = 'receivable' AND payment_type_code = 'grading_fee'
+                FOR UPDATE
+                """
+            )
+            .param("orderId", orderId)
+            .query(String.class)
+            .list()
+            .stream()
+            .anyMatch(status -> Set.of("proof_submitted", "confirmed", "refunded", "reversed").contains(status));
+        if (fundsRecorded) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "This order has recorded payment activity and requires a dedicated financial review before cancellation");
+        }
     }
 
     private static String normalizePaymentProvider(String value) {
@@ -1270,6 +1947,9 @@ public class CustomerPortalService {
 
     private static String statusTitle(String status) {
         return switch (status) {
+            case "admission_review" -> "Application under review";
+            case "terms_confirmation" -> "Confirm quote and terms";
+            case "payment_expired" -> "Payment deadline expired";
             case "awaiting_payment" -> "Awaiting payment";
             case "payment_review" -> "Payment under review";
             case "awaiting_inbound" -> "Awaiting inbound shipment";
@@ -1355,8 +2035,32 @@ public class CustomerPortalService {
         String returnCountry,
         String customerNote,
         List<LanguageGroupRequest> languageGroups,
-        List<OrderItemRequest> items
+        List<OrderItemRequest> items,
+        String currencyCode,
+        BigDecimal quotedTotalAmount,
+        String quotedCurrencyCode
     ) {
+        public CreateOrderRequest(
+            String serviceLevel, Long returnAddressId, Boolean saveReturnAddress, String returnShippingOptionCode,
+            String contactName, String contactPhone, String returnAddressLine1, String returnAddressLine2,
+            String returnCity, String returnRegion, String returnPostalCode, String returnCountry, String customerNote,
+            List<LanguageGroupRequest> languageGroups, List<OrderItemRequest> items
+        ) {
+            this(serviceLevel, returnAddressId, saveReturnAddress, returnShippingOptionCode, contactName, contactPhone,
+                returnAddressLine1, returnAddressLine2, returnCity, returnRegion, returnPostalCode, returnCountry,
+                customerNote, languageGroups, items, "USD", null, null);
+        }
+
+        public CreateOrderRequest(
+            String serviceLevel, Long returnAddressId, Boolean saveReturnAddress, String returnShippingOptionCode,
+            String contactName, String contactPhone, String returnAddressLine1, String returnAddressLine2,
+            String returnCity, String returnRegion, String returnPostalCode, String returnCountry, String customerNote,
+            List<LanguageGroupRequest> languageGroups, List<OrderItemRequest> items, String currencyCode
+        ) {
+            this(serviceLevel, returnAddressId, saveReturnAddress, returnShippingOptionCode, contactName, contactPhone,
+                returnAddressLine1, returnAddressLine2, returnCity, returnRegion, returnPostalCode, returnCountry,
+                customerNote, languageGroups, items, currencyCode, null, null);
+        }
     }
 
     public record LanguageGroupRequest(String languageCode, Integer quantity) {
@@ -1365,18 +2069,37 @@ public class CustomerPortalService {
     public record OrderItemRequest(
         String cardName,
         String brandName,
+        String year,
+        String rarity,
+        String productType,
+        String category,
         String setName,
         String cardNumber,
         String languageCode,
         BigDecimal declaredValue,
-        String itemNote
+        String itemNote,
+        Long frontPhotoId,
+        Long backPhotoId
     ) {
+        public OrderItemRequest(
+            String cardName, String brandName, String setName, String cardNumber,
+            String languageCode, BigDecimal declaredValue, String itemNote
+        ) {
+            this(cardName, brandName, null, null, null, null, setName, cardNumber,
+                languageCode, declaredValue, itemNote, null, null);
+        }
     }
 
     public record SubmitPaymentProofRequest(String provider, String payerReference, String proofReference) {
     }
 
     public record PaymentSessionRequest(String provider) {
+    }
+
+    public record WalletPaymentRequest(String idempotencyKey) {
+    }
+
+    public record CancelOrderRequest(String reason) {
     }
 
     public record PaymentSessionResponse(
@@ -1423,6 +2146,7 @@ public class CustomerPortalService {
         long id,
         String orderNo,
         String statusCode,
+        String admissionStatus,
         String serviceLevelCode,
         int totalCardCount,
         BigDecimal totalAmount,
@@ -1437,6 +2161,7 @@ public class CustomerPortalService {
         long id,
         String orderNo,
         String statusCode,
+        String admissionStatus,
         String serviceLevelCode,
         String returnShippingOptionCode,
         String returnShippingOptionName,
@@ -1476,16 +2201,30 @@ public class CustomerPortalService {
         int itemNo,
         String cardName,
         String brandName,
+        String year,
+        String rarity,
+        String productType,
+        String category,
         String setName,
         String cardNumber,
         String languageCode,
         BigDecimal declaredValue,
         String itemNote,
+        Long frontPhotoId,
+        Long backPhotoId,
         String statusCode,
         Long gradingSubmissionId,
         String gradingCertId,
         String gradingStatusCode
     ) {
+        public OrderItemResponse(
+            long id, int itemNo, String cardName, String brandName, String setName, String cardNumber,
+            String languageCode, BigDecimal declaredValue, String itemNote, String statusCode,
+            Long gradingSubmissionId, String gradingCertId, String gradingStatusCode
+        ) {
+            this(id, itemNo, cardName, brandName, null, null, null, null, setName, cardNumber, languageCode,
+                declaredValue, itemNote, null, null, statusCode, gradingSubmissionId, gradingCertId, gradingStatusCode);
+        }
     }
 
     public record PaymentRecord(
@@ -1550,6 +2289,17 @@ public class CustomerPortalService {
         LocalDateTime boundAt,
         String displayName,
         String email
+    ) {
+    }
+
+    private record OrderItemLinkRow(Long submissionId) {
+    }
+
+    private record OrderRoutingRow(Long businessLineId, Long workCenterId) {
+    }
+
+    private record SubmissionRoutingRow(
+        String orderOriginCode, Long businessLineId, Long workCenterId, Long entryByUserId
     ) {
     }
 }

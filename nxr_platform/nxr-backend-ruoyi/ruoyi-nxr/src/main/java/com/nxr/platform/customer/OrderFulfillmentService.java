@@ -1,5 +1,6 @@
 package com.nxr.platform.customer;
 
+import com.nxr.platform.notifications.NotificationOutboxService;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
@@ -12,10 +13,12 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import org.springframework.http.HttpStatus;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.core.simple.SimpleJdbcInsert;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -43,9 +46,23 @@ public class OrderFulfillmentService {
     private final SimpleJdbcInsert ticketMessageInsert;
     private final SimpleJdbcInsert shippingChangeInsert;
     private final SimpleJdbcInsert paymentInsert;
+    private final NotificationOutboxService notificationOutboxService;
+    private final OrderWorkbenchService orderWorkbenchService;
 
     public OrderFulfillmentService(JdbcClient jdbcClient, JdbcTemplate jdbcTemplate) {
+        this(jdbcClient, jdbcTemplate, null, null);
+    }
+
+    @Autowired
+    public OrderFulfillmentService(
+        JdbcClient jdbcClient,
+        JdbcTemplate jdbcTemplate,
+        NotificationOutboxService notificationOutboxService,
+        OrderWorkbenchService orderWorkbenchService
+    ) {
         this.jdbcClient = jdbcClient;
+        this.notificationOutboxService = notificationOutboxService;
+        this.orderWorkbenchService = orderWorkbenchService;
         this.addressInsert = new SimpleJdbcInsert(jdbcTemplate)
             .withTableName("customer_address")
             .usingColumns(
@@ -204,7 +221,12 @@ public class OrderFulfillmentService {
     }
 
     public List<ShippingOption> listShippingOptions(String country, boolean includeInactive) {
+        return listShippingOptions(country, null, includeInactive);
+    }
+
+    public List<ShippingOption> listShippingOptions(String country, String requestedCurrency, boolean includeInactive) {
         String normalizedCountry = clean(country, 128).toUpperCase(Locale.ROOT);
+        String currency = requestedCurrency == null || requestedCurrency.isBlank() ? "" : normalizeCurrency(requestedCurrency);
         return jdbcClient.sql(
                 """
                 SELECT id, option_code, display_name, description, country_scope, currency_code,
@@ -218,6 +240,7 @@ public class OrderFulfillmentService {
             .query((rs, rowNum) -> mapShippingOption(rs))
             .list()
             .stream()
+            .filter(option -> currency.isEmpty() || option.currencyCode().equalsIgnoreCase(currency))
             .filter(option -> includeInactive || appliesToCountry(option.countryScope(), normalizedCountry))
             .toList();
     }
@@ -243,20 +266,42 @@ public class OrderFulfillmentService {
     }
 
     public ServicePrice activeServicePrice() {
+        return activeServicePrice("USD");
+    }
+
+    public ServicePrice activeServicePrice(String requestedCurrency) {
+        String currency = normalizeCurrency(requestedCurrency);
         return jdbcClient.sql(
                 """
                 SELECT price_code, display_name, unit_price, currency_code, version_no
                 FROM grading_service_price
-                WHERE price_code = 'basic_grading' AND is_active = 1
+                WHERE price_code = 'basic_grading' AND currency_code = :currency AND is_active = 1
                 LIMIT 1
                 """
             )
+            .param("currency", currency)
             .query((rs, rowNum) -> new ServicePrice(
                 rs.getString("price_code"), rs.getString("display_name"), rs.getBigDecimal("unit_price"),
                 rs.getString("currency_code"), rs.getInt("version_no")
             ))
             .optional()
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Grading price is not configured"));
+    }
+
+    public List<ServicePrice> activeServicePrices() {
+        return jdbcClient.sql(
+                """
+                SELECT price_code, display_name, unit_price, currency_code, version_no
+                FROM grading_service_price
+                WHERE price_code = 'basic_grading' AND is_active = 1
+                ORDER BY currency_code
+                """
+            )
+            .query((rs, rowNum) -> new ServicePrice(
+                rs.getString("price_code"), rs.getString("display_name"), rs.getBigDecimal("unit_price"),
+                rs.getString("currency_code"), rs.getInt("version_no")
+            ))
+            .list();
     }
 
     @Transactional
@@ -269,7 +314,7 @@ public class OrderFulfillmentService {
                 UPDATE grading_service_price
                 SET display_name = :displayName, unit_price = :unitPrice, currency_code = :currencyCode,
                     is_active = 1, version_no = version_no + 1, updated_at = CURRENT_TIMESTAMP
-                WHERE price_code = 'basic_grading'
+                WHERE price_code = 'basic_grading' AND currency_code = :currencyCode
                 """
             )
             .param("displayName", displayName)
@@ -289,7 +334,7 @@ public class OrderFulfillmentService {
                 .param("currencyCode", currencyCode)
                 .update();
         }
-        return activeServicePrice();
+        return activeServicePrice(currencyCode);
     }
 
     @Transactional
@@ -421,15 +466,19 @@ public class OrderFulfillmentService {
         return new IntakeLookup(order.id(), order.orderNo(), order.statusCode(), order.totalCardCount(), order.intakeCode());
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public AdminOperationsResponse receiveOrder(long orderId, long adminUserId, ReceiveOrderRequest request) {
-        OrderRow order = requireOrder(orderId);
+        OrderRow order = lockOrder(orderId);
+        assertPaymentNotOnHold(order);
         if (!Set.of("awaiting_inbound", "inbound_shipped", "intake_exception").contains(order.statusCode())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This order is not ready for warehouse intake");
         }
         String suppliedCode = requireText(request.intakeCode(), "Intake code", 64).toUpperCase(Locale.ROOT);
         if (order.intakeCode() == null || !order.intakeCode().equalsIgnoreCase(suppliedCode)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Intake code does not match this order");
+        }
+        if (orderWorkbenchService != null) {
+            orderWorkbenchService.assertIntakeReady(order.id());
         }
         int receivedCount = request.receivedCount() == null ? -1 : request.receivedCount();
         if (receivedCount < 0 || receivedCount > 1000) {
@@ -472,23 +521,27 @@ public class OrderFulfillmentService {
         return loadAdminOperations(order.id());
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public AdminOperationsResponse createException(long orderId, long adminUserId, OrderExceptionRequest request) {
-        OrderRow order = requireOrder(orderId);
+        OrderRow order = lockOrder(orderId);
         String type = normalizeExceptionType(request.exceptionTypeCode());
         createExceptionInternal(
             order.id(), adminUserId, type,
             blankToNull(clean(request.title(), 255)) == null ? exceptionTitle(type) : clean(request.title(), 255),
             blankToNull(clean(request.detail(), 4000)), request.visibleToCustomer() == null || request.visibleToCustomer()
         );
-        updateOrderStatus(order.id(), "intake_exception");
-        addTimeline(order.id(), "order_exception", "Order exception recorded", request.visibleToCustomer() == Boolean.FALSE ? "Our team is reviewing the order." : clean(request.detail(), 1000), "intake_exception", true, "admin", null, adminUserId);
+        String timelineStatus = order.statusCode();
+        if (!"payment_exception".equals(order.statusCode())) {
+            updateOrderStatus(order.id(), "intake_exception");
+            timelineStatus = "intake_exception";
+        }
+        addTimeline(order.id(), "order_exception", "Order exception recorded", request.visibleToCustomer() == Boolean.FALSE ? "Our team is reviewing the order." : clean(request.detail(), 1000), timelineStatus, true, "admin", null, adminUserId);
         return loadAdminOperations(order.id());
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public AdminOperationsResponse resolveException(long orderId, long exceptionId, long adminUserId, ResolveExceptionRequest request) {
-        requireOrder(orderId);
+        OrderRow order = lockOrder(orderId);
         String note = requireText(request.resolutionNote(), "Resolution note", 4000);
         int updated = jdbcClient.sql(
                 """
@@ -510,17 +563,18 @@ public class OrderFulfillmentService {
             .param("orderId", orderId)
             .query(Integer.class)
             .single();
-        if (openCount == 0) {
+        if (openCount == 0 && !"payment_exception".equals(order.statusCode())) {
             completeReceipt(orderId, adminUserId);
         } else {
-            addTimeline(orderId, "exception_resolved", "One order exception was resolved", note, "intake_exception", true, "admin", null, adminUserId);
+            addTimeline(orderId, "exception_resolved", "One order exception was resolved", note, order.statusCode(), true, "admin", null, adminUserId);
         }
         return loadAdminOperations(orderId);
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public AdminOperationsResponse updateWorkTask(long orderId, long taskId, long adminUserId, WorkTaskUpdateRequest request) {
-        OrderRow order = requireOrder(orderId);
+        OrderRow order = lockOrder(orderId);
+        assertPaymentNotOnHold(order);
         WorkTaskRecord task = requireWorkTask(order.id(), taskId);
         String status = normalizeWorkTaskStatus(request.statusCode());
         if (task.statusCode().equals("completed") && !status.equals("completed")) {
@@ -558,9 +612,10 @@ public class OrderFulfillmentService {
         return loadAdminOperations(order.id());
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public AdminOperationsResponse createWorkTask(long orderId, long adminUserId, WorkTaskRequest request) {
-        OrderRow order = requireOrder(orderId);
+        OrderRow order = lockOrder(orderId);
+        assertPaymentNotOnHold(order);
         String type = normalizeWorkTaskType(request.taskTypeCode());
         Long itemId = request.orderItemId();
         if (itemId != null) {
@@ -577,9 +632,10 @@ public class OrderFulfillmentService {
         return loadAdminOperations(order.id());
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public AdminOperationsResponse qualityCheck(long orderId, long adminUserId, QualityCheckRequest request) {
-        OrderRow order = requireOrder(orderId);
+        OrderRow order = lockOrder(orderId);
+        assertPaymentNotOnHold(order);
         if (!Set.of("review", "quality_check", "quality_hold").contains(order.statusCode())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Quality check is available after grading review");
         }
@@ -630,9 +686,10 @@ public class OrderFulfillmentService {
         return loadAdminOperations(order.id());
     }
 
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED)
     public AdminOperationsResponse addTrackingEvent(long orderId, long shipmentId, long adminUserId, TrackingEventRequest request) {
-        OrderRow order = requireOrder(orderId);
+        OrderRow order = lockOrder(orderId);
+        assertIndividualShipmentAllowed(order.id());
         ShipmentRow shipment = requireShipment(order.id(), shipmentId);
         String eventCode = clean(request.eventCode(), 32).toLowerCase(Locale.ROOT);
         if (!TRACKING_EVENTS.contains(eventCode)) {
@@ -652,24 +709,59 @@ public class OrderFulfillmentService {
         values.put("event_time", eventTime);
         values.put("created_by_user_id", adminUserId);
         trackingInsert.execute(values);
-        jdbcClient.sql(
+        if (!"delivered".equals(shipment.statusCode())) {
+            jdbcClient.sql(
+                    """
+                    UPDATE order_shipment
+                    SET status_code = :status,
+                        delivered_at = CASE WHEN :status = 'delivered' THEN :eventTime ELSE delivered_at END,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = :shipmentId
+                    """
+                )
+                .param("status", eventCode)
+                .param("eventTime", eventTime)
+                .param("shipmentId", shipment.id())
+                .update();
+        }
+        boolean outboundDelivered = eventCode.equals("delivered")
+            && shipment.directionCode().equals("outbound")
+            && order.statusCode().equals("return_shipped");
+        if (outboundDelivered) {
+            jdbcClient.sql("UPDATE grading_order_item SET status_code = 'delivered', updated_at = CURRENT_TIMESTAMP WHERE order_id = :orderId")
+                .param("orderId", order.id())
+                .update();
+            updateOrderStatus(order.id(), "delivered");
+            if (notificationOutboxService != null) {
+                notificationOutboxService.enqueueOrderStatus(
+                    order.customerId(), order.orderNo(), "delivered", "Your return shipment was delivered."
+                );
+            }
+        }
+        addTimeline(order.id(), "shipment_" + eventCode, title, clean(request.eventDetail(), 1000), outboundDelivered ? "delivered" : order.statusCode(), true, "admin", null, adminUserId);
+        return loadAdminOperations(order.id());
+    }
+
+    private void assertIndividualShipmentAllowed(long orderId) {
+        String batchNo = jdbcClient.sql(
                 """
-                UPDATE order_shipment
-                SET status_code = :status,
-                    delivered_at = CASE WHEN :status = 'delivered' THEN :eventTime ELSE delivered_at END,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = :shipmentId
+                SELECT b.batch_no
+                FROM merchant_order_batch_item bi
+                JOIN merchant_order_batch b ON b.id = bi.batch_id
+                WHERE bi.order_id = :orderId AND b.status_code <> 'cancelled'
+                LIMIT 1
                 """
             )
-            .param("status", eventCode)
-            .param("eventTime", eventTime)
-            .param("shipmentId", shipment.id())
-            .update();
-        if (eventCode.equals("delivered") && shipment.directionCode().equals("outbound")) {
-            updateOrderStatus(order.id(), "delivered");
+            .param("orderId", orderId)
+            .query(String.class)
+            .optional()
+            .orElse(null);
+        if (batchNo != null) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "Order belongs to merchant batch " + batchNo + "; use the batch's shared shipment workflow"
+            );
         }
-        addTimeline(order.id(), "shipment_" + eventCode, title, clean(request.eventDetail(), 1000), eventCode.equals("delivered") ? "delivered" : order.statusCode(), true, "admin", null, adminUserId);
-        return loadAdminOperations(order.id());
     }
 
     @Transactional
@@ -740,7 +832,8 @@ public class OrderFulfillmentService {
 
     @Transactional
     public ShippingChangeRecord requestShippingChange(long customerId, String orderNo, ShippingChangeRequest request) {
-        OrderRow order = requireCustomerOrder(customerId, orderNo);
+        OrderRow requestedOrder = requireCustomerOrder(customerId, orderNo);
+        OrderRow order = lockOrder(requestedOrder.id());
         assertShippingChangeOpen(order);
         assertNoOpenShippingChange(order);
         EffectiveShippingOption current = effectiveShippingOption(order.id());
@@ -776,7 +869,7 @@ public class OrderFulfillmentService {
 
     @Transactional
     public ShippingChangeRecord reviewShippingChange(long orderId, long requestId, long adminUserId, ReviewShippingChangeRequest request) {
-        OrderRow order = requireOrder(orderId);
+        OrderRow order = lockOrder(orderId);
         assertShippingChangeOpen(order);
         ShippingChangeRecord change = requireShippingChange(order.id(), requestId);
         if (!change.statusCode().equals("requested")) {
@@ -806,13 +899,13 @@ public class OrderFulfillmentService {
             paymentId = paymentInsert.executeAndReturnKey(paymentValues).longValue();
             status = "awaiting_settlement";
         }
-        jdbcClient.sql(
+        int reviewed = jdbcClient.sql(
                 """
                 UPDATE shipping_change_request
                 SET status_code = :status, payment_id = :paymentId, reviewed_by_user_id = :adminUserId,
                     reviewed_at = CURRENT_TIMESTAMP, settled_at = CASE WHEN :status = 'settled' THEN CURRENT_TIMESTAMP ELSE NULL END,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE id = :requestId AND order_id = :orderId
+                WHERE id = :requestId AND order_id = :orderId AND status_code = 'requested'
                 """
             )
             .param("status", status)
@@ -821,6 +914,9 @@ public class OrderFulfillmentService {
             .param("requestId", requestId)
             .param("orderId", order.id())
             .update();
+        if (reviewed != 1) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Shipping change request was reviewed concurrently");
+        }
         if (change.ticketId() != null) {
             insertTicketMessage(change.ticketId(), "admin", null, adminUserId, note, null);
         }
@@ -830,38 +926,46 @@ public class OrderFulfillmentService {
 
     @Transactional
     public ShippingChangeRecord settleShippingChange(long orderId, long requestId, long adminUserId, SettleShippingChangeRequest request) {
-        OrderRow order = requireOrder(orderId);
+        OrderRow order = lockOrder(orderId);
+        assertShippingChangeOpen(order);
         ShippingChangeRecord change = requireShippingChange(order.id(), requestId);
         if (!change.statusCode().equals("awaiting_settlement") || change.paymentId() == null) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Shipping change is not awaiting settlement");
         }
         boolean surcharge = change.differenceAmount().signum() > 0;
         String nextPaymentStatus = surcharge ? "confirmed" : "refunded";
-        jdbcClient.sql(
+        int paymentUpdated = jdbcClient.sql(
                 """
                 UPDATE payment_record
                 SET status_code = :status, provider_transaction_id = :transactionId,
                     confirmed_by_user_id = :adminUserId, confirmed_at = CURRENT_TIMESTAMP,
                     note = :note, updated_at = CURRENT_TIMESTAMP
-                WHERE id = :paymentId
+                WHERE id = :paymentId AND status_code = :expectedStatus
                 """
             )
             .param("status", nextPaymentStatus)
+            .param("expectedStatus", surcharge ? "pending" : "refund_pending")
             .param("transactionId", blankToNull(clean(request.providerTransactionId(), 255)))
             .param("adminUserId", adminUserId)
             .param("note", requireText(request.note(), "Settlement note", 2000))
             .param("paymentId", change.paymentId())
             .update();
-        jdbcClient.sql(
+        if (paymentUpdated != 1) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Shipping adjustment was settled concurrently");
+        }
+        int changeUpdated = jdbcClient.sql(
                 """
                 UPDATE shipping_change_request
                 SET status_code = 'settled', settled_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-                WHERE id = :requestId AND order_id = :orderId
+                WHERE id = :requestId AND order_id = :orderId AND status_code = 'awaiting_settlement'
                 """
             )
             .param("requestId", requestId)
             .param("orderId", order.id())
             .update();
+        if (changeUpdated != 1) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Shipping change request was settled concurrently");
+        }
         addTimeline(order.id(), surcharge ? "shipping_surcharge_paid" : "shipping_refund_recorded", surcharge ? "Shipping surcharge paid" : "Shipping refund recorded", clean(request.note(), 1000), order.statusCode(), true, "admin", null, adminUserId);
         return requireShippingChange(order.id(), requestId);
     }
@@ -906,7 +1010,17 @@ public class OrderFulfillmentService {
         if (pendingChanges > 0) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Settle the return shipping change before creating the return label");
         }
+        if (orderWorkbenchService != null) {
+            orderWorkbenchService.assertPackingReady(order.id());
+        }
         return effectiveShippingOption(order.id());
+    }
+
+    /** Hook for every administrative status mutation, including the generic status endpoint. */
+    public void assertManualStatusTransitionAllowed(long orderId, String targetStatus) {
+        if (orderWorkbenchService != null) {
+            orderWorkbenchService.assertManualStatusTransitionAllowed(orderId, targetStatus);
+        }
     }
 
     @Transactional
@@ -937,7 +1051,7 @@ public class OrderFulfillmentService {
             order.id(), order.orderNo(), order.intakeCode(), order.totalCardCount(),
             loadReceipts(order.id()), loadExceptions(order.id(), false), loadWorkTasks(order.id()),
             loadTrackingEvents(order.id()), listTickets(order.id(), null, true), listShippingChanges(order.id()),
-            effectiveShippingOption(order.id())
+            effectiveShippingOption(order.id()), merchantBatchNumber(order.id())
         );
     }
 
@@ -1038,6 +1152,12 @@ public class OrderFulfillmentService {
             .update();
         ensureInitialWorkTasks(orderId);
         addTimeline(orderId, "warehouse_received", "Cards received and counted", "Warehouse intake is complete.", "received", true, "admin", null, adminUserId);
+        if (notificationOutboxService != null) {
+            OrderRow order = requireOrder(orderId);
+            notificationOutboxService.enqueueOrderStatus(
+                order.customerId(), order.orderNo(), "received", "NXR received and counted your cards."
+            );
+        }
     }
 
     private void ensureInitialWorkTasks(long orderId) {
@@ -1280,6 +1400,42 @@ public class OrderFulfillmentService {
         if (order.shippingLabelCreatedAt() != null || Set.of("return_shipped", "delivered", "cancelled").contains(order.statusCode())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Return shipping can no longer be changed after the label is created");
         }
+        if (!Set.of(
+            "awaiting_inbound", "inbound_shipped", "intake_exception", "received", "grading", "review",
+            "quality_check", "quality_hold", "completed"
+        ).contains(order.statusCode()) || !hasConfirmedGradingPayment(order.id())) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "Return shipping can only be changed after the grading payment is confirmed and before return shipping"
+            );
+        }
+        if (merchantBatchNumber(order.id()) != null) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "A consolidated merchant batch must change return shipping through batch support"
+            );
+        }
+    }
+
+    private boolean hasConfirmedGradingPayment(long orderId) {
+        return jdbcClient.sql(
+                "SELECT COUNT(*) FROM payment_record WHERE order_id=:orderId AND direction_code='receivable' "
+                    + "AND payment_type_code='grading_fee' AND status_code='confirmed'"
+            )
+            .param("orderId", orderId)
+            .query(Integer.class)
+            .single() > 0;
+    }
+
+    private String merchantBatchNumber(long orderId) {
+        return jdbcClient.sql(
+                "SELECT b.batch_no FROM merchant_order_batch_item bi "
+                    + "JOIN merchant_order_batch b ON b.id=bi.batch_id WHERE bi.order_id=:orderId"
+            )
+            .param("orderId", orderId)
+            .query(String.class)
+            .optional()
+            .orElse(null);
     }
 
     private void assertNoOpenShippingChange(OrderRow order) {
@@ -1302,6 +1458,20 @@ public class OrderFulfillmentService {
             .query((rs, rowNum) -> mapOrderRow(rs))
             .optional()
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Grading order not found"));
+    }
+
+    private OrderRow lockOrder(long orderId) {
+        return jdbcClient.sql(orderRowSelect() + " WHERE id = :orderId FOR UPDATE")
+            .param("orderId", orderId)
+            .query((rs, rowNum) -> mapOrderRow(rs))
+            .optional()
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Grading order not found"));
+    }
+
+    private static void assertPaymentNotOnHold(OrderRow order) {
+        if ("payment_exception".equals(order.statusCode())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Order work is paused while payment needs attention");
+        }
     }
 
     private OrderRow requireOrder(long orderId) {
@@ -1867,7 +2037,8 @@ public class OrderFulfillmentService {
         List<TrackingEvent> trackingEvents,
         List<TicketRecord> tickets,
         List<ShippingChangeRecord> shippingChanges,
-        EffectiveShippingOption effectiveShippingOption
+        EffectiveShippingOption effectiveShippingOption,
+        String merchantBatchNo
     ) {
     }
 

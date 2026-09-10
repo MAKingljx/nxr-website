@@ -1,11 +1,13 @@
 package com.nxr.platform.admin;
 
 import com.nxr.platform.shared.ProductTypePolicy;
+import com.nxr.platform.customer.MerchantWalletService;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
 import org.springframework.http.HttpStatus;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,9 +18,62 @@ import org.springframework.web.server.ResponseStatusException;
 public class AdminCustomerService {
 
     private final JdbcClient jdbcClient;
+    private final MerchantWalletService merchantWalletService;
 
     public AdminCustomerService(JdbcClient jdbcClient) {
+        this(jdbcClient, null);
+    }
+
+    @Autowired
+    public AdminCustomerService(JdbcClient jdbcClient, MerchantWalletService merchantWalletService) {
         this.jdbcClient = jdbcClient;
+        this.merchantWalletService = merchantWalletService;
+    }
+
+    public MerchantWalletService.MerchantProfile merchantProfile(long customerId) {
+        requireCustomer(customerId);
+        return requireWalletService().merchantProfile(customerId);
+    }
+
+    public MerchantWalletService.MerchantProfile saveMerchantProfile(
+        long customerId, MerchantWalletService.MerchantProfileRequest request
+    ) {
+        requireCustomer(customerId);
+        return requireWalletService().saveMerchantProfile(customerId, request);
+    }
+
+    public List<MerchantWalletService.WalletBalance> wallets(long customerId) {
+        requireCustomer(customerId);
+        return requireWalletService().listWallets(customerId);
+    }
+
+    public MerchantWalletService.WalletTransactionPage walletTransactions(
+        long customerId, String currencyCode, int page, int pageSize
+    ) {
+        requireCustomer(customerId);
+        return requireWalletService().listTransactions(customerId, currencyCode, page, pageSize);
+    }
+
+    public MerchantWalletService.RechargePage walletRecharges(
+        long customerId, String status, int page, int pageSize
+    ) {
+        requireCustomer(customerId);
+        return requireWalletService().listRecharges(customerId, status, page, pageSize);
+    }
+
+    public MerchantWalletService.RechargeRecord reviewRecharge(
+        long customerId, long rechargeId, long adminUserId, boolean approved,
+        MerchantWalletService.RechargeReviewRequest request
+    ) {
+        requireCustomer(customerId);
+        return requireWalletService().reviewRecharge(customerId, rechargeId, adminUserId, approved, request);
+    }
+
+    private MerchantWalletService requireWalletService() {
+        if (merchantWalletService == null) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Merchant wallet service is unavailable");
+        }
+        return merchantWalletService;
     }
 
     public CustomerListResponse listCustomers(int requestedPage, int requestedPageSize, String requestedStatus, String requestedQuery) {
@@ -135,7 +190,13 @@ public class AdminCustomerService {
         if (!accountType.equals("customer") && !accountType.equals("merchant")) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Customer type must be customer or merchant");
         }
-        requireCustomer(customerId);
+        CustomerDetailResponse current = requireCustomer(customerId);
+        if (accountType.equals("customer")
+            && current.customer().accountTypeCode().equals("merchant")
+            && merchantWalletService != null
+            && merchantWalletService.hasWalletHistory(customerId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "A merchant with wallet history cannot be converted to a customer account");
+        }
         jdbcClient.sql("UPDATE customer_account SET account_type_code = :accountType WHERE id = :customerId")
             .param("accountType", accountType)
             .param("customerId", customerId)

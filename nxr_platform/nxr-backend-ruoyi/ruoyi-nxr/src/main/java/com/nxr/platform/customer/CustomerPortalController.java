@@ -1,5 +1,6 @@
 package com.nxr.platform.customer;
 
+import com.nxr.platform.admission.OrderAdmissionService;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Map;
@@ -30,6 +31,8 @@ public class CustomerPortalController {
     private final CustomerPortalService customerPortalService;
     private final OrderFulfillmentService orderFulfillmentService;
     private final MerchantBulkOrderService merchantBulkOrderService;
+    private final MerchantWalletService merchantWalletService;
+    private final OrderAdmissionService orderAdmissionService;
 
     @Value("${nxr.payments.callback-token:}")
     private String paymentCallbackToken;
@@ -38,12 +41,16 @@ public class CustomerPortalController {
         CustomerAuthService customerAuthService,
         CustomerPortalService customerPortalService,
         OrderFulfillmentService orderFulfillmentService,
-        MerchantBulkOrderService merchantBulkOrderService
+        MerchantBulkOrderService merchantBulkOrderService,
+        MerchantWalletService merchantWalletService,
+        OrderAdmissionService orderAdmissionService
     ) {
         this.customerAuthService = customerAuthService;
         this.customerPortalService = customerPortalService;
         this.orderFulfillmentService = orderFulfillmentService;
         this.merchantBulkOrderService = merchantBulkOrderService;
+        this.merchantWalletService = merchantWalletService;
+        this.orderAdmissionService = orderAdmissionService;
     }
 
     @PostMapping("/auth/register")
@@ -102,14 +109,29 @@ public class CustomerPortalController {
 
     @GetMapping("/shipping-options")
     public java.util.List<OrderFulfillmentService.ShippingOption> shippingOptions(
-        @RequestParam(required = false) String country
+        @RequestParam(required = false) String country,
+        @RequestParam(required = false) String currencyCode
     ) {
-        return orderFulfillmentService.listShippingOptions(country, false);
+        return orderFulfillmentService.listShippingOptions(country, currencyCode, false);
     }
 
     @GetMapping("/service-price")
-    public OrderFulfillmentService.ServicePrice servicePrice() {
-        return orderFulfillmentService.activeServicePrice();
+    public OrderFulfillmentService.ServicePrice servicePrice(
+        @RequestParam(required = false) String currencyCode
+    ) {
+        return currencyCode == null || currencyCode.isBlank()
+            ? orderFulfillmentService.activeServicePrice()
+            : orderFulfillmentService.activeServicePrice(currencyCode);
+    }
+
+    @GetMapping("/service-prices")
+    public java.util.List<OrderFulfillmentService.ServicePrice> servicePrices() {
+        return orderFulfillmentService.activeServicePrices();
+    }
+
+    @GetMapping("/service-price/{currencyCode}")
+    public OrderFulfillmentService.ServicePrice servicePriceByPath(@PathVariable String currencyCode) {
+        return orderFulfillmentService.activeServicePrice(currencyCode);
     }
 
     @GetMapping("/cards/{certId}/community")
@@ -150,6 +172,14 @@ public class CustomerPortalController {
         return customerPortalService.createOrder(current(customerToken).id(), request);
     }
 
+    @GetMapping("/order-admission/config")
+    public OrderAdmissionService.PublicConfig orderAdmissionConfig(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken
+    ) {
+        current(customerToken);
+        return orderAdmissionService.publicConfig();
+    }
+
     @GetMapping("/orders")
     public CustomerPortalService.OrderListResponse listOrders(
         @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
@@ -165,6 +195,32 @@ public class CustomerPortalController {
         @PathVariable String orderNo
     ) {
         return customerPortalService.requireCustomerOrder(current(customerToken).id(), orderNo);
+    }
+
+    @GetMapping("/orders/{orderNo}/admission")
+    public OrderAdmissionService.AdmissionResponse orderAdmission(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
+        @PathVariable String orderNo
+    ) {
+        return orderAdmissionService.requireCustomerAdmission(current(customerToken).id(), orderNo);
+    }
+
+    @PostMapping("/orders/{orderNo}/admission/resubmit")
+    public OrderAdmissionService.AdmissionResponse resubmitAdmission(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
+        @PathVariable String orderNo,
+        @RequestBody OrderAdmissionService.ResubmitRequest request
+    ) {
+        return orderAdmissionService.resubmit(current(customerToken).id(), orderNo, request);
+    }
+
+    @PostMapping("/orders/{orderNo}/admission/accept-terms")
+    public OrderAdmissionService.AdmissionResponse acceptAdmissionTerms(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
+        @PathVariable String orderNo,
+        @RequestBody OrderAdmissionService.AcceptTermsRequest request
+    ) {
+        return orderAdmissionService.acceptTerms(current(customerToken).id(), orderNo, request);
     }
 
     @PostMapping("/orders/{orderNo}/payment-proof")
@@ -183,6 +239,24 @@ public class CustomerPortalController {
         @RequestBody CustomerPortalService.PaymentSessionRequest request
     ) {
         return customerPortalService.createPaymentSession(current(customerToken).id(), orderNo, request);
+    }
+
+    @PostMapping("/orders/{orderNo}/wallet-payment")
+    public CustomerPortalService.OrderDetailResponse payOrderFromWallet(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
+        @PathVariable String orderNo,
+        @RequestBody CustomerPortalService.WalletPaymentRequest request
+    ) {
+        return customerPortalService.payOrderFromWallet(current(customerToken).id(), orderNo, request);
+    }
+
+    @PostMapping("/orders/{orderNo}/cancel")
+    public CustomerPortalService.OrderDetailResponse cancelOrder(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
+        @PathVariable String orderNo,
+        @RequestBody CustomerPortalService.CancelOrderRequest request
+    ) {
+        return customerPortalService.cancelCustomerOrder(current(customerToken).id(), orderNo, request);
     }
 
     @PostMapping("/orders/{orderNo}/inbound-shipment")
@@ -258,7 +332,69 @@ public class CustomerPortalController {
         @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
         @RequestBody MerchantBulkOrderService.BulkOrderRequest request
     ) {
-        return merchantBulkOrderService.createOrders(current(customerToken).id(), request);
+        long customerId = current(customerToken).id();
+        merchantWalletService.requireMerchant(customerId);
+        return merchantBulkOrderService.createOrders(customerId, request);
+    }
+
+    @GetMapping("/merchant/profile")
+    public MerchantWalletService.MerchantProfile merchantProfile(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken
+    ) {
+        return merchantWalletService.merchantProfile(current(customerToken).id());
+    }
+
+    @PutMapping("/merchant/profile")
+    public MerchantWalletService.MerchantProfile saveMerchantProfile(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
+        @RequestBody MerchantWalletService.MerchantProfileRequest request
+    ) {
+        return merchantWalletService.saveMerchantProfile(current(customerToken).id(), request);
+    }
+
+    @GetMapping("/merchant/wallets")
+    public java.util.List<MerchantWalletService.WalletBalance> merchantWallets(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken
+    ) {
+        return merchantWalletService.listWallets(current(customerToken).id());
+    }
+
+    @GetMapping("/merchant/wallet-transactions")
+    public MerchantWalletService.WalletTransactionPage walletTransactions(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
+        @RequestParam(required = false) String currencyCode,
+        @RequestParam(defaultValue = "1") int page,
+        @RequestParam(defaultValue = "20") int pageSize
+    ) {
+        return merchantWalletService.listTransactions(current(customerToken).id(), currencyCode, page, pageSize);
+    }
+
+    @GetMapping("/merchant/wallets/{currencyCode}/transactions")
+    public MerchantWalletService.WalletTransactionPage walletTransactionsByCurrency(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
+        @PathVariable String currencyCode,
+        @RequestParam(defaultValue = "1") int page,
+        @RequestParam(defaultValue = "20") int pageSize
+    ) {
+        return merchantWalletService.listTransactions(current(customerToken).id(), currencyCode, page, pageSize);
+    }
+
+    @GetMapping("/merchant/wallet-recharges")
+    public MerchantWalletService.RechargePage walletRecharges(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
+        @RequestParam(required = false) String status,
+        @RequestParam(defaultValue = "1") int page,
+        @RequestParam(defaultValue = "20") int pageSize
+    ) {
+        return merchantWalletService.listRecharges(current(customerToken).id(), status, page, pageSize);
+    }
+
+    @PostMapping("/merchant/wallet-recharges")
+    public MerchantWalletService.RechargeRecord createWalletRecharge(
+        @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
+        @RequestBody MerchantWalletService.RechargeRequest request
+    ) {
+        return merchantWalletService.createRecharge(current(customerToken).id(), request);
     }
 
     @PostMapping("/payments/callback/{provider}")

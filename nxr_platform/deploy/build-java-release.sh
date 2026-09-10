@@ -76,7 +76,7 @@ install -m 0644 "$PROJECT_ROOT/requirements-mysql.txt" \
   "$output_directory/scripts/requirements-mysql.txt"
 
 shopt -s nullglob
-sql_files=("$SQL_ROOT"/1[0-9]_*.sql)
+sql_files=("$SQL_ROOT"/[1-9][0-9]_*.sql)
 (( ${#sql_files[@]} > 0 )) || die "No versioned Java SQL files were found."
 install -m 0644 "${sql_files[@]}" "$output_directory/sql/"
 shopt -u nullglob

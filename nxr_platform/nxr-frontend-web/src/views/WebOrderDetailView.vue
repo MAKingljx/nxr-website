@@ -1,19 +1,25 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import OrderProgress from '../components/OrderProgress.vue'
+import OrderPayment from '../components/OrderPayment.vue'
+import OrderAdmission from '../components/OrderAdmission.vue'
+import PrivateOrderPhoto from '../components/PrivateOrderPhoto.vue'
+import type { Admission } from '../lib/orderApplication'
+import PortalQrCode from '../components/PortalQrCode.vue'
+import { formatMoney, orderStatusLabel, orderDisplayStatus } from '../lib/orderProgress'
+import { cancelOrder } from '../lib/merchant'
 import { useRouter } from 'vue-router'
 import LegacySiteFooter from '../components/LegacySiteFooter.vue'
 import LegacySiteNav from '../components/LegacySiteNav.vue'
 import {
   addInboundShipment,
   addSupportTicketMessage,
-  createPaymentSession,
   createSupportTicket,
   customerSession,
   fetchCustomerOrder,
   fetchOrderOperations,
   fetchShippingOptions,
   requestShippingChange,
-  submitPaymentProof,
   type CustomerOrderOperations,
   type GradingOrder,
   type ShippingOption,
@@ -24,14 +30,16 @@ const router = useRouter()
 const order = ref<GradingOrder | null>(null)
 const operations = ref<CustomerOrderOperations | null>(null)
 const shippingOptions = ref<ShippingOption[]>([])
-const paymentSession = ref<Awaited<ReturnType<typeof createPaymentSession>> | null>(null)
 const loading = ref(true)
 const errorMessage = ref('')
-const savingPayment = ref(false)
+const refreshing = ref(false)
+const lastRefreshed = ref('')
+const cancelling = ref(false)
+const cancelReason = ref('')
+let refreshGeneration = 0
 const savingShipment = ref(false)
 const savingTicket = ref(false)
 const savingShippingChange = ref(false)
-const paymentForm = ref({ provider: 'manual_transfer', payerReference: '', proofReference: '' })
 const shipmentForm = ref({ direction: 'inbound', carrierName: '', trackingNumber: '', note: '' })
 const ticketForm = ref({ categoryCode: 'inquiry', subject: '', message: '', attachmentReference: '' })
 const ticketReplies = ref<Record<number, string>>({})
@@ -39,9 +47,10 @@ const shippingChangeForm = ref({ newOptionCode: '', reason: '', attachmentRefere
 let refreshTimer: number | undefined
 
 const payment = computed(() => order.value?.payments.find((item) => item.directionCode === 'receivable' && item.paymentTypeCode === 'grading_fee') || null)
-const canSubmitPayment = computed(() => ['awaiting_payment', 'payment_review'].includes(order.value?.statusCode || ''))
-const canAddInboundShipment = computed(() => ['awaiting_inbound', 'inbound_shipped'].includes(order.value?.statusCode || ''))
-const canRequestShippingChange = computed(() => Boolean(order.value && !order.value.shippingLabelCreatedAt && !['return_shipped', 'delivered', 'cancelled'].includes(order.value.statusCode)))
+const admission = ref<Admission | null>(null)
+const canSubmitPayment = computed(() => Boolean(admission.value?.canPay) && ['awaiting_payment', 'payment_review'].includes(order.value?.statusCode || ''))
+const canAddInboundShipment = computed(() => !operations.value?.merchantBatchNo && ['awaiting_inbound', 'inbound_shipped'].includes(order.value?.statusCode || ''))
+const canRequestShippingChange = computed(() => Boolean(order.value && !operations.value?.merchantBatchNo && !order.value.shippingLabelCreatedAt && payment.value?.statusCode === 'confirmed' && ['awaiting_inbound', 'inbound_shipped', 'received', 'grading', 'review', 'completed'].includes(order.value.statusCode)))
 const otherReturnOptions = computed(() => shippingOptions.value.filter((item) => item.optionCode !== operations.value?.effectiveShippingOption.optionCode))
 
 function dateLabel(value: string | null) {
@@ -49,11 +58,17 @@ function dateLabel(value: string | null) {
 }
 
 function money(value: number | null | undefined, currency = order.value?.currencyCode || 'USD') {
-  return `${currency} ${Number(value || 0).toFixed(2)}`
+  return formatMoney(value || 0, currency)
 }
 
 function statusLabel(value: string | null | undefined) {
-  return (value || '-').replaceAll('_', ' ')
+  return orderStatusLabel(value)
+}
+
+function cardStatusLabel(value: string) {
+  const status = order.value?.statusCode || ''
+  if (['admission_review', 'terms_confirmation', 'payment_expired', 'awaiting_payment', 'payment_review', 'payment_exception', 'cancelled', 'delivered'].includes(status)) return orderStatusLabel(status)
+  return value === 'awaiting_inbound' ? 'Awaiting receipt' : orderStatusLabel(value)
 }
 
 async function refreshOrder(showLoader = false) {
@@ -61,46 +76,35 @@ async function refreshOrder(showLoader = false) {
     await router.replace(`/account/login?next=/account/orders/${encodeURIComponent(props.orderNo)}`)
     return
   }
+  const generation = ++refreshGeneration
+  const orderNo = props.orderNo
   if (showLoader) loading.value = true
+  refreshing.value = true
   try {
-    const [nextOrder, nextOperations] = await Promise.all([
-      fetchCustomerOrder(props.orderNo),
-      fetchOrderOperations(props.orderNo),
-    ])
+    const [nextOrder, nextOperations] = await Promise.all([fetchCustomerOrder(orderNo), fetchOrderOperations(orderNo)])
+    if (generation !== refreshGeneration) return
     order.value = nextOrder
     operations.value = nextOperations
-    shippingOptions.value = await fetchShippingOptions(nextOrder.returnCountry)
-    if (!shippingChangeForm.value.newOptionCode) {
-      shippingChangeForm.value.newOptionCode = shippingOptions.value.find((item) => item.optionCode !== nextOperations.effectiveShippingOption.optionCode)?.optionCode || ''
-    }
+    const options = await fetchShippingOptions(nextOrder.returnCountry, nextOrder.currencyCode)
+    if (generation !== refreshGeneration) return
+    shippingOptions.value = options
+    if (!shippingChangeForm.value.newOptionCode) shippingChangeForm.value.newOptionCode = options.find(item => item.optionCode !== nextOperations.effectiveShippingOption.optionCode)?.optionCode || ''
+    errorMessage.value = ''
+    lastRefreshed.value = new Date().toISOString()
   } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : 'Unable to load this order.'
+    if (generation === refreshGeneration) errorMessage.value = error instanceof Error ? error.message : 'Unable to load this order.'
   } finally {
-    loading.value = false
+    if (generation === refreshGeneration) { loading.value = false; refreshing.value = false }
   }
 }
 
-async function startPaymentSession() {
-  if (!order.value) return
-  errorMessage.value = ''
-  try {
-    paymentSession.value = await createPaymentSession(order.value.orderNo, paymentForm.value.provider)
-  } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : 'Unable to create the payment session.'
-  }
-}
-
-async function savePayment() {
-  if (!order.value) return
-  savingPayment.value = true
-  errorMessage.value = ''
-  try {
-    order.value = await submitPaymentProof(order.value.orderNo, paymentForm.value)
-  } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : 'Unable to submit payment proof.'
-  } finally {
-    savingPayment.value = false
-  }
+const canCancel = computed(() => Boolean(order.value && (['admission_review', 'terms_confirmation', 'payment_expired', 'awaiting_payment', 'payment_review'].includes(order.value.statusCode) || (order.value.statusCode === 'awaiting_inbound' && payment.value?.providerCode === 'wallet'))))
+async function cancelCurrentOrder() {
+  if (!order.value || !cancelReason.value.trim()) return
+  cancelling.value = true
+  try { await cancelOrder(order.value.orderNo, cancelReason.value); await refreshOrder() }
+  catch (error) { errorMessage.value = error instanceof Error ? error.message : 'Unable to cancel this order.' }
+  finally { cancelling.value = false }
 }
 
 async function saveInboundShipment() {
@@ -168,13 +172,19 @@ function printPackingSlip() {
 
 watch(() => props.orderNo, async () => {
   errorMessage.value = ''
-  paymentSession.value = null
+  order.value = null
+  operations.value = null
+  shippingChangeForm.value.newOptionCode = ''
   await refreshOrder(true)
   if (refreshTimer) window.clearInterval(refreshTimer)
-  refreshTimer = window.setInterval(() => void refreshOrder(), 20000)
+  refreshTimer = window.setInterval(() => { if (!document.hidden && !refreshing.value) void refreshOrder() }, 20000)
 }, { immediate: true })
 
+function refreshWhenVisible() { if (!document.hidden && !refreshing.value) void refreshOrder() }
+onMounted(() => document.addEventListener('visibilitychange', refreshWhenVisible))
 onBeforeUnmount(() => {
+  ++refreshGeneration
+  document.removeEventListener('visibilitychange', refreshWhenVisible)
   if (refreshTimer) window.clearInterval(refreshTimer)
 })
 </script>
@@ -191,14 +201,16 @@ onBeforeUnmount(() => {
       <p v-if="errorMessage" class="form-error">{{ errorMessage }}</p>
 
       <section class="order-summary">
-        <div><span>Current status</span><strong class="status-pill">{{ statusLabel(order.statusCode) }}</strong></div>
+        <div><span>Current status</span><strong class="status-pill">{{ statusLabel(orderDisplayStatus(order.statusCode, order.admissionStatus)) }}</strong></div>
         <div><span>Total</span><strong>{{ money(order.totalAmount) }}</strong></div>
         <div><span>Payment</span><strong>{{ statusLabel(payment?.statusCode) }}</strong></div>
       </section>
 
+      <OrderProgress :order="order" :tracking-events="operations.trackingEvents" :refreshing="refreshing" :updated-at="lastRefreshed" @refresh="refreshOrder()" />
+
       <section class="detail-grid-section billing-section">
         <div class="detail-panel">
-          <h2>Frozen quote</h2>
+          <h2>Order total</h2>
           <div class="invoice-row"><span>Basic grading</span><strong>{{ money(order.serviceFee) }}</strong></div>
           <div class="invoice-row"><span>{{ order.returnShippingOptionName }} (prepaid)</span><strong>{{ money(order.returnShippingFee) }}</strong></div>
           <div class="invoice-row invoice-total"><span>Original total</span><strong>{{ money(order.totalAmount) }}</strong></div>
@@ -210,20 +222,13 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <section v-if="canSubmitPayment" id="payment" class="form-section action-section">
-        <h2>Payment</h2>
-        <p>Choose a channel to create the payment link/QR payload. Manual proof remains available when an automatic provider is not connected.</p>
-        <div class="form-row payment-session-actions"><select v-model="paymentForm.provider"><option value="manual_transfer">Manual transfer</option><option value="bank_transfer">Bank transfer</option><option value="wechat_transfer">WeChat transfer</option><option value="alipay_transfer">Alipay transfer</option><option value="stripe">Stripe</option></select><button type="button" class="btn-secondary" @click="startPaymentSession">Create payment session</button></div>
-        <div v-if="paymentSession" class="payment-session-panel"><strong>{{ paymentSession.paymentNo }}</strong><span>{{ money(paymentSession.amount, paymentSession.currencyCode) }}</span><a :href="paymentSession.paymentUrl">Open payment link</a><code>{{ paymentSession.qrPayload }}</code></div>
-        <form class="portal-form compact-form" @submit.prevent="savePayment">
-          <div class="form-grid"><label>Payer reference<input v-model="paymentForm.payerReference" required maxlength="255" placeholder="Name, transfer reference, or last digits" /></label><label>Receipt / proof reference<input v-model="paymentForm.proofReference" maxlength="512" placeholder="Optional receipt URL or internal reference" /></label></div>
-          <button class="btn-primary form-submit" :disabled="savingPayment">{{ savingPayment ? 'Submitting...' : 'Submit for confirmation' }}</button>
-        </form>
-      </section>
+      <p v-if="operations.merchantBatchNo" class="muted-copy no-print">Part of agent batch {{ operations.merchantBatchNo }}. <router-link to="/account/merchant-orders">Manage the shared inbound and return parcel</router-link>.</p>
+      <OrderAdmission :order="order" :refresh-tick="lastRefreshed" @change="admission = $event" @refresh="refreshOrder()" />
+      <OrderPayment v-if="canSubmitPayment" :order="order" :refresh-tick="lastRefreshed" @refresh="refreshOrder()" />
 
       <section v-if="operations.packingSlip" class="form-section packing-slip" id="packing-slip">
         <div class="form-row"><div><h2>Packing slip</h2><p class="muted-copy">Print this and place it inside the parcel.</p></div><button type="button" class="btn-secondary no-print" @click="printPackingSlip">Print packing slip</button></div>
-        <div class="packing-code"><span>Intake barcode</span><strong>{{ operations.packingSlip.intakeCode }}</strong><code>{{ operations.packingSlip.qrPayload }}</code></div>
+        <div class="packing-code"><span>Intake barcode</span><strong>{{ operations.packingSlip.intakeCode }}</strong><PortalQrCode :value="operations.packingSlip.qrPayload" label="NXR packing slip code" /></div>
         <div class="invoice-row"><span>Order</span><strong>{{ operations.packingSlip.orderNo }}</strong></div>
         <div class="invoice-row"><span>Slip</span><strong>{{ operations.packingSlip.packingSlipCode }}</strong></div>
         <div class="invoice-row"><span>Total cards</span><strong>{{ operations.packingSlip.totalCardCount }}</strong></div>
@@ -243,13 +248,7 @@ onBeforeUnmount(() => {
       </section>
 
       <section class="detail-grid-section">
-        <div class="detail-panel"><h2>Cards</h2><div v-for="item in order.items" :key="item.id" class="detail-row"><div><strong>{{ item.itemNo }}. {{ item.cardName }}</strong><span>{{ [item.languageCode, item.brandName, item.setName, item.cardNumber].filter(Boolean).join(' · ') }}</span></div><span class="status-pill">{{ statusLabel(item.statusCode) }}</span></div></div>
-        <div class="detail-panel"><h2>Shipments</h2><p v-if="!order.shipments.length" class="muted-copy">No shipment recorded yet.</p><div v-for="shipment in order.shipments" :key="shipment.id" class="detail-row"><div><strong>{{ shipment.directionCode }} · {{ shipment.carrierName }}</strong><span>{{ shipment.trackingNumber }} · {{ shipment.shippingOptionName || '' }} · {{ dateLabel(shipment.shippedAt) }}</span></div><span class="status-pill">{{ statusLabel(shipment.statusCode) }}</span></div></div>
-      </section>
-
-      <section v-if="operations.trackingEvents.length" class="timeline-panel">
-        <h2>Return tracking</h2>
-        <ol class="order-timeline"><li v-for="event in operations.trackingEvents" :key="event.id"><span></span><div><strong>{{ event.eventTitle }}</strong><p>{{ [event.locationLabel, event.eventDetail].filter(Boolean).join(' · ') }}</p><time>{{ dateLabel(event.eventTime) }}</time></div></li></ol>
+        <div class="detail-panel"><h2>Cards</h2><div v-for="item in order.items" :key="item.id" class="detail-row"><div><strong>{{ item.itemNo }}. {{ item.cardName }}</strong><span>{{ [item.year, item.rarity, item.languageCode, item.brandName, item.setName, item.cardNumber].filter(Boolean).join(' · ') }}</span><div><PrivateOrderPhoto :photo-id="item.frontPhotoId" label="Front" /><PrivateOrderPhoto :photo-id="item.backPhotoId" label="Back" /></div></div><span class="status-pill">{{ cardStatusLabel(item.statusCode) }}</span></div></div>
       </section>
 
       <section v-if="canRequestShippingChange" class="form-section action-section no-print">
@@ -269,7 +268,7 @@ onBeforeUnmount(() => {
         <form class="portal-form compact-form ticket-create" @submit.prevent="saveTicket"><div class="form-grid"><label>Category<select v-model="ticketForm.categoryCode"><option value="inquiry">General inquiry</option><option value="score_dispute">Score dispute</option><option value="shipping_change">Order / shipping change</option></select></label><label>Subject<input v-model="ticketForm.subject" required maxlength="255" /></label></div><label>Message<textarea v-model="ticketForm.message" required maxlength="4000" /></label><label>Attachment reference<input v-model="ticketForm.attachmentReference" maxlength="512" /></label><button class="btn-primary form-submit" :disabled="savingTicket">{{ savingTicket ? 'Creating...' : 'Create support ticket' }}</button></form>
       </section>
 
-      <section class="timeline-panel"><h2>Live progress</h2><p class="muted-copy">Automatically refreshes every 20 seconds.</p><ol class="order-timeline"><li v-for="event in order.timeline" :key="event.id"><span></span><div><strong>{{ event.title }}</strong><p v-if="event.detail">{{ event.detail }}</p><time>{{ dateLabel(event.createdAt) }}</time></div></li></ol></section>
+      <details v-if="canCancel" class="form-section no-print"><summary>Cancel this order</summary><p class="muted-copy">A payment made from your company balance is returned to the same currency balance when cancellation is accepted.</p><form class="portal-form compact-form" @submit.prevent="cancelCurrentOrder"><label>Reason<input v-model="cancelReason" required maxlength="1000" /></label><button class="btn-secondary" :disabled="cancelling">{{ cancelling ? 'Cancelling…' : 'Confirm cancellation' }}</button></form></details>
     </template>
     <p v-else class="form-error">{{ errorMessage || 'Order not found.' }}</p>
   </main>

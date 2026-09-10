@@ -37,7 +37,7 @@ export function transferLabel(event) {
 
 export function orderStatusLabel(status) {
   return ({
-    draft: tx('Draft'), awaiting_payment: tx('Awaiting Payment'), payment_review: tx('Payment Review'),
+    admission_review: tx('Application Review'), terms_confirmation: tx('Awaiting Order Confirmation'), payment_expired: tx('Payment Expired'), awaiting_inbound: tx('Awaiting Cards'), review: tx('In Review'), draft: tx('Draft'), awaiting_payment: tx('Awaiting Payment'), payment_review: tx('Payment Review'), payment_exception: tx('付款异常待核查'),
     inbound_shipped: tx('Inbound Shipping'), received: tx('Received'), grading: tx('Grading'),
     completed: tx('Completed'), return_shipped: tx('Return Shipping'), delivered: tx('Delivered'), cancelled: tx('Cancelled')
   })[status] || status || '-'

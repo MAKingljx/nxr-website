@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.LongPredicate;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -82,10 +83,8 @@ public class AdminMediaService {
         int page,
         int pageSize
     ) {
-        return loadQueue(
-            query, null, null, null, null, null, null, null,
-            uploadStatus, imageStatus, showClientPushed, page, pageSize
-        );
+        return loadQueue(query, null, null, null, null, null, null, null,
+            uploadStatus, imageStatus, showClientPushed, page, pageSize);
     }
 
     @Transactional(readOnly = true)
@@ -104,6 +103,16 @@ public class AdminMediaService {
         int page,
         int pageSize
     ) {
+        return loadQueue(query, certId, cardName, cardCategory, productType, brand, language, finalGrade,
+            uploadStatus, imageStatus, showClientPushed, page, pageSize, ignored -> true);
+    }
+
+    @Transactional(readOnly = true)
+    public MediaQueueResponse loadQueue(
+        String query, String certId, String cardName, String cardCategory, String productType,
+        String brand, String language, String finalGrade, String uploadStatus, String imageStatus,
+        boolean showClientPushed, int page, int pageSize, LongPredicate submissionAccess
+    ) {
         QueueFilters filters = new QueueFilters(
             normalizeFilter(query),
             normalizeFilter(certId),
@@ -117,7 +126,8 @@ public class AdminMediaService {
             normalizeImageStatus(imageStatus),
             showClientPushed
         );
-        List<MediaQueueItem> allItems = loadQueueItems();
+        List<MediaQueueItem> allItems = loadQueueItems().stream()
+            .filter(item -> submissionAccess.test(item.submissionId())).toList();
         MediaQueueSummary summary = summarizeQueue(allItems);
         List<MediaQueueItem> filteredItems = allItems.stream()
             .filter(item -> matchesFilters(item, filters))

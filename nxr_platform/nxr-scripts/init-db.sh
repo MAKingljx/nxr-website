@@ -27,8 +27,16 @@ $MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/05_nxr_customer_admin.sql"
 $MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/10_nxr_product_types.sql"
 $MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/11_nxr_admin_navigation_alignment.sql"
 $MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/12_nxr_menu_domain_separation.sql"
-$MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/13_nxr_order_fulfillment.sql"
+{ printf 'SET @nxr_seed_development_prices = 1;\n'; cat "$PLATFORM_ROOT/nxr-sql/ruoyi/13_nxr_order_fulfillment.sql"; } | $MYSQL_ROOT nxr_ruoyi
 $MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/14_nxr_two_module_navigation.sql"
+$MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/15_nxr_python_feature_parity.sql"
+$MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/16_nxr_customer_wallet.sql"
+$MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/17_nxr_payment_channels.sql"
+$MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/18_nxr_customer_notifications.sql"
+$MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/19_nxr_order_admission.sql"
+$MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/20_nxr_order_workbench.sql"
+$MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/21_nxr_commerce_policy.sql"
+$MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/22_nxr_customer_order_photos.sql"
 
 # 与旧后台保持一致：登录不需要验证码
 $MYSQL_ROOT nxr_ruoyi -e "UPDATE sys_config SET config_value='false' WHERE config_key='sys.account.captchaEnabled';"

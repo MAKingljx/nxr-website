@@ -96,6 +96,8 @@ const viewAllPath = computed(() => ({
 }[activeTab.value]))
 
 const statusLabels = {
+  admission_review: 'Application Review', terms_confirmation: 'Awaiting Order Confirmation',
+  payment_expired: 'Payment Expired', payment_exception: 'Payment Exception',
   pending: 'Pending', review: 'In Review', approved: 'Approved', published: 'Published',
   awaiting_payment: 'Awaiting Payment', payment_review: 'Payment Review', awaiting_inbound: 'Awaiting Cards',
   inbound_shipped: 'Shipped to NXR', intake_exception: 'Intake Exception', received: 'Cards Received',
