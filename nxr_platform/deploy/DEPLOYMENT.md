@@ -184,6 +184,18 @@ from reverting a completed Java workflow. Source cursors and target writes
 commit in the same MySQL transaction. The SQLite files remain the source of
 truth and are never opened writable by this task.
 
+Incremental preparation resolves legacy certificate keys once inside the
+source read transaction, then fetches changed rows in bounded batches through
+the existing certificate indexes. Certificate matching, domain mapping,
+duplicate rejection and the source selection cursor remain unchanged; no
+SQLite index or business table is altered. Julian-day cursor values are stored
+as JSON strings to preserve their exact floating-point value through MySQL's
+JSON serialization; existing numeric cursor values remain readable. Progress
+logs identify preparation, staging, merge, verification and commit durations.
+These technical changes retain the existing midnight schedule and service
+resource limits. Validate changes against isolated source/target copies;
+do not start an extra daytime production sync without explicit authorization.
+
 ## Optional HTTPS access
 
 Build both remote profiles with `npm run build:java-remote`. Install the

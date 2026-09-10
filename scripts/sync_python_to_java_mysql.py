@@ -17,6 +17,7 @@ import re
 import sqlite3
 import sys
 import tempfile
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping, Sequence
@@ -30,6 +31,25 @@ from scripts import migrate_python_to_java_mysql as domain
 
 STREAM_NAME = "python_sqlite_domain"
 LOCK_NAME = "nxr_python_to_java_mysql_sync"
+
+
+@contextlib.contextmanager
+def timed_stage(name: str):
+    started = time.monotonic()
+    print(f"sync_stage={name} status=started", flush=True)
+    try:
+        yield
+    except Exception:
+        print(
+            f"sync_stage={name} status=failed elapsed_seconds={time.monotonic() - started:.3f}",
+            flush=True,
+        )
+        raise
+    else:
+        print(
+            f"sync_stage={name} status=completed elapsed_seconds={time.monotonic() - started:.3f}",
+            flush=True,
+        )
 
 
 @dataclass(frozen=True)
@@ -58,7 +78,12 @@ class SyncCursor:
         )
 
     def to_json(self) -> str:
-        return json.dumps(asdict(self), sort_keys=True, separators=(",", ":"))
+        payload = asdict(self)
+        # MySQL JSON can reformat numeric doubles by one ULP. Preserve the
+        # exact SQLite cursor as text; from_json also accepts existing numbers.
+        for key in ("cards_updated_jd", "temp_event_jd"):
+            payload[key] = repr(getattr(self, key))
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
 
 class SyncSource(domain.SourceBundle):
@@ -74,6 +99,7 @@ class SyncSource(domain.SourceBundle):
     def __enter__(self) -> "SyncSource":
         super().__enter__()
         self.db.execute("BEGIN")
+        self._raw_cert_ids: dict[str, dict[str, list[str]]] = {}
         return self
 
     def validate_light(self, *, quick_check: bool = False) -> None:
@@ -165,23 +191,42 @@ class SyncSource(domain.SourceBundle):
             cert_ids.add(domain.normalize_cert_id(row[0]))
         return sorted(cert_ids)
 
-    def submission_for_cert(self, cert_id: str) -> dict[str, Any] | None:
-        normalized = domain.normalize_cert_id(cert_id)
-        card_rows = self.db.execute(
-            "SELECT * FROM main.cards WHERE UPPER(TRIM(cert_id)) = ?",
-            (normalized,),
-        ).fetchall()
-        temp_rows = self.db.execute(
-            "SELECT * FROM tempdb.temp_cards WHERE UPPER(TRIM(cert_id)) = ?",
-            (normalized,),
-        ).fetchall()
-        if len(card_rows) > 1 or len(temp_rows) > 1:
-            raise domain.MigrationError(
-                f"Case-insensitive certificate duplicate detected: {normalized}"
+    def _indexed_cert_rows(
+        self, table: str, cert_ids: Sequence[str]
+    ) -> Iterator[sqlite3.Row]:
+        if not cert_ids:
+            return
+        if table not in {"main.cards", "tempdb.temp_cards"}:
+            raise ValueError("Unsupported certificate source")
+        if table not in self._raw_cert_ids:
+            lookup: dict[str, list[str]] = {}
+            # Scan only certificate keys once per read transaction. Computing
+            # the key in SQLite preserves the previous UPPER(TRIM()) semantics,
+            # including legacy casing, spaces and duplicate detection.
+            for original, key in self.db.execute(
+                f"SELECT cert_id, UPPER(TRIM(cert_id)) FROM {table}"
+            ):
+                lookup.setdefault(key, []).append(original)
+            self._raw_cert_ids[table] = lookup
+        lookup = self._raw_cert_ids[table]
+        original_ids = (
+            original
+            for key in dict.fromkeys(domain.normalize_cert_id(value) for value in cert_ids)
+            for original in lookup.get(key, ())
+        )
+        # Bound parameters below SQLite's legacy limit and use its existing
+        # certificate index; the production SQLite schema is never modified.
+        for batch in domain.batches(original_ids, 500):
+            placeholders = ",".join("?" for _ in batch)
+            yield from self.db.execute(
+                f"SELECT * FROM {table} WHERE cert_id IN ({placeholders}) ORDER BY cert_id",
+                batch,
             )
-        temp_row = temp_rows[0] if temp_rows else None
-        if card_rows:
-            mapped = dict(card_rows[0])
+
+    @staticmethod
+    def _map_submission(card_row, temp_row) -> dict[str, Any] | None:
+        if card_row is not None:
+            mapped = dict(card_row)
             mapped.update(
                 {
                     "temp_joined_cert_id": temp_row["cert_id"] if temp_row else None,
@@ -205,11 +250,36 @@ class SyncSource(domain.SourceBundle):
             return domain.map_temp_only_row(temp_row)
         return None
 
+    def iter_submissions_for_certs(
+        self, cert_ids: Sequence[str]
+    ) -> Iterator[dict[str, Any]]:
+        normalized_ids = list(dict.fromkeys(domain.normalize_cert_id(value) for value in cert_ids))
+        for batch in domain.batches(normalized_ids, 500):
+            grouped = []
+            for table in ("main.cards", "tempdb.temp_cards"):
+                rows_by_key: dict[str, list[sqlite3.Row]] = {}
+                for row in self._indexed_cert_rows(table, batch):
+                    key = domain.normalize_cert_id(row["cert_id"])
+                    rows_by_key.setdefault(key, []).append(row)
+                grouped.append(rows_by_key)
+            for key in batch:
+                card_rows, temp_rows = (rows.get(key, []) for rows in grouped)
+                if len(card_rows) > 1 or len(temp_rows) > 1:
+                    raise domain.MigrationError(
+                        f"Case-insensitive certificate duplicate detected: {key}"
+                    )
+                mapped = self._map_submission(
+                    card_rows[0] if card_rows else None,
+                    temp_rows[0] if temp_rows else None,
+                )
+                if mapped is not None:
+                    yield mapped
+
+    def submission_for_cert(self, cert_id: str) -> dict[str, Any] | None:
+        return next(self.iter_submissions_for_certs([cert_id]), None)
+
     def iter_changed_submissions(self, cursor: SyncCursor) -> Iterator[dict[str, Any]]:
-        for cert_id in self.changed_cert_ids(cursor):
-            row = self.submission_for_cert(cert_id)
-            if row is not None:
-                yield row
+        yield from self.iter_submissions_for_certs(self.changed_cert_ids(cursor))
 
     def iter_waitlist_since(self, cursor: SyncCursor) -> Iterator[tuple[Any, ...]]:
         rows = self.db.execute(
@@ -317,9 +387,10 @@ def source_snapshots(cards_path: Path, temp_path: Path):
         snapshot_root = Path(directory)
         cards_snapshot = snapshot_root / "cards.db"
         temp_snapshot = snapshot_root / "temp_cards.db"
-        backup_sqlite_readonly(cards_path, cards_snapshot)
-        backup_sqlite_readonly(temp_path, temp_snapshot)
-        print("source_snapshot=ready")
+        with timed_stage("source_snapshot"):
+            backup_sqlite_readonly(cards_path, cards_snapshot)
+            backup_sqlite_readonly(temp_path, temp_snapshot)
+        print("source_snapshot=ready", flush=True)
         yield cards_snapshot, temp_snapshot
 
 
@@ -435,7 +506,8 @@ class PythonToJavaSync:
         rows: Iterable[Sequence[Any]],
         label: str,
     ) -> int:
-        return helper._load(sql, rows, label)
+        with timed_stage(f"stage_{label}"):
+            return helper._load(sql, rows, label)
 
     def load_staging(
         self,
@@ -528,18 +600,14 @@ class PythonToJavaSync:
         # Materialize the small delta first, then close SQLite before MySQL
         # starts. A slow or unavailable MySQL server can never retain a source
         # read lock in the Flask databases.
-        with SyncSource(
+        with timed_stage("prepare_incremental"), SyncSource(
             self.args.cards_db.resolve(), self.args.temp_db.resolve()
         ) as source:
             source.validate_light()
             captured = source.capture_cursor()
             changed_cert_ids = source.changed_cert_ids(previous)
             rows = SyncRows(
-                submissions=[
-                    row
-                    for cert_id in changed_cert_ids
-                    if (row := source.submission_for_cert(cert_id)) is not None
-                ],
+                submissions=list(source.iter_submissions_for_certs(changed_cert_ids)),
                 match_projections=list(source.iter_match_projections(changed_cert_ids)),
                 waitlist=list(source.iter_waitlist_since(previous)),
                 brands=list(source.iter_brands()),
@@ -1327,7 +1395,7 @@ class PythonToJavaSync:
             state = self.read_state()
             mode = self.choose_mode(state)
             previous = state.cursor if state else SyncCursor()
-            print(f"sync_mode={mode}")
+            print(f"sync_mode={mode}", flush=True)
 
             with self.prepare_rows(mode, previous) as (rows, captured):
                 with self.db.cursor() as cursor:
@@ -1343,16 +1411,20 @@ class PythonToJavaSync:
                     for label, count in counts.items():
                         print(f"sync_{label}={count}")
                     self.assert_no_unmanaged_conflicts()
-                    self.merge(full_refresh=mode == "full")
-                    self.verify_staging()
-                    self.write_state(captured, mode)
-                    self.db.commit()
+                    with timed_stage("merge"):
+                        self.merge(full_refresh=mode == "full")
+                    with timed_stage("verify_before_commit"):
+                        self.verify_staging()
+                    with timed_stage("commit"):
+                        self.write_state(captured, mode)
+                        self.db.commit()
                 except Exception:
                     self.db.rollback()
                     raise
 
-            self.verify_postcommit_state(captured)
-            print("sync=committed")
+            with timed_stage("verify_after_commit"):
+                self.verify_postcommit_state(captured)
+            print("sync=committed", flush=True)
         finally:
             self.close()
 

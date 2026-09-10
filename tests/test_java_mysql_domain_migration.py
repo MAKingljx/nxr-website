@@ -1,4 +1,5 @@
 import hashlib
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -265,6 +266,8 @@ class JavaDomainMigrationTests(unittest.TestCase):
         self.assertEqual(stats.submissions, 1)
         self.assertEqual(stats.published_media, 2)
         self.assertEqual(len(rows), 1)
+        with sync.SyncSource(self.fixture.cards_path, self.fixture.temp_path) as source:
+            self.assertEqual(list(source.iter_submissions_for_certs(["vra003"])), rows)
         self.assertEqual(rows[0]["cert_id"], "VRA003")
         self.assertEqual(rows[0]["status_code"], "published")
         self.assertEqual(rows[0]["approval_sequence"], 42)
@@ -786,6 +789,94 @@ class JavaDomainMigrationTests(unittest.TestCase):
         self.assertNotEqual(
             original["source_fingerprint"], updated["source_fingerprint"]
         )
+
+    def test_incremental_batches_match_full_mapping_and_use_certificate_indexes(self):
+        cert_ids = [f"batch{index:05}" for index in range(1201)]
+        with sqlite3.connect(self.fixture.temp_path) as temp:
+            for cert_id in cert_ids:
+                insert_temp_card(temp, cert_id, status="approved")
+        before = {
+            p: hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in (self.fixture.cards_path, self.fixture.temp_path)
+        }
+        with migration.SourceBundle(self.fixture.cards_path, self.fixture.temp_path) as source:
+            expected = list(source.iter_submissions())
+            expected_projections = list(source.iter_match_projections())
+
+        with sync.SyncSource(self.fixture.cards_path, self.fixture.temp_path) as source:
+            statements = []
+            source.db.set_trace_callback(statements.append)
+            actual = list(source.iter_submissions_for_certs([s.upper() for s in cert_ids]))
+            source.db.set_trace_callback(None)
+            projections = list(source.iter_match_projections(cert_ids))
+            row_queries = [statement for statement in statements if statement.startswith("SELECT * FROM")]
+            self.assertEqual(len(row_queries), 3)
+            self.assertEqual(sum("SELECT cert_id, UPPER(TRIM(cert_id))" in s for s in statements), 2)
+            for statement in row_queries:
+                plan = source.db.execute("EXPLAIN QUERY PLAN " + statement).fetchall()
+                self.assertTrue(all("SEARCH" in row[3] and "INDEX" in row[3] for row in plan), plan)
+            self.assertNotIn("WHERE UPPER(TRIM(cert_id))", "\n".join(row_queries))
+
+        self.assertEqual(actual, expected)
+        self.assertEqual(projections, expected_projections)
+        self.assertEqual(before, {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in before})
+
+    def test_indexed_lookup_preserves_sqlite_legacy_matching_semantics(self):
+        original_ids = [" mixedCase ", "two  spaces", "tab\tkey", "café", "PLAIN"]
+        with sqlite3.connect(self.fixture.temp_path) as temp:
+            for cert_id in original_ids:
+                insert_temp_card(temp, cert_id)
+        with sync.SyncSource(self.fixture.cards_path, self.fixture.temp_path) as source:
+            for requested in [*original_ids, "MIXEDCASE", "TWO SPACES", "CAFÉ", "missing"]:
+                normalized = migration.normalize_cert_id(requested)
+                old_rows = source.db.execute(
+                    "SELECT * FROM tempdb.temp_cards WHERE UPPER(TRIM(cert_id))=? ORDER BY cert_id",
+                    (normalized,),
+                ).fetchall()
+                new_rows = list(source._indexed_cert_rows("tempdb.temp_cards", [requested]))
+                self.assertEqual([dict(r) for r in new_rows], [dict(r) for r in old_rows])
+                expected = migration.map_temp_only_row(old_rows[0]) if old_rows else None
+                self.assertEqual(source.submission_for_cert(requested), expected)
+
+    def test_incremental_duplicate_guard_is_limited_to_requested_certificates(self):
+        with sqlite3.connect(self.fixture.temp_path) as temp:
+            for cert_id in ["duplicate", "DUPLICATE", "unrelated"]:
+                insert_temp_card(temp, cert_id)
+        with sync.SyncSource(self.fixture.cards_path, self.fixture.temp_path) as source:
+            self.assertEqual(source.submission_for_cert("unrelated")["cert_id"], "UNRELATED")
+            with self.assertRaisesRegex(migration.MigrationError, "Case-insensitive certificate duplicate"):
+                source.submission_for_cert("Duplicate")
+
+    def test_empty_incremental_batch_does_not_build_lookup_maps(self):
+        with sync.SyncSource(self.fixture.cards_path, self.fixture.temp_path) as source:
+            statements = []
+            source.db.set_trace_callback(statements.append)
+            self.assertEqual(list(source.iter_submissions_for_certs([])), [])
+            self.assertEqual(list(source.iter_match_projections([])), [])
+            self.assertEqual(statements, [])
+
+    def test_cursor_preserves_exact_julian_days_through_mysql_json_storage(self):
+        cursor = sync.SyncCursor(cards_rowid=42, cards_updated_jd=2461291.9850858334,
+                                 temp_id=51, temp_event_jd=2461292.006187882)
+        payload = json.loads(cursor.to_json())
+        self.assertIsInstance(payload["cards_rowid"], int)
+        self.assertIsInstance(payload["cards_updated_jd"], str)
+        self.assertIsInstance(payload["temp_event_jd"], str)
+        self.assertEqual(sync.SyncCursor.from_json(payload), cursor)
+        # The numeric JSON representation was observed to round this value
+        # upward on MySQL. Existing numeric cursor records remain readable.
+        legacy = dict(payload, cards_updated_jd=2461291.985085834)
+        self.assertEqual(sync.SyncCursor.from_json(legacy).cards_updated_jd, 2461291.985085834)
+
+    def test_postcommit_cursor_verification_still_rejects_real_progress_changes(self):
+        cursor = sync.SyncCursor(cards_rowid=42, cards_updated_jd=2461291.9850858334)
+        runner = sync.PythonToJavaSync(object())
+        runner.read_state = lambda: sync.SyncState(sync.SyncCursor.from_json(cursor.to_json()), None)
+        runner.verify_postcommit_state(cursor)
+        runner.read_state = lambda: sync.SyncState(sync.SyncCursor(cards_rowid=43,
+            cards_updated_jd=cursor.cards_updated_jd), None)
+        with self.assertRaisesRegex(migration.MigrationError, "Post-commit cursor verification failed"):
+            runner.verify_postcommit_state(cursor)
 
 
 if __name__ == "__main__":
