@@ -1311,3 +1311,7 @@ p {
     transition-duration: 0.01ms !important;
   }
 }
+
+.batch-pagination{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 18px;border-top:1px solid var(--line,#ddd)}
+.output-quality{display:grid;gap:4px;font-size:11px;color:var(--text-secondary,#667085)}
+.output-quality select{font:inherit;font-size:12px;border:1px solid var(--line,#ddd);border-radius:7px;padding:5px;background:transparent;color:inherit}

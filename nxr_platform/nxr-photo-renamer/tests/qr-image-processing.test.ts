@@ -45,6 +45,32 @@ test('pixel treatment rejects malformed RGBA dimensions', () => {
   )
 })
 
+test('gold color separation recovers inverted foil modules even when luminance is almost identical', () => {
+  const text = 'nxrgrading.com/card/0012345678'
+  const { pixels, width, height } = renderQr(text, dark => dark ? 1 : 0)
+  for (let offset = 0; offset < pixels.length; offset += 4) {
+    const dark = pixels[offset] === 1
+    pixels[offset] = dark ? 75 : 46
+    pixels[offset + 1] = dark ? 39 : 46
+    pixels[offset + 2] = dark ? 12 : 46
+  }
+  const original = pixels.slice()
+  assert.equal(jsQR(pixels, width, height, { inversionAttempts: 'attemptBoth' }), null)
+  for (const treatment of ['gold', 'gold-strong'] as const) {
+    const enhanced = applyPixelTreatment(pixels, width, height, treatment)
+    assert.ok(enhanced)
+    assert.equal(jsQR(enhanced, width, height, { inversionAttempts: 'attemptBoth' })?.data, text)
+  }
+  assert.deepEqual(pixels, original)
+})
+
+test('color treatments skip flat planes instead of amplifying empty labels', () => {
+  const pixels = rgbaRow([90, 90, 90, 90])
+  for (const treatment of ['gold', 'gold-strong', 'blue-channel', 'red-channel', 'gray-range'] as const) {
+    assert.equal(applyPixelTreatment(pixels, 4, 1, treatment), null)
+  }
+})
+
 function rgbaRow(values: number[]): Uint8ClampedArray {
   const pixels = new Uint8ClampedArray(values.length * 4)
   values.forEach((value, index) => {

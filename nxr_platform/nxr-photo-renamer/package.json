@@ -1,6 +1,6 @@
 {
   "name": "nxr-photo-renamer",
-  "version": "0.2.1",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,6 +14,9 @@
     "test:browser": "playwright test",
     "desktop": "npm run build && electron .",
     "test:desktop": "node --import tsx scripts/test-desktop.mjs",
+    "test:corpus": "node --import tsx scripts/test-corpus.mjs",
+    "verify:desktop": "npm test && npm run build && npm run test:desktop && npm run test:corpus",
+    "package:verified": "npm run verify:desktop && node scripts/package-desktop.mjs",
     "package:desktop": "npm run build && node scripts/package-desktop.mjs"
   },
   "dependencies": {

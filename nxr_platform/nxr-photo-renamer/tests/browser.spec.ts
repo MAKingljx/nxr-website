@@ -17,12 +17,157 @@ import {
 const CERT_A = '7123456789'
 const CERT_B = '8123456789'
 
+test('扫描中断后重新打开目录继续未完成照片，完成结果和取消选择持久保存', async ({ page }, testInfo) => {
+  const folder = uniqueDirectory(testInfo.title)
+  const photos = [blankPhoto('0001.png'), await qrPhoto('0002.png', cardUrl(CERT_A)),
+    blankPhoto('0003.png'), await qrPhoto('0004.png', cardUrl(CERT_B))]
+  await installOpfsPicker(page, folder)
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'hardwareConcurrency', { value: 2, configurable: true })
+    Object.defineProperty(navigator, 'deviceMemory', { value: 8, configurable: true })
+    ;(window as any).__scanNames = []
+    const Original = window.Worker
+    window.Worker = class extends Original {
+      isQr: boolean
+      constructor(url: string | URL, options?: WorkerOptions) { super(url, options); this.isQr = String(url).includes('qr.worker') }
+      postMessage(message: any, transfer: any) {
+        if (this.isQr) {
+          ;(window as any).__scanNames.push(message.file.name)
+          if (message.file.name === '0004.png' && !sessionStorage.getItem('finish-scan')) return
+        }
+        super.postMessage(message, transfer)
+      }
+    }
+  })
+  await page.goto('/')
+  await seedOpfsDirectory(page, folder, photos)
+  await openDirectory(page)
+  await page.getByRole('button', { name: '开始识别', exact: true }).click()
+  await expect(photoRow(page, '0002.png')).toContainText(CERT_A)
+  await expect.poll(() => page.evaluate(() => (window as any).__scanNames.includes('0004.png'))).toBe(true)
+  await page.getByRole('button', { name: '停止识别', exact: true }).click()
+  await expect(page.locator('.progress-strip')).toHaveCount(0)
+  await page.evaluate(() => sessionStorage.setItem('finish-scan', 'yes'))
+  await page.reload()
+  await openDirectory(page)
+  await expect(page.getByRole('button', { name: '继续识别', exact: true })).toBeEnabled()
+  await page.getByRole('button', { name: '继续识别', exact: true }).click()
+  await expect(page.getByRole('button', { name: '重新识别', exact: true })).toBeEnabled()
+  await expect(page.getByTestId('pair-row')).toHaveCount(2)
+  expect(await page.evaluate(() => (window as any).__scanNames)).toEqual(['0004.png'])
+  await page.getByLabel('选择第 2 组', { exact: true }).uncheck()
+  await openDirectory(page) // Selecting a new folder flushes the prior decision first.
+  await expect(page.getByLabel('选择第 2 组', { exact: true })).not.toBeChecked()
+  await page.reload()
+  await openDirectory(page)
+  await expect(page.getByTestId('pair-row')).toHaveCount(2)
+  await expect(page.getByLabel('选择第 2 组', { exact: true })).not.toBeChecked()
+  expect(await page.evaluate(() => (window as any).__scanNames)).toEqual([])
+  // Explicit rescan must bypass valid cache evidence.
+  await page.getByRole('button', { name: '重新识别', exact: true }).click()
+  await expect(page.getByRole('button', { name: '重新识别', exact: true })).toBeEnabled()
+  expect(new Set(await page.evaluate(() => (window as any).__scanNames))).toEqual(new Set(photos.map(p => p.name)))
+})
+
+test('原图哈希并行预检可取消，排空在途读取后不创建恢复记录或修改照片', async ({ page }, testInfo) => {
+  const directoryName = uniqueDirectory(testInfo.title)
+  const photos = [blankPhoto('0001.png'), await qrPhoto('0002.png', cardUrl(CERT_A)),
+    blankPhoto('0003.png'), await qrPhoto('0004.png', cardUrl(CERT_B))]
+  await installOpfsPicker(page, directoryName)
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'hardwareConcurrency', { value: 2, configurable: true })
+    Object.defineProperty(navigator, 'deviceMemory', { value: 8, configurable: true })
+  })
+  await page.goto('/')
+  await seedOpfsDirectory(page, directoryName, photos)
+  await openDirectory(page)
+  await scan(page)
+  await page.getByRole('button', { name: '执行改名', exact: true }).click()
+  await page.evaluate(() => {
+    const original = SubtleCrypto.prototype.digest
+    const pending: (() => void)[] = []
+    const gate = (window as any).__hashGate = { pending, calls: 0, release: () => {
+      SubtleCrypto.prototype.digest = original
+      pending.splice(0).forEach(resume => resume())
+    } }
+    SubtleCrypto.prototype.digest = function(...args) {
+      gate.calls++
+      return new Promise((resolve, reject) => pending.push(() => original.apply(this, args).then(resolve, reject)))
+    }
+  })
+  await confirmAction(page, '确认改名')
+  await expect.poll(() => page.evaluate(() => (window as any).__hashGate.pending.length)).toBe(2)
+  await page.getByRole('button', { name: '停止处理', exact: true }).click()
+  await page.evaluate(() => (window as any).__hashGate.release())
+  await expect(page.locator('.progress-strip')).toHaveCount(0)
+  expect(await page.evaluate(() => (window as any).__hashGate.calls)).toBe(2)
+  const files = await directoryFiles(page, directoryName)
+  expect(Object.keys(files).sort()).toEqual(photos.map(photo => photo.name).sort())
+  for (const photo of photos) expect(files[photo.name].sha256).toBe(photo.sha256)
+})
+
+test('分页仅限制显示，跨页选择仍处理全部图片且可完整恢复', async ({ page }, testInfo) => {
+  const directoryName = uniqueDirectory(testInfo.title)
+  const photos = Array.from({ length: 204 }, (_, i) => blankPhoto(`${String(i + 1).padStart(4, '0')}.png`))
+  await installOpfsPicker(page, directoryName)
+  await page.addInitScript(() => {
+    const OriginalWorker = window.Worker
+    window.Worker = class extends OriginalWorker {
+      private isQr: boolean
+      constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options)
+        this.isQr = String(url).includes('qr.worker')
+      }
+      postMessage(message: any, transfer: any) {
+        if (!this.isQr) return super.postMessage(message, transfer)
+        const index = parseInt(message.file.name, 10)
+        const certIds = index % 2 === 0 ? [`7${String(index / 2).padStart(9, '0')}`] : []
+        queueMicrotask(() => this.dispatchEvent(new MessageEvent('message', { data: {
+          id: message.id, certIds, qrTexts: certIds.map(id => `/card/${id}`),
+        } })))
+      }
+    }
+  })
+  await page.goto('/')
+  await seedOpfsDirectory(page, directoryName, photos)
+  await openDirectory(page)
+  await expect(page.getByTestId('photo-row')).toHaveCount(100)
+  const photoPanel = page.locator('.photo-panel')
+  await photoPanel.getByRole('button', { name: '下一页', exact: true }).click()
+  await expect(page.getByTestId('photo-row').first()).toContainText('0101.png')
+  await scan(page)
+  await expect(page.locator('.action-bar')).toContainText('已选择 102 组')
+  await expect(page.getByTestId('pair-row')).toHaveCount(100)
+  const pairPanel = page.locator('.pair-panel')
+  await pairPanel.getByRole('button', { name: '下一页', exact: true }).click()
+  await expect(page.getByTestId('pair-row')).toHaveCount(2)
+  await page.getByLabel('选择第 102 组', { exact: true }).uncheck()
+  await pairPanel.getByRole('button', { name: '上一页', exact: true }).click()
+  await expect(page.locator('.action-bar')).toContainText('已选择 101 组')
+  await page.getByRole('button', { name: '执行改名', exact: true }).click()
+  await expect(page.getByRole('dialog')).toContainText('确认生成 202 张 WebP 图片？')
+  await confirmAction(page, '确认改名')
+  await expect(page.locator('.progress-strip')).toHaveCount(0, { timeout: 60_000 })
+  const converted = await directoryFiles(page, directoryName)
+  expect(Object.keys(converted).filter(name => name.endsWith('.webp'))).toHaveLength(202)
+  expect(converted['0203.png'].sha256).toBe(photos[202].sha256)
+  expect(converted['0204.png'].sha256).toBe(photos[203].sha256)
+  await page.getByRole('button', { name: '恢复文件名', exact: true }).click()
+  await confirmAction(page, '确认恢复')
+  await expect(page.locator('.progress-strip')).toHaveCount(0, { timeout: 60_000 })
+  const restored = await directoryFiles(page, directoryName)
+  expect(Object.keys(restored).filter(name => name.endsWith('.webp'))).toHaveLength(0)
+  for (const photo of photos) expect(restored[photo.name].sha256).toBe(photo.sha256)
+})
+
 test('并行扫码可停止，乱序完成仍按原图配对且补扫跳过已配对正图', async ({ page }, testInfo) => {
   const directoryName = uniqueDirectory(testInfo.title)
   const names = ['0001-front.png', '0002-back.png', '0003-front.png', '0004-back.png']
   await installOpfsPicker(page, directoryName)
   await page.addInitScript(() => {
-    Object.defineProperty(navigator, 'hardwareConcurrency', { value: 8, configurable: true })
+    // A two-core fixture makes the scheduler order deterministic while the
+    // policy itself is covered at higher adaptive concurrency in unit tests.
+    Object.defineProperty(navigator, 'hardwareConcurrency', { value: 2, configurable: true })
     Object.defineProperty(navigator, 'deviceMemory', { value: 8, configurable: true })
     const jobs: any[] = []
     const audit = (window as any).__qrQueue = { jobs, maxActive: 0 }
@@ -67,7 +212,7 @@ test('并行扫码可停止，乱序完成仍按原图配对且补扫跳过已�
   await expect(page.locator('.progress-strip')).toHaveCount(0)
   expect(await pending()).toEqual([])
   await page.evaluate(() => { (window as any).__qrQueue.jobs.length = 0 })
-  await page.getByRole('button', { name: '开始识别', exact: true }).click()
+  await page.getByRole('button', { name: '继续识别', exact: true }).click()
   await expect.poll(pending).toHaveLength(2)
   await finish(names[1], 'standard')
   await expect.poll(pending).toEqual(['standard:0001-front.png', 'standard:0003-front.png'])
@@ -154,7 +299,7 @@ async function openDirectory(page: Page): Promise<void> {
 }
 
 async function scan(page: Page): Promise<void> {
-  await page.getByRole('button', { name: '开始识别', exact: true }).click()
+  await page.getByRole('button', { name: /^(开始|继续)识别$/, exact: true }).click()
   await expect(page.getByRole('button', { name: '重新识别', exact: true })).toBeEnabled()
 }
 
@@ -235,6 +380,7 @@ test('从真实 OPFS 目录识别后输出无损 WebP，像素不变且可恢复
   await expect(page.getByTestId('pair-row')).toHaveCount(1)
   await expect(page.getByTestId('pair-row').getByLabel(/^证书号 /)).toHaveValue(CERT_A)
 
+  await page.getByRole('combobox', { name: 'WebP 画质' }).selectOption('lossless')
   const originalPixels = await pixelSnapshots(page, directoryName, photos.map(item => item.name))
   await page.getByRole('button', { name: '执行改名', exact: true }).click()
   await expect(page.getByRole('dialog')).toBeVisible()
@@ -334,6 +480,7 @@ test('JPEG、透明 PNG 和已有 WebP 混合输入保留尺寸与像素，恢�
     await writer.close()
   }, directoryName)
   const originalFiles = await directoryFiles(page, directoryName)
+  await page.getByRole('combobox', { name: 'WebP 画质' }).selectOption('lossless')
   const originalPixels = await pixelSnapshots(page, directoryName, photos.map(item => item.name))
   await openDirectory(page)
   await scan(page)
@@ -438,6 +585,31 @@ test('同一张图片含多个有效证书二维码时标记为歧义且不自�
 
   await expect(photoRow(page, '0002-multiple-back.png')).toContainText('多个证书号')
   await expect(page.getByTestId('pair-row')).toHaveCount(0)
+})
+
+test('黑底金色低亮度二维码可识别，两个金色证号仍拒绝自动配对', async ({ page }, testInfo) => {
+  const directoryName = uniqueDirectory(testInfo.title)
+  const foilA = await qrPhoto('foil-a.png', cardUrl(CERT_A), { dark: '#4b270c', light: '#2e2e2e' })
+  const foilB = await qrPhoto('foil-b.png', cardUrl(CERT_B), { dark: '#4b270c', light: '#2e2e2e' })
+  await installOpfsPicker(page, directoryName)
+  await page.goto('/')
+  await seedOpfsDirectory(page, directoryName, [blankPhoto('0001-front.png'), blankPhoto('0003-front.png')])
+  await writeCanvasPhoto(page, directoryName, '0002-gold.png', { width: 2000, height: 3000 }, [
+    { photo: foilA, x: 350, y: 500, width: 250, height: 250 },
+  ])
+  await writeCanvasPhoto(page, directoryName, '0004-conflicting.png', { width: 2000, height: 3000 }, [
+    { photo: foilA, x: 350, y: 500, width: 250, height: 250 },
+    { photo: foilB, x: 680, y: 500, width: 250, height: 250 },
+  ])
+  await openDirectory(page)
+  await page.getByRole('button', { name: '开始识别', exact: true }).click()
+  await expect(page.getByRole('button', { name: '重新识别', exact: true })).toBeEnabled({ timeout: 60_000 })
+  await expect(page.getByTestId('pair-row')).toHaveCount(1)
+  await expect(page.getByTestId('pair-row').getByLabel(/^证书号 /)).toHaveValue(CERT_A)
+  // Two nearby finder-pattern sets can prevent a decode entirely. Both an
+  // explicit conflict and an unresolved scan must remain outside auto-pairing.
+  await expect(photoRow(page, '0004-conflicting.png').locator('.photo-state')).toHaveClass(/ambiguous|none|error/)
+  await expect(page.locator('.review-link')).toContainText('待检查 2 张')
 })
 
 test('文件输入回退路径只读预览并禁止执行改名', async ({ page }) => {

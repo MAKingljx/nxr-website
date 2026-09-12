@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { deepScanCandidates, mergeDeepScanPairs, mergeScanEvidence, SCAN_LIMITS } from '../src/lib/scan-policy.ts'
+import { deepScanCandidates, nextDeepScanBatch, mergeDeepScanPairs, mergeScanEvidence, SCAN_LIMITS } from '../src/lib/scan-policy.ts'
 import { suggestPairs } from '../src/lib/pairing.ts'
 import type { Photo } from '../src/lib/types.ts'
 
@@ -8,6 +8,28 @@ function photo(id: string, certId?: string): Photo {
   return { id, name: `${id}.png`, file: new File(['fixture'], `${id}.png`), thumbnailUrl: '',
     scanState: certId ? 'found' : 'none', certIds: certId ? [certId] : [], qrTexts: [] }
 }
+
+test('deep waves fill fourteen lanes without scanning adjacent possible fronts unnecessarily', () => {
+  const photos = Array.from({ length: 28 }, (_, index) => photo(String(index + 1)))
+  const first = nextDeepScanBatch(photos, [], new Set(), 14)
+  assert.deepEqual(first.map(p => p.id), Array.from({ length: 14 }, (_, index) => String(28 - index * 2)))
+  const attempted = new Set(first.map(p => p.id))
+  for (const back of first) Object.assign(back, photo(back.id, `7${back.id.padStart(9, '0')}`))
+  const pairs = suggestPairs(photos)
+  assert.equal(pairs.length, 14)
+  assert.deepEqual(nextDeepScanBatch(photos, pairs, attempted, 14), [])
+})
+
+test('a failed back candidate leaves its deferred preceding photo eligible for the next wave', () => {
+  const photos = Array.from({ length: 6 }, (_, index) => photo(String(index + 1)))
+  const first = nextDeepScanBatch(photos, [], new Set(), 14)
+  assert.deepEqual(first.map(p => p.id), ['6', '4', '2'])
+  const attempted = new Set(first.map(p => p.id))
+  const second = nextDeepScanBatch(photos, [], attempted, 14)
+  assert.deepEqual(second.map(p => p.id), ['5', '3', '1'])
+  second.forEach(p => attempted.add(p.id))
+  assert.deepEqual(nextDeepScanBatch(photos, [], attempted, 14), [])
+})
 
 test('deep retry excludes both sides of existing pairs, valid codes and ambiguous codes', () => {
   const photos = [photo('1'), photo('2', '7123456789'), photo('3'), photo('4'), photo('5', '8123456789')]

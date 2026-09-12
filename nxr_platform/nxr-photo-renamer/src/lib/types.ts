@@ -17,6 +17,7 @@ export interface Photo {
   qrTexts: string[];
   error?: string;
   textReference?: TextReference;
+  contentHash?: string;
 }
 
 export interface TextReference {
@@ -41,5 +42,5 @@ export interface RenameRequest {
   expectedSize: number;
   expectedLastModified: number;
   expectedHash?: string;
-  outputFormat?: "webp-lossless";
+  outputFormat?: "webp-lossless" | "webp-quality";
 }

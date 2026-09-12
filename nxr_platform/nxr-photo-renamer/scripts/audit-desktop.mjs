@@ -21,6 +21,7 @@ const RUNTIME_PACKAGE_KEYS = ['main', 'name', 'productName', 'version']
 const REQUIRED_STAGE_FILES = new Set([
   'desktop/main.cjs',
   'desktop/policy.cjs',
+  'desktop/preload.cjs',
   'dist/index.html',
   'package.json',
 ])

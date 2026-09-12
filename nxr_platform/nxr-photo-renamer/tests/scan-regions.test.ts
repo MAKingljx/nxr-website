@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   buildScanRegions,
+  buildLabelRegions,
   countsTowardConflictVerification,
   type ScanRegion,
 } from '../src/lib/scan-regions.ts'
@@ -36,7 +37,7 @@ test('coarse windows keep large codes intact across a wide image before detail s
   const detailStart = regions.findIndex((region) => region.kind === 'detail')
 
   assert.equal(coarse.length, 4)
-  assert.ok(regions.slice(2, detailStart).every((region) => region.kind === 'coarse'))
+  assert.ok(regions.slice(2, detailStart).every((region) => ['coarse', 'label', 'resampled'].includes(region.kind)))
   const codeSize = width / 5
   const codeY = height / 4 - codeSize / 2
   for (const centerX of [width / 4, width * 3 / 4]) {
@@ -80,7 +81,7 @@ test('deep scan uses distinct scale, denser complete coverage, and deferred enha
   assert.equal(resampled.length, 9)
   assert.ok(resampled.every(region => region.maxEdge === 600))
   assert.ok(resampled.every(region => region.treatment === 'original'))
-  assert.equal(deep.findIndex(region => region.kind === 'resampled'), 3)
+  assert.ok(deep.findIndex(region => region.kind === 'resampled') > deep.findLastIndex(region => region.kind === 'label'))
   assert.ok(deep.findLastIndex(region => region.kind === 'resampled')
     < deep.findIndex(region => region.kind === 'coarse'))
   assert.deepEqual(
@@ -99,6 +100,17 @@ test('deep scan uses distinct scale, denser complete coverage, and deferred enha
   assert.ok(firstEnhancedFine > lastOriginalFine)
   assert.deepEqual(deep.slice(-3).map(region => region.rotation), [90, 180, 270])
   assert.ok(deep.slice(-3).every(region => region.treatment === 'contrast'))
+})
+
+test('metallic label candidates cover quiet zones at several scales and do not replace full-image conflict checks', () => {
+  for (const [width, height] of [[3072, 5472], [6000, 4000], [1280, 1920], [37, 29]]) {
+    const candidates = buildLabelRegions(width, height)
+    assert.ok(candidates.every(r => r.sx >= 0 && r.sy >= 0 && r.sx + r.sw <= width && r.sy + r.sh <= height))
+    assert.ok(candidates.every(r => !countsTowardConflictVerification(r)))
+    assert.deepEqual([...new Set(candidates.map(r => r.maxEdge))], [900, 750, 600, 450])
+    assert.ok(candidates.some(r => r.treatment === 'gold-strong'))
+    assert.ok(candidates.some(r => r.treatment === 'blue-channel'))
+  }
 })
 
 test('deep scan keeps every generated crop inside a very small image', () => {
@@ -145,3 +157,11 @@ function containsBox(
     && box.y + box.height <= region.sy + region.sh
   ))
 }
+
+test('standard scan tries soft label crops without consuming conflict verification', () => {
+  const regions = buildScanRegions(4000, 6000)
+  const soft = regions.filter(region => region.kind === 'resampled')
+  assert.equal(soft.length, 3)
+  assert.ok(soft.every(region => region.sy === 0 && region.maxEdge === 600 && !countsTowardConflictVerification(region)))
+  assert.ok(regions.findIndex(region => region.kind === 'resampled') < regions.findIndex(region => region.kind === 'coarse'))
+})

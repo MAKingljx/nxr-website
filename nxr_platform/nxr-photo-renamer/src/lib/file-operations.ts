@@ -1,11 +1,18 @@
 import type { RenameRequest } from './types'
+import { getProcessingConcurrency } from './performance-policy'
 
 const JOURNAL_VERSION = 2
-const MAX_JOURNAL_BYTES = 2 * 1024 * 1024
+// Ten thousand conversion entries can legitimately exceed the old 2 MB cap.
+// Keep a byte limit for untrusted recovery files while allowing a full workday
+// batch to retain both source and encoded hashes.
+const MAX_JOURNAL_BYTES = 8 * 1024 * 1024
 const MAX_JOURNAL_ENTRIES = 10_000
+const ENTRY_CHECKPOINT_SIZE = 16
 const JOURNAL_PATTERN = /^\.nxr-rename-([0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\.json$/i
 const IMAGE_PATTERN = /\.(?:jpe?g|png|webp)$/i
 const TARGET_PATTERN = /^[A-Za-z0-9]{1,64}_[AB]\.(?:[jJ][pP](?:[eE])?[gG]|[pP][nN][gG]|[wW][eE][bB][pP])$/
+const LARGE_NUMERIC_TARGET_PATTERN = /^\d{1,64}_[AB]\.(?:webp|jpe?g|png)$/i
+const LARGE_DIRECTORY_THRESHOLD = 256
 const HASH_PATTERN = /^[0-9a-f]{64}$/i
 
 export type JournalState =
@@ -111,6 +118,10 @@ function extension(name: string): string {
   return index < 0 ? '' : name.slice(index).toLowerCase()
 }
 
+function isWebpOutputFormat(value: unknown): value is NonNullable<RenameRequest['outputFormat']> {
+  return value === 'webp-lossless' || value === 'webp-quality'
+}
+
 function validateRequestShape(request: RenameRequest, index: number): void {
   const prefix = `第 ${index + 1} 项`
   assertSafeName(request.sourceName, `${prefix}源文件`)
@@ -118,10 +129,10 @@ function validateRequestShape(request: RenameRequest, index: number): void {
   if (!IMAGE_PATTERN.test(request.sourceName) || !TARGET_PATTERN.test(request.targetName)) {
     throw new RenameOperationError(`${prefix}仅允许图片文件，目标名必须为“证书号_A/B.扩展名”`)
   }
-  if (request.outputFormat !== undefined && request.outputFormat !== 'webp-lossless') {
+  if (request.outputFormat !== undefined && !isWebpOutputFormat(request.outputFormat)) {
     throw new RenameOperationError(`${prefix}输出格式无效`)
   }
-  if (request.outputFormat === 'webp-lossless' && extension(request.targetName) !== '.webp') {
+  if (request.outputFormat && extension(request.targetName) !== '.webp') {
     throw new RenameOperationError(`${prefix}转换目标必须是 WebP 文件`)
   }
   if (!request.outputFormat && extension(request.sourceName) !== extension(request.targetName)) {
@@ -160,6 +171,55 @@ function singleName(snapshot: DirectorySnapshot, name: string): string | undefin
     throw new RenameOperationError(`目录中存在仅大小写不同的重名文件：${matches.join('、')}`)
   }
   return matches[0]
+}
+
+function asciiCaseVariants(name: string): string[] {
+  let variants = ['']
+  for (const character of name) {
+    const code = character.charCodeAt(0)
+    const isAsciiLetter = (code >= 65 && code <= 90) || (code >= 97 && code <= 122)
+    if (!isAsciiLetter) {
+      variants = variants.map(prefix => prefix + character)
+      continue
+    }
+    const lower = character.toLowerCase()
+    const upper = character.toUpperCase()
+    variants = variants.flatMap(prefix => [prefix + lower, prefix + upper])
+  }
+  return variants
+}
+
+async function targetExistsBeforeWrite(
+  directory: FileSystemDirectoryHandle,
+  name: string,
+  initialEntryCount: number,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  checkCancelled(signal)
+  if (initialEntryCount < LARGE_DIRECTORY_THRESHOLD || !LARGE_NUMERIC_TARGET_PATTERN.test(name)) {
+    const exists = singleName(await snapshotDirectory(directory), name) !== undefined
+    checkCancelled(signal)
+    return exists
+  }
+
+  // Numeric certificate targets contain at most five ASCII letters (side plus
+  // extension), so this issues at most 32 read-only lookups. Drain every lookup
+  // before returning, including when one fails unexpectedly.
+  const lookups = await Promise.allSettled(asciiCaseVariants(name).map(async variant => {
+    try {
+      await directory.getFileHandle(variant)
+      return true
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'NotFoundError') return false
+      if (error instanceof DOMException && error.name === 'TypeMismatchError') return true
+      throw error
+    }
+  }))
+  checkCancelled(signal)
+  for (const lookup of lookups) {
+    if (lookup.status === 'rejected') throw lookup.reason
+  }
+  return lookups.some(lookup => lookup.status === 'fulfilled' && lookup.value)
 }
 
 async function getExistingFileHandle(
@@ -271,14 +331,15 @@ async function writeJournalToHandle(
   handle: FileSystemFileHandle,
   journal: OperationJournal,
 ): Promise<void> {
-  const serialized = `${JSON.stringify(journal, null, 2)}\n`
+  // Compact JSON materially reduces repeated checkpoint I/O for large batches.
+  const serialized = `${JSON.stringify(journal)}\n`
   if (new Blob([serialized]).size > MAX_JOURNAL_BYTES) {
-    throw new RenameOperationError(`操作日志超过 2MB 限制：${journal.name}`, journal.name)
+    throw new RenameOperationError(`操作日志超过 8MB 限制：${journal.name}`, journal.name)
   }
   await writeBlob(handle, new Blob([serialized], { type: 'application/json' }))
   const writtenFile = await handle.getFile()
   if (writtenFile.size > MAX_JOURNAL_BYTES) {
-    throw new RenameOperationError(`操作日志写入后超过 2MB 限制：${journal.name}`, journal.name)
+    throw new RenameOperationError(`操作日志写入后超过 8MB 限制：${journal.name}`, journal.name)
   }
   const written = await writtenFile.text()
   if (written !== serialized) {
@@ -404,7 +465,7 @@ function parseJournal(text: string, expectedName: string): OperationJournal {
   }
   if (candidate.schemaVersion === JOURNAL_VERSION
     && (candidate.backupDirectory !== backupDirectoryName(expectedName)
-      || !candidate.entries.some((entry) => entry?.outputFormat === 'webp-lossless'))) {
+      || !candidate.entries.some((entry) => isWebpOutputFormat(entry?.outputFormat)))) {
     throw new RenameOperationError('原图备份目录与操作记录不一致', expectedName)
   }
   for (const [index, raw] of candidate.entries.entries()) {
@@ -563,51 +624,50 @@ export async function renameFiles(
     }
     journal.state = 'copying'
     await writeJournal(directory, journal)
-    // Only encoding runs concurrently. Backups, output writes and the shared
-    // recovery journal stay ordered; at most one small batch retains outputs.
-    const requested = options.conversionConcurrency ?? 1
-    const batchSize = Number.isFinite(requested) ? Math.max(1, Math.min(2, Math.floor(requested))) : 1
+    // Source verification, backup and encoding share one bounded batch. Never
+    // let a stale or hostile caller exceed the current CPU/memory budget;
+    // missing or invalid input uses the full adaptive budget automatically.
+    const resourceBudget = getProcessingConcurrency('webp')
+    const requested = options.conversionConcurrency
+    const batchSize = typeof requested === 'number' && Number.isFinite(requested) && requested > 0
+      ? Math.min(resourceBudget, Math.max(1, Math.floor(requested)))
+      : resourceBudget
     for (let offset = 0; offset < journal.entries.length; offset += batchSize) {
-      const batch: { entry: OperationJournalEntry; source: FileSnapshot }[] = []
-      for (const entry of journal.entries.slice(offset, offset + batchSize)) {
-        checkCancelled(options.signal)
-        progress(onProgress, `正在安全复制：${entry.sourceName} → ${entry.targetName}`)
-        const beforeCopy = await snapshotDirectory(directory)
-        if (singleName(beforeCopy, entry.targetName) !== undefined) {
-          throw new RenameOperationError(`复制前发现目标文件已存在：${entry.targetName}`)
-        }
-        const sourceHandle = await directory.getFileHandle(entry.sourceName)
-        const source = await readFileSnapshot(sourceHandle)
-        ensureExpectedSource(entry, source)
-        if (source.hash !== entry.sourceHash) {
-          throw new RenameOperationError(`复制前源文件内容已变化：${entry.sourceName}`)
-        }
-
-        if (entry.outputFormat) {
-          progress(onProgress, `正在保留原图：${entry.sourceName}`)
-          const backupHandle = await writeNewFile(backupDirectory!, entry.backupName!, source.file)
-          if (!matches(await readFileSnapshot(backupHandle), { hash: entry.sourceHash, size: entry.expectedSize })) {
-            throw new RenameOperationError(`原图备份写入后校验失败：${entry.sourceName}`)
-          }
-          if (!convert) throw new RenameOperationError('未提供无损 WebP 编码器')
-        }
-        batch.push({ entry, source })
-      }
-
-      checkCancelled(options.signal)
-      progress(onProgress, `正在转换 ${batch.length} 张 · 已完成 ${offset} / ${journal.entries.length} 张`)
+      const batch = journal.entries.slice(offset, offset + batchSize)
       const batchController = new AbortController()
       const cancelBatch = () => batchController.abort()
       options.signal?.addEventListener('abort', cancelBatch, { once: true })
       if (options.signal?.aborted) cancelBatch()
       let failure: unknown
       let failed = false
-      let results: PromiseSettledResult<Blob>[]
+      let results: PromiseSettledResult<{ entry: OperationJournalEntry; output: Blob }>[]
       try {
-        results = await Promise.allSettled(batch.map(async ({ entry, source }) => {
+        progress(onProgress, `本批 ${batch.length} 张 · 已完成 ${offset} / ${journal.entries.length} 张`)
+        results = await Promise.allSettled(batch.map(async entry => {
           try {
             checkCancelled(batchController.signal)
-            return entry.outputFormat ? await convert!(source.file, { signal: batchController.signal }) : source.file
+            progress(onProgress, `正在安全复制：${entry.sourceName} → ${entry.targetName}`)
+            const sourceHandle = await directory.getFileHandle(entry.sourceName)
+            const source = await readFileSnapshot(sourceHandle)
+            ensureExpectedSource(entry, source)
+            if (source.hash !== entry.sourceHash) {
+              throw new RenameOperationError(`复制前源文件内容已变化：${entry.sourceName}`)
+            }
+
+            let output: Blob = source.file
+            if (entry.outputFormat) {
+              checkCancelled(batchController.signal)
+              progress(onProgress, `正在保留原图：${entry.sourceName}`)
+              const backupHandle = await writeNewFile(backupDirectory!, entry.backupName!, source.file)
+              if (!matches(await readFileSnapshot(backupHandle), { hash: entry.sourceHash, size: entry.expectedSize })) {
+                throw new RenameOperationError(`原图备份写入后校验失败：${entry.sourceName}`)
+              }
+              // Never start an encoder after this batch or the user was cancelled.
+              checkCancelled(batchController.signal)
+              if (!convert) throw new RenameOperationError('未提供 WebP 编码器')
+              output = await convert(source.file, { signal: batchController.signal })
+            }
+            return { entry, output }
           } catch (error) {
             if (!failed) {
               failed = true
@@ -624,21 +684,31 @@ export async function renameFiles(
       // journal, so nothing can mutate this operation after failure returns.
       if (failed) throw failure
       checkCancelled(options.signal)
-      for (const [index, { entry }] of batch.entries()) {
-        checkCancelled(options.signal)
-        const result = results[index]!
+      // Persist every encoded fingerprint in one checkpoint before any target
+      // is created. Recovery can then distinguish our output from an external
+      // edit even if the app exits midway through this batch.
+      await Promise.all(results.map(async result => {
         if (result.status === 'rejected') throw result.reason
-        const output = result.value
-        progress(onProgress, `正在校验 ${offset + index + 1} / ${journal.entries.length} 张：${entry.sourceName}`)
+        const { entry, output } = result.value
         if (entry.outputFormat) {
           entry.targetHash = await hashFile(output)
           entry.targetSize = output.size
-          // Persist the expected encoded bytes before creating a target, so an
-          // interrupted write can be distinguished from a later external edit.
-          await writeJournal(directory, journal)
         }
+      }))
+      if (batch.some(entry => entry.outputFormat)) await writeJournal(directory, journal)
+
+      for (const [index, result] of results.entries()) {
+        checkCancelled(options.signal)
+        if (result.status === 'rejected') throw result.reason
+        const { entry, output } = result.value
+        progress(onProgress, `正在校验 ${offset + index + 1} / ${journal.entries.length} 张：${entry.sourceName}`)
         // Conversion can take time; refresh conflicts immediately before writing.
-        if (singleName(await snapshotDirectory(directory), entry.targetName) !== undefined) {
+        if (await targetExistsBeforeWrite(
+          directory,
+          entry.targetName,
+          initial.exact.size,
+          options.signal,
+        )) {
           throw new RenameOperationError(`写入前发现目标文件已存在：${entry.targetName}`)
         }
         const targetHandle = await writeNewFile(directory, entry.targetName, output)
@@ -649,14 +719,16 @@ export async function renameFiles(
         entry.state = 'copied'
         entry.updatedAt = now()
         delete entry.error
-        await writeJournal(directory, journal)
       }
+      // A sudden exit before this checkpoint is still recoverable: the journal
+      // already contains target hashes and restore inspects actual files.
+      await writeJournal(directory, journal)
     }
 
     checkCancelled(options.signal)
     journal.state = 'deleting'
     await writeJournal(directory, journal)
-    for (const entry of journal.entries) {
+    for (const [index, entry] of journal.entries.entries()) {
       checkCancelled(options.signal)
       progress(onProgress, `正在复核并移除旧文件：${entry.sourceName}`)
       const sourceHandle = await directory.getFileHandle(entry.sourceName)
@@ -674,7 +746,10 @@ export async function renameFiles(
       await directory.removeEntry(entry.sourceName)
       entry.state = 'deleted'
       entry.updatedAt = now()
-      await writeJournal(directory, journal)
+      if ((index + 1) % ENTRY_CHECKPOINT_SIZE === 0
+        || index + 1 === journal.entries.length) {
+        await writeJournal(directory, journal)
+      }
     }
 
     journal.state = 'complete'
@@ -697,7 +772,7 @@ async function loadJournal(
   const handle = await directory.getFileHandle(journalName)
   const file = await handle.getFile()
   if (file.size > MAX_JOURNAL_BYTES) {
-    throw new RenameOperationError(`操作日志超过 2MB 限制：${journalName}`, journalName)
+    throw new RenameOperationError(`操作日志超过 8MB 限制：${journalName}`, journalName)
   }
   return parseJournal(await file.text(), journalName)
 }
@@ -714,7 +789,7 @@ export async function restoreJournal(
     await writeJournal(directory, journal)
 
     // Restore every missing original before removing any verified target copy.
-    for (const entry of journal.entries) {
+    for (const [index, entry] of journal.entries.entries()) {
       progress(onProgress, `正在检查恢复项：${entry.sourceName}`)
       const directoryState = await snapshotDirectory(directory)
       const sourceActual = singleName(directoryState, entry.sourceName)
@@ -757,7 +832,10 @@ export async function restoreJournal(
       }
       entry.state = 'restored'
       entry.updatedAt = now()
-      await writeJournal(directory, journal)
+      if ((index + 1) % ENTRY_CHECKPOINT_SIZE === 0
+        || index + 1 === journal.entries.length) {
+        await writeJournal(directory, journal)
+      }
     }
 
     // All originals are now safe. Remove only target files whose bytes still match.
