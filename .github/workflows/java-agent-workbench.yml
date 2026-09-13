@@ -1,0 +1,44 @@
+name: Java Agent Workbench
+
+on:
+  push:
+    branches: [java-version/java-platform, 'codex/agent-workbench-*']
+    paths:
+      - nxr_platform/nxr-backend-ruoyi/**
+      - nxr_platform/nxr-frontend-web/**
+      - nxr_platform/nxr-sql/ruoyi/23_nxr_agent_workbench.sql
+      - .github/workflows/java-agent-workbench.yml
+  pull_request:
+    branches: [java-version/java-platform]
+    paths:
+      - nxr_platform/nxr-backend-ruoyi/**
+      - nxr_platform/nxr-frontend-web/**
+      - nxr_platform/nxr-sql/ruoyi/23_nxr_agent_workbench.sql
+      - .github/workflows/java-agent-workbench.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Java compilation and isolated H2 tests
+        working-directory: nxr_platform/nxr-backend-ruoyi
+        run: mvn -B -pl ruoyi-admin -am package
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: nxr_platform/nxr-frontend-web/package-lock.json
+      - name: Customer portal build
+        working-directory: nxr_platform/nxr-frontend-web
+        run: npm ci && npm run build

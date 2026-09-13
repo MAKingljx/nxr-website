@@ -73,7 +73,7 @@ onMounted(async () => {
 <template>
   <LegacySiteNav active="account" cta-href="/submit/order" cta-label="New order" />
   <main class="portal-page">
-    <div class="portal-heading"><div><p class="section-tag">Company account</p><h1>Company & prepaid balance</h1><p>Top up your account and pay for grading orders in the same currency.</p></div><div class="form-row form-actions"><router-link class="btn-secondary" to="/account/orders">My orders</router-link><router-link v-if="merchant" class="btn-secondary" to="/account/merchant-orders">Bulk orders</router-link></div></div>
+    <div class="portal-heading"><div><p class="section-tag">Company account</p><h1>Company & prepaid balance</h1><p>Top up your account and pay for grading orders in the same currency.</p></div><div class="form-row form-actions"><router-link class="btn-secondary" to="/account/orders">My orders</router-link><router-link v-if="merchant" class="btn-secondary" to="/account/merchant-orders">Bulk orders</router-link><router-link v-if="merchant" class="btn-secondary" to="/account/agent">代理工作台</router-link></div></div>
     <p v-if="error" class="form-error" role="alert">{{ error }}</p><p v-if="success" class="notice-success" role="status">{{ success }}</p>
     <p v-if="loading" class="portal-empty">Loading company account…</p>
     <p v-else-if="!merchant" class="portal-empty">Company features are available after NXR enables your company account. Please contact support.</p>
