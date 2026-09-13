@@ -95,6 +95,19 @@ public class AgentOperatorScopeService {
     @Transactional(isolation=Isolation.READ_COMMITTED)
     public Operator saveBinding(long actor,long userId,BindingRequest request) {
         requireManager(actor);
+        return saveBindingInternal(actor,userId,request);
+    }
+
+    /** Only the platform provisioning flow may bind a newly inserted, unprivileged operator without the legacy binding permission. */
+    @Transactional(isolation=Isolation.READ_COMMITTED)
+    public Operator bindNewPartnerOperator(long actor,long userId,long merchant) {
+        requirePlatformPermissions(actor,"nxr:partner:manage","system:user:add","nxr:customer:manage");
+        if(jdbc.sql("SELECT COUNT(*) FROM sys_user_role WHERE user_id=:id").param("id",userId).query(Long.class).single()!=0)
+            throw forbidden("A newly provisioned operator must not have existing roles");
+        return saveBindingInternal(actor,userId,new BindingRequest(merchant,true));
+    }
+
+    private Operator saveBindingInternal(long actor,long userId,BindingRequest request) {
         if(request==null||request.active()==null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Company and active state are required");
         jdbc.sql("SELECT user_id FROM sys_user WHERE user_id=:id"+(request.active()?" AND status='0' AND del_flag='0'":"")+" FOR UPDATE")
             .param("id",userId).query(Long.class).optional().orElseThrow(()->forbidden("An available backend account is required"));
@@ -134,6 +147,14 @@ public class AgentOperatorScopeService {
         if(binding(userId)!=null || !livePermission(userId,"nxr:agent:manage")) throw forbidden("Agent operator management is not allowed");
         access.requireUnrestricted(userId,"Agent operator management");
     }
+    public void requirePlatformPermissions(long userId,String... permissions) {
+        requireActiveUser(userId,false);
+        if(binding(userId)!=null) throw forbidden("Partner operators cannot access platform management");
+        access.requireUnrestricted(userId,"Partner management");
+        for(String permission:permissions) if(!livePermission(userId,permission)) throw forbidden("Required platform permission: "+permission);
+    }
+    public boolean hasPlatformPermission(long userId,String permission) { return livePermission(userId,permission); }
+
     private void requireActiveUser(long userId,boolean lock) {
         long found=jdbc.sql("SELECT user_id FROM sys_user WHERE user_id=:id AND status='0' AND del_flag='0'"+(lock?" FOR UPDATE":""))
             .param("id",userId).query(Long.class).optional().orElseThrow(()->forbidden("An active backend account is required"));

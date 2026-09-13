@@ -18,6 +18,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -41,6 +42,9 @@ public class MerchantBatchService {
     private final CommercePolicyService commercePolicyService;
     private final NotificationOutboxService notificationOutboxService;
     private final TransactionTemplate batchTransaction;
+
+    @Value("${nxr.public-site.base-url:https://nxrgrading.com}")
+    private String publicSiteBaseUrl = "https://nxrgrading.com";
 
     public MerchantBatchService(
         JdbcClient jdbcClient,
@@ -860,8 +864,8 @@ public class MerchantBatchService {
         return fingerprint.toString();
     }
 
-    private static String trackingUrl(String token) {
-        return "/merchant-order-status/" + token;
+    private String trackingUrl(String token) {
+        return publicSiteBaseUrl.replaceAll("/+$", "") + "/track/" + token;
     }
 
     private static String requireText(String value, String label, int maxLength) {

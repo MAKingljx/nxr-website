@@ -15,12 +15,13 @@ NProgress.configure({ showSpinner: false })
 const whiteList = ['/login', '/register']
 
 function agentLandingPath(target) {
+  if (target.path === '/nxr/agent-workbench') return '/nxr/submission-workbench'
   if (!['/', '/index'].includes(target.path)) return null
   const user = useUserStore()
   const permissions = user.permissions || []
   if (user.roles.includes('admin') || permissions.includes('*:*:*') || permissions.includes('nxr:dashboard:view')) return null
   const agentOnly = user.roles.length === 1 && user.roles.includes('nxr_agent')
-  return agentOnly || permissions.includes('nxr:agent:workbench') ? '/nxr/agent-workbench' : null
+  return agentOnly || permissions.includes('nxr:agent:workbench') ? '/nxr/submission-workbench' : null
 }
 
 const isWhiteList = (path) => {
@@ -62,7 +63,7 @@ router.beforeEach(async (to, from) => {
         })
         // Resolve the agent landing page only after the permission-filtered routes exist.
         const landing = agentLandingPath(to)
-        if (landing) return { path: landing, replace: true }
+        if (landing) return { path: landing, query: to.query, hash: to.hash, replace: true }
         return { ...to, replace: true }
       } catch (err) {
         await useUserStore().logOut()
@@ -71,7 +72,7 @@ router.beforeEach(async (to, from) => {
       }
     }
     const landing = agentLandingPath(to)
-    if (landing) return { path: landing, replace: true }
+    if (landing) return { path: landing, query: to.query, hash: to.hash, replace: true }
     return true
   } else {
     // 没有token

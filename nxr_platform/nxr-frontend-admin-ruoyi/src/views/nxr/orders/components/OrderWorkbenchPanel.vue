@@ -5,6 +5,7 @@
       <el-button v-if="!snapshot?.activeSession" type="primary" :loading="starting" @click="start">{{ $tx('Start / lock order') }}</el-button>
       <el-tag v-else type="warning">{{ $tx('Locked by user') }} #{{ snapshot.activeSession.lockedByUserId }}</el-tag>
     </div>
+    <NxrCardIdentityPanel :order-id="orderId" compact @loaded="loadIdentities" />
     <el-alert v-if="snapshot?.workbenchRequired" :closable="false" type="info" show-icon :title="$tx('Return shipping is blocked until the order packing check passes.')" />
     <template v-if="snapshot?.activeSession">
       <el-form :inline="true" class="scan-row" @submit.prevent="scan">
@@ -15,7 +16,9 @@
     </template>
     <el-table v-if="snapshot?.items?.length" :data="snapshot.items" size="small" border class="mt12">
       <el-table-column label="#" prop="itemNo" width="54" />
-      <el-table-column :label="$tx('Physical barcode')" prop="barcode" min-width="190" />
+      <el-table-column label="收卡编号" min-width="220"><template #default="scope"><code>{{identities[scope.row.orderItemId]?.receiptCode||scope.row.barcode}}</code></template></el-table-column>
+      <el-table-column label="原始客户" min-width="150"><template #default="scope">{{identities[scope.row.orderItemId]?.ownerDisplayName||'—'}}<small v-if="identities[scope.row.orderItemId]?.clientReference"> · {{identities[scope.row.orderItemId].clientReference}}</small></template></el-table-column>
+      <el-table-column label="送评来源" min-width="170"><template #default="scope">{{identities[scope.row.orderItemId]?.sourceType==='partner'?'子代理：'+identities[scope.row.orderItemId].partnerCompanyName:identities[scope.row.orderItemId]?'客户直寄 NXR':'—'}}</template></el-table-column>
       <el-table-column :label="$tx('Current label barcode')" min-width="300"><template #default="scope"><template v-if="scope.row.labelBarcode"><code>{{ scope.row.labelBarcode }}</code><el-button link type="primary" @click="copyLabelBarcode(scope.row.labelBarcode)">{{ $tx('Copy') }}</el-button></template><span v-else>-</span></template></el-table-column>
       <el-table-column :label="$tx('Card')" prop="cardName" min-width="160" />
       <el-table-column :label="$tx('Result / Cert')" min-width="180"><template #default="scope">{{ scope.row.finalGradeLabel || scope.row.finalGradeValue || scope.row.vintageClassification || scope.row.merchDescription || scope.row.productType || '-' }} · {{ scope.row.certId || '-' }}</template></el-table-column>
@@ -70,6 +73,7 @@
 <script setup>
 import { computed, getCurrentInstance, nextTick, ref, watch } from 'vue'
 import { saveAs } from 'file-saver'
+import NxrCardIdentityPanel from '@/components/NxrCardIdentityPanel.vue'
 import { ElMessage } from 'element-plus'
 import { approveSubmission } from '@/api/nxr/entries'
 import useUserStore from '@/store/modules/user'
@@ -82,6 +86,11 @@ const props = defineProps({ orderId: { type: Number, required: true }, orderItem
 const { proxy } = getCurrentInstance()
 const { nxr_vintage_classification } = proxy.useDict('nxr_vintage_classification')
 const snapshot = ref(null)
+const identities = ref({})
+function loadIdentities(value) {
+  identities.value = Object.fromEntries(value.items.map(card => [card.orderItemId, card]))
+  if (value.items.every(card => card.physicalBarcode) && snapshot.value?.items?.length !== value.items.length) void load()
+}
 const userStore = useUserStore()
 const ownsActiveSession = computed(() => Number(snapshot.value?.activeSession?.lockedByUserId) === Number(userStore.id))
 const isGradedSubmission = computed(() => submissionForm.value.productType === 'graded_card')
@@ -162,7 +171,7 @@ async function download(type) {
   } finally { exporting.value = '' }
 }
 
-watch(() => props.orderId, load, { immediate: true })
+watch(() => props.orderId, () => { identities.value = {}; void load() }, { immediate: true })
 </script>
 
 <style scoped>

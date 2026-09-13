@@ -56,6 +56,14 @@ export type AgentAdmission = { admissionStatus: string; termsVersion: string; te
 type Query = Record<string, string | number | boolean | undefined>
 function queryString(query: Query) { const params = new URLSearchParams(); Object.entries(query).forEach(([key,value]) => { if (value !== undefined && value !== '') params.set(key,String(value)) }); return params.toString() }
 export function formatMoney(amount: number | string, currency: string) { return new Intl.NumberFormat('zh-CN', { style: 'currency', currency }).format(Number(amount)) }
+export function privateTrackingUrl(value: string) {
+  if (/^\/track\/[A-Za-z0-9_-]+$/.test(value)) return value
+  try {
+    const url = new URL(value)
+    if (['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && /^\/track\/[A-Za-z0-9_-]+$/.test(url.pathname) && !url.search && !url.hash) return url.href
+  } catch { /* A relative link must already point at the customer tracking route. */ }
+  throw new Error('客户查询地址尚未配置正确，请联系 NXR。')
+}
 export function normalizeAgentReturnScan(value: string) {
   const scan = value.trim()
   if (/^[A-Za-z0-9_-]{1,64}$/.test(scan)) return scan
@@ -134,6 +142,8 @@ const uploadAgentCardPhoto = (id: number, side: 'front' | 'back', file: File) =>
   const requestRecharge = (data: object, requestKey: string) => send<AgentRecharge>(`${base}/merchant/wallet-recharges`, { method: 'post', data: {...data,requestKey} })
   const fetchBatches = (page = 1) => send<AgentPage<AgentBatch>>(`${base}/merchant/batches?page=${page}&pageSize=20`)
   const fetchBatch = (batchNo: string) => send<AgentBatch>(`${base}/merchant/batches/${encodeURIComponent(batchNo)}`)
+  const rotateTrackingLink = (batchNo: string, orderNo: string) => send<{trackingToken:string;trackingUrl:string}>(`${base}/merchant/batches/${encodeURIComponent(batchNo)}/orders/${encodeURIComponent(orderNo)}/tracking-token/rotate`,{method:'post'})
+  const revokeTrackingLink = (batchNo: string, orderNo: string) => send(`${base}/merchant/batches/${encodeURIComponent(batchNo)}/orders/${encodeURIComponent(orderNo)}/tracking-token`,{method:'delete'})
   const addBatchInbound = (batchNo: string, data: object, key: string) => post<AgentBatch>(`/merchant/batches/${encodeURIComponent(batchNo)}/inbound-shipment`, data, key)
   const fetchOrder = (orderNo: string) => send<AgentOrder>(`${base}/orders/${encodeURIComponent(orderNo)}`)
   const fetchAdmission = (orderNo: string) => send<AgentAdmission>(`${base}/orders/${encodeURIComponent(orderNo)}/admission`)
@@ -143,12 +153,12 @@ const uploadAgentCardPhoto = (id: number, side: 'front' | 'back', file: File) =>
   const resubmitOrder = (orderNo: string, data: { note: string; supplementalPhotoIds: number[] }, key: string) => post<AgentAdmission>(`/orders/${encodeURIComponent(orderNo)}/admission/resubmit`,data,key)
   const uploadSupplementalPhoto = (file: File) => { const body = new FormData();body.set('file',file);return scopedRequest<{id:number}>(`${base}/order-photos`,{method:'POST',body}) }
 
-  return { companyId, busy, isActive: () => active, dispose: () => { active = false; controller.abort(); busy.value = false }, fetchAgentClients, fetchAgentClient, createAgentClient, updateAgentClient, fetchAgentIntakes, fetchAgentIntake, createAgentIntake, receiveAgentIntake, checkInAgentCard, fetchAgentCards, fetchAgentEvents, createAgentSubmission, checkAgentReturn, fetchAgentShipments, fetchAgentShipment, createAgentShipment, deliverAgentShipment, uploadAgentCardPhoto, fetchContext, fetchCompanies, fetchOperators, fetchOperatorCandidates, updateOperator, fetchApplicationConfig, fetchCustomerAddresses, saveAddress, deleteAddress, fetchServicePrices, fetchShippingOptions, fetchOrderQuote, fetchBatchQuote, fetchPhoto, fetchMerchantProfile, saveMerchantProfile, fetchWallets, fetchTransactions, fetchRecharges, requestRecharge, fetchBatches, fetchBatch, addBatchInbound, fetchOrder, fetchAdmission, acceptOrderTerms, payFromWallet, fetchPackingSlip, resubmitOrder, uploadSupplementalPhoto }
+  return { companyId, busy, isActive: () => active, dispose: () => { active = false; controller.abort(); busy.value = false }, fetchAgentClients, fetchAgentClient, createAgentClient, updateAgentClient, fetchAgentIntakes, fetchAgentIntake, createAgentIntake, receiveAgentIntake, checkInAgentCard, fetchAgentCards, fetchAgentEvents, createAgentSubmission, checkAgentReturn, fetchAgentShipments, fetchAgentShipment, createAgentShipment, deliverAgentShipment, uploadAgentCardPhoto, fetchContext, fetchCompanies, fetchOperators, fetchOperatorCandidates, updateOperator, fetchApplicationConfig, fetchCustomerAddresses, saveAddress, deleteAddress, fetchServicePrices, fetchShippingOptions, fetchOrderQuote, fetchBatchQuote, fetchPhoto, fetchMerchantProfile, saveMerchantProfile, fetchWallets, fetchTransactions, fetchRecharges, requestRecharge, fetchBatches, fetchBatch, rotateTrackingLink, revokeTrackingLink, addBatchInbound, fetchOrder, fetchAdmission, acceptOrderTerms, payFromWallet, fetchPackingSlip, resubmitOrder, uploadSupplementalPhoto }
 }
 
 export type AgentApi = ReturnType<typeof createAgentApi>
 export const AgentApiKey: InjectionKey<AgentApi> = Symbol('agent-company-api')
-export function useAgentApi() { const api = inject(AgentApiKey); if (!api) throw new Error('代理企业信息尚未准备好。'); return api }
+export function useAgentApi() { const api = inject(AgentApiKey); if (!api) throw new Error('子代理企业信息尚未准备好。'); return api }
 // A failed operation keeps its key only while its content remains identical.
 export function useAgentActions() {
   const api = useAgentApi()

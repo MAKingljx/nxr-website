@@ -58,6 +58,7 @@ class MerchantBatchServiceTest {
 
     @Test
     void createsOneAtomicBatchWithExactAllocatedQuoteAndRevocablePrivateTokens() {
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "publicSiteBaseUrl", "https://cards.example.test/portal/");
         MerchantBatchService.BatchCreateResult result = service.createBatch(1, request());
 
         assertThat(result.acceptedRows()).isEqualTo(2);
@@ -74,6 +75,7 @@ class MerchantBatchServiceTest {
             .reduce(BigDecimal.ZERO, BigDecimal::add)).isEqualByComparingTo("26.00");
 
         MerchantBatchService.BatchCreateRow first = result.rows().get(0);
+        assertThat(first.trackingUrl()).isEqualTo("https://cards.example.test/portal/track/" + first.trackingToken());
         MerchantBatchService.PublicTrackingResponse publicView = service.publicTracking(first.trackingToken());
         assertThat(publicView.orderNo()).isEqualTo(first.orderNo());
         assertThat(publicView.clientReference()).isEqualTo("CLIENT-A");
@@ -86,6 +88,8 @@ class MerchantBatchServiceTest {
         assertThatThrownBy(() -> service.requireMerchantBatch(2, result.batchNo()))
             .isInstanceOf(ResponseStatusException.class).hasMessageContaining("not found");
 
+        var rotated = service.rotateTrackingToken(1, result.batchNo(), first.orderNo());
+        assertThat(rotated.trackingUrl()).isEqualTo("https://cards.example.test/portal/track/" + rotated.trackingToken());
         service.revokeTrackingToken(1, result.batchNo(), first.orderNo());
         assertThatThrownBy(() -> service.publicTracking(first.trackingToken()))
             .isInstanceOf(ResponseStatusException.class).hasMessageContaining("invalid or revoked");

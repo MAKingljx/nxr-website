@@ -131,7 +131,7 @@ def main():
             full = path if path.startswith('/') else parent.rstrip('/') + '/' + path
             yield full
             yield from route_paths(node.get('children', []), full)
-    check('agent menu resolves to the canonical admin workspace URL', '/nxr/agent-workbench' in set(route_paths(routes)))
+    check('agent menu resolves to the canonical admin workspace URL', '/nxr/submission-workbench' in set(route_paths(routes)))
     check('agent menu excludes platform management', all(x not in json.dumps(routes) for x in ['nxr/customers/index', 'nxr/orders/index', 'system/user/index']))
     api(prefix + '/clients', token=collector['token'], blocked={401, 403})
     api(prefix + '/clients', token=agent['token'], blocked={401, 403})

@@ -77,7 +77,7 @@ public class OrderWorkbenchService {
         WorkbenchSession session = lockSession(order.id(), request.sessionId(), adminUserId);
         String stage = normalizeStage(request.stage());
         String barcode = requireText(request.barcode(), "Barcode", 96).toUpperCase(Locale.ROOT);
-        String physicalBarcode = "intake".equals(stage) ? barcode : physicalBarcodeFromLabel(barcode);
+        String physicalBarcode = "intake".equals(stage) ? intakePhysicalBarcode(barcode) : physicalBarcodeFromLabel(barcode);
         PhysicalItem item = jdbcClient.sql(
                 """
                 SELECT p.id, p.order_id, p.order_item_id, p.barcode, i.item_no, i.card_name,
@@ -309,6 +309,32 @@ public class OrderWorkbenchService {
         }
     }
 
+    /** Assigns stable pre-shipment identities without opening a workbench session or changing an order status. */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public void allocatePhysicalItems(long orderId) {
+        lockOrder(orderId);
+        ensurePhysicalItems(orderId);
+    }
+
+    // Partner receipt labels remain valid at NXR intake even when an older physical barcode already exists.
+    // Label and packing scans deliberately never resolve this alias: those require the current printed version.
+    private String intakePhysicalBarcode(String code) {
+        List<String> aliases = jdbcClient.sql("""
+            SELECT p.barcode FROM order_physical_item p
+            JOIN grading_order o ON o.id=p.order_id
+            JOIN agent_card a ON a.order_item_id=p.order_item_id AND a.merchant_customer_id=o.customer_id
+            JOIN agent_intake t ON t.id=a.intake_id AND t.merchant_customer_id=a.merchant_customer_id AND t.order_id=o.id
+            WHERE UPPER(a.inventory_code)=:code
+            """).param("code",code).query(String.class).list();
+        if (aliases.isEmpty()) return code;
+        if (aliases.size()!=1) throw new ResponseStatusException(HttpStatus.CONFLICT,"Card identity is ambiguous");
+        String physical=aliases.get(0);
+        int conflicts=jdbcClient.sql("SELECT COUNT(*) FROM order_physical_item WHERE UPPER(barcode)=:code AND barcode<>:physical")
+            .param("code",code).param("physical",physical).query(Integer.class).single();
+        if(conflicts>0) throw new ResponseStatusException(HttpStatus.CONFLICT,"Card identity is ambiguous");
+        return physical;
+    }
+
     private void ensurePhysicalItems(long orderId) {
         List<Long> missing = jdbcClient.sql(
                 """
@@ -322,6 +348,14 @@ public class OrderWorkbenchService {
             .query(Long.class)
             .list();
         for (Long itemId : missing) {
+            String partnerCode=jdbcClient.sql("""
+                SELECT a.inventory_code FROM agent_card a
+                JOIN agent_intake t ON t.id=a.intake_id AND t.merchant_customer_id=a.merchant_customer_id
+                JOIN grading_order o ON o.id=t.order_id AND o.customer_id=a.merchant_customer_id
+                WHERE a.order_item_id=:itemId AND o.id=:orderId
+                """).param("itemId",itemId).param("orderId",orderId).query(String.class).optional().orElse(null);
+            // Older longer inventory codes keep an explicit alias through order_item_id.
+            String preferred=partnerCode!=null && partnerCode.length()<=48 ? partnerCode : null;
             boolean inserted = false;
             for (int attempt = 0; attempt < 5 && !inserted; attempt += 1) {
                 try {
@@ -330,7 +364,7 @@ public class OrderWorkbenchService {
                         )
                         .param("orderId", orderId)
                         .param("itemId", itemId)
-                        .param("barcode", newBarcode())
+                        .param("barcode", preferred==null ? newBarcode() : preferred)
                         .update();
                     inserted = true;
                 } catch (DataIntegrityViolationException exception) {
@@ -342,8 +376,8 @@ public class OrderWorkbenchService {
                         .single() > 0;
                     if (alreadyAllocated) {
                         inserted = true;
-                    } else if (attempt == 4) {
-                        throw exception;
+                    } else if (preferred != null || attempt == 4) {
+                        throw new ResponseStatusException(HttpStatus.CONFLICT,"Card identity is already assigned",exception);
                     }
                 }
             }

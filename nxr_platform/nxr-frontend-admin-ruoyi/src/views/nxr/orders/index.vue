@@ -14,7 +14,9 @@
       <div class="intake-lookup-row"><strong>{{ $tx('Warehouse Intake Scan') }}</strong><el-input v-model="intakeLookupCode" clearable :placeholder="$tx('Scan or enter an intake code')" @keyup.enter="lookupIntakeOrder" /><el-button type="primary" icon="Search" :loading="lookingUpIntake" @click="lookupIntakeOrder">{{ $tx('Find Order') }}</el-button></div>
     </el-card>
 
-    <merchant-batch-panel v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:shipping','nxr:order:batch']" />
+    <order-card-lookup v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:workbench']" @open-order="openDetail" />
+
+    <merchant-batch-panel @open-order="openDetail" v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:shipping','nxr:order:batch']" />
 
     <el-form ref="queryRef" :model="queryParams" :inline="true" @submit.prevent>
       <el-form-item :label="$tx('Order Status')" prop="status">
@@ -175,6 +177,7 @@ import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
 import CommercePolicyPanel from './components/CommercePolicyPanel.vue'
 import MediaCapacityPanel from './components/MediaCapacityPanel.vue'
 import MerchantBatchPanel from './components/MerchantBatchPanel.vue'
+import OrderCardLookup from './components/OrderCardLookup.vue'
 import OrderAdmissionConfigPanel from './components/OrderAdmissionConfigPanel.vue'
 import OrderAdmissionPanel from './components/OrderAdmissionPanel.vue'
 import OrderApplicationPhoto from './components/OrderApplicationPhoto.vue'

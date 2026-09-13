@@ -22,7 +22,9 @@ const MENU_TITLE_KEYS = new Map([
   ['订单列表', 'nav.orderList'],
   ['送评订单', 'nav.gradingOrders'],
   ['客户管理', 'nav.customerManagement'],
-  ['代理工作台', 'nav.agentWorkbench'],
+  ['代理工作台', 'nav.submissionWorkspace'],
+  ['送评工作台', 'nav.submissionWorkspace'],
+  ['子代理管理', 'nav.partnerManagement'],
   ['候补名单', 'nav.waitlist'],
   ['提交者名单', 'nav.submitters'],
   ['数据导出', 'nav.dataExport'],
@@ -95,6 +97,11 @@ function normalizeRoute(route) {
   if (normalized.meta?.title) {
     const titleKey = MENU_TITLE_KEYS.get(normalized.meta.title)
     normalized.meta.title = titleKey ? i18n.global.t(titleKey) : normalized.meta.title
+  }
+
+  if (component === 'nxr/agent-workbench/index') {
+    normalized.alias = ['/nxr/agent-workbench']
+    normalized.meta = { ...normalized.meta, title: i18n.global.t('nav.submissionWorkspace') }
   }
 
   if (normalized.component === 'nxr/customers/index' && normalized.meta) {
