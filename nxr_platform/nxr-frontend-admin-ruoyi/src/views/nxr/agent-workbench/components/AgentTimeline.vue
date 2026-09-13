@@ -1,7 +1,11 @@
 <script setup lang="ts">
+import { useAgentApi } from '../lib/agentWorkbench'
 import { computed, ref, watch } from 'vue'
-import { agentDateLabel, agentEventLabel, emptyAgentPage, fetchAgentEvents, type AgentEvent } from '../../lib/agentWorkbench'
+import { agentDateLabel, agentEventLabel, emptyAgentPage, type AgentEvent } from '../lib/agentWorkbench'
 import AgentPagination from './AgentPagination.vue'
+const api = useAgentApi()
+const { fetchAgentEvents } = api
+
 const props = defineProps<{ events: AgentEvent[]; scope: { clientId?: number; intakeId?: number; shipmentId?: number } }>()
 const history = ref(emptyAgentPage<AgentEvent>()), loaded = ref(false), loading = ref(false), error = ref(''), open = ref(false)
 const events = computed(() => loaded.value ? history.value.items : props.events)

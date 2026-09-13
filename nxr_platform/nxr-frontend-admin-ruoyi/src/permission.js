@@ -14,6 +14,15 @@ NProgress.configure({ showSpinner: false })
 
 const whiteList = ['/login', '/register']
 
+function agentLandingPath(target) {
+  if (!['/', '/index'].includes(target.path)) return null
+  const user = useUserStore()
+  const permissions = user.permissions || []
+  if (user.roles.includes('admin') || permissions.includes('*:*:*') || permissions.includes('nxr:dashboard:view')) return null
+  const agentOnly = user.roles.length === 1 && user.roles.includes('nxr_agent')
+  return agentOnly || permissions.includes('nxr:agent:workbench') ? '/nxr/agent-workbench' : null
+}
+
 const isWhiteList = (path) => {
   return whiteList.some(pattern => isPathMatch(pattern, path))
 }
@@ -51,7 +60,9 @@ router.beforeEach(async (to, from) => {
             router.addRoute(route)
           }
         })
-        // 重新导航到目标路由，确保动态路由已注册
+        // Resolve the agent landing page only after the permission-filtered routes exist.
+        const landing = agentLandingPath(to)
+        if (landing) return { path: landing, replace: true }
         return { ...to, replace: true }
       } catch (err) {
         await useUserStore().logOut()
@@ -59,6 +70,8 @@ router.beforeEach(async (to, from) => {
         return { path: '/' }
       }
     }
+    const landing = agentLandingPath(to)
+    if (landing) return { path: landing, replace: true }
     return true
   } else {
     // 没有token

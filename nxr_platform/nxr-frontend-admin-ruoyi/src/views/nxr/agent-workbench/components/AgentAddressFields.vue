@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { AgentAddress } from '../../lib/agentWorkbench'
+import type { AgentAddress } from '../lib/agentWorkbench'
 const address = defineModel<AgentAddress>({ required: true })
 withDefaults(defineProps<{ required?: boolean }>(), { required: true })
 </script>

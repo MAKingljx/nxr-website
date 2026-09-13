@@ -1,6 +1,10 @@
 <script setup lang="ts">
+import { useAgentApi } from '../lib/agentWorkbench'
 import { onMounted, ref, watch } from 'vue'
-import { fetchAgentClient, fetchAgentClients, type AgentClient } from '../../lib/agentWorkbench'
+import { type AgentClient } from '../lib/agentWorkbench'
+const api = useAgentApi()
+const { fetchAgentClients, fetchAgentClient } = api
+
 const selectedId = defineModel<number>({ required: true })
 const props = withDefaults(defineProps<{ disabled?: boolean; activeOnly?: boolean }>(), { activeOnly: true })
 const emit = defineEmits<{ selected: [client: AgentClient] }>()

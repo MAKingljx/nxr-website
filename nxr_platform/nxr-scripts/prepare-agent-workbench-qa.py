@@ -19,9 +19,9 @@ args = parser.parse_args()
 if not re.fullmatch(r'nxr_acceptance_agent_[a-zA-Z0-9_]+', args.database):
     raise SystemExit('Only a new nxr_acceptance_agent_* database is allowed.')
 files = [platform / 'nxr-backend-ruoyi/sql/ry_20260417.sql', platform / 'nxr-backend-ruoyi/sql/quartz.sql']
-files += [p for p in sorted((platform / 'nxr-sql/ruoyi').glob('*.sql')) if int(p.name[:2]) in [1, 2, 3, 4, 5, *range(10, 24)]]
-if not any(p.name.startswith('23_') for p in files):
-    raise SystemExit('Agent workbench migration 23 must exist first.')
+files += [p for p in sorted((platform / 'nxr-sql/ruoyi').glob('*.sql')) if int(p.name[:2]) in [1, 2, 3, 4, 5, *range(10, 25)]]
+if not all(any(p.name.startswith(prefix) for p in files) for prefix in ('23_', '24_')):
+    raise SystemExit('Agent workbench migrations 23 and 24 must exist first.')
 for file in files:
     if re.search(r'^\s*(?:USE\s|CREATE\s+DATABASE|DROP\s+DATABASE|GRANT\s|CREATE\s+USER)', file.read_text(), re.I | re.M):
         raise SystemExit(f'Cross-database SQL is not accepted: {file.name}')

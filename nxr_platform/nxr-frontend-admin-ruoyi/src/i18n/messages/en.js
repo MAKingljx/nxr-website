@@ -106,6 +106,7 @@ export default {
     orderManagement: 'Order Management',
     orderList: 'Orders',
     gradingOrders: 'Grading Orders',
+    agentWorkbench: 'Agent Workbench',
     customerManagement: 'Customer Management',
     waitlist: 'Waitlist',
     submitters: 'Submitters',

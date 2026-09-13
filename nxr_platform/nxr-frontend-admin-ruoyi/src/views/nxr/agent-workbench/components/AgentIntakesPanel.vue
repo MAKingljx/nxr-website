@@ -1,17 +1,21 @@
 <script setup lang="ts">
+import { useAgentApi } from '../lib/agentWorkbench'
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { fetchApplicationConfig } from '../../lib/orderApplication'
-import { createAgentIntakeLabelPrinter } from '../../lib/agentIntakeLabels'
-import PrivateOrderPhoto from '../PrivateOrderPhoto.vue'
+
+import { createAgentIntakeLabelPrinter } from '../lib/agentIntakeLabels'
+import PrivateOrderPhoto from './AgentPrivatePhoto.vue'
 import {
-  agentDateLabel, agentStatusLabel, checkInAgentCard, createAgentIntake, emptyAgentPage, fetchAgentIntake,
-  fetchAgentIntakes, receiveAgentIntake, uploadAgentCardPhoto, useAgentActions,
+  agentDateLabel, agentStatusLabel, emptyAgentPage, useAgentActions,
   type AgentCard, type AgentIntake, type AgentIntakeDetail, type AgentSubmission,
-} from '../../lib/agentWorkbench'
+} from '../lib/agentWorkbench'
 import AgentClientPicker from './AgentClientPicker.vue'
 import AgentPagination from './AgentPagination.vue'
 import AgentSubmissionForm from './AgentSubmissionForm.vue'
 import AgentTimeline from './AgentTimeline.vue'
+
+const api = useAgentApi()
+const { fetchApplicationConfig } = api
+const { fetchAgentIntakes, fetchAgentIntake, createAgentIntake, receiveAgentIntake, checkInAgentCard, uploadAgentCardPhoto } = api
 
 const props = defineProps<{ initialClientId?: number }>()
 const rows = ref(emptyAgentPage<AgentIntake>()), detail = ref<AgentIntakeDetail | null>(null)
@@ -98,7 +102,7 @@ onBeforeUnmount(labelPrinter.close)
 <template>
   <div class="agent-panel" data-testid="agent-intakes-panel">
     <p v-if="error" class="form-error" role="alert">{{ error }}</p><p v-if="success" class="agent-success" role="status">{{ success }}</p>
-    <div v-if="createdSubmission" class="agent-success" role="status">已生成送评批次 <strong>{{ createdSubmission.batchNo }}</strong>。<router-link :to="{ path: '/account/merchant-orders', query: { batch: createdSubmission.batchNo } }" data-testid="agent-open-batch">前往批次订单</router-link></div>
+    <div v-if="createdSubmission" class="agent-success" role="status">已生成送评批次 <strong>{{ createdSubmission.batchNo }}</strong>。<router-link :to="{ path: '/nxr/agent-workbench', query: { tab: 'batches', batch: createdSubmission.batchNo, company: api.companyId } }" data-testid="agent-open-batch">前往批次订单</router-link></div>
     <div class="agent-split">
       <aside class="agent-list-pane"><div class="agent-toolbar"><h2>来件与库存</h2><button type="button" class="btn-primary" :disabled="busy" data-testid="agent-new-intake" @click="newIntake">登记来件</button></div>
         <form class="portal-form agent-search" @submit.prevent="load()"><label>搜索来件<input v-model="query" placeholder="来件编号或运单号" /></label><div class="agent-toolbar"><select v-model="statusCode" aria-label="来件状态" @change="load()"><option value="">全部状态</option><option value="expected">待签收</option><option value="received">待清点</option><option value="exception">有异常</option><option value="ready">已齐全入库</option><option value="submitted">已送评</option></select><button class="btn-secondary" :disabled="loading">搜索</button></div><button v-if="clientFilter" type="button" class="text-button" @click="clientFilter = 0; load()">取消客户筛选</button></form>
@@ -110,7 +114,7 @@ onBeforeUnmount(labelPrinter.close)
         <form v-if="mode === 'new'" class="portal-form" data-testid="agent-intake-form" @submit.prevent="create"><div class="agent-toolbar"><h2>登记客户来件</h2><button type="button" class="text-button" :disabled="busy" @click="mode = 'detail'">取消</button></div><fieldset :disabled="busy"><AgentClientPicker v-model="form.clientId" :disabled="busy" /><div class="form-grid"><label>快递公司<input v-model="form.carrierName" required maxlength="128" data-testid="agent-intake-carrier" /></label><label>运单号<input v-model="form.trackingNumber" required maxlength="255" data-testid="agent-intake-tracking" /></label><label>预期卡片数量（最多 {{ maxCards }} 张）<input v-model.number="form.expectedCardCount" type="number" min="1" :max="maxCards" required data-testid="agent-intake-quantity" /></label><button type="button" class="btn-secondary agent-align-bottom" @click="fillExpected">补齐卡片录入行</button></div><label>来件备注<textarea v-model="form.notes" maxlength="2000" rows="2" /></label><div class="agent-toolbar"><h3>逐卡登记 · {{ cards.length }} 张</h3><button type="button" class="btn-secondary" :disabled="cards.length >= maxCards" data-testid="agent-add-card" @click="addCard">添加卡片</button></div><div v-for="(card, index) in cards" :key="card.localId" class="agent-card-entry"><div class="agent-toolbar"><strong>卡片 {{ index + 1 }}</strong><button type="button" class="text-button" :disabled="cards.length <= 1" @click="cards.splice(index, 1)">移除</button></div><div class="form-grid"><label>卡名<input v-model="card.cardName" required maxlength="255" :data-testid="`agent-card-name-${index}`" /></label><label>语言<input v-model="card.languageCode" required maxlength="32" placeholder="EN / ZH / JA" :data-testid="`agent-card-language-${index}`" /></label></div><label>卡片备注<input v-model="card.notes" maxlength="2000" /></label></div></fieldset><p v-if="cards.length !== form.expectedCardCount" class="muted-copy">还需使登记数量与预期 {{ form.expectedCardCount }} 张一致。</p><button class="btn-primary" :disabled="busy || cards.length !== form.expectedCardCount || !form.clientId" data-testid="agent-create-intake">{{ busy ? '登记中…' : '登记并生成库存码' }}</button></form>
         <AgentSubmissionForm v-else-if="mode === 'submission'" :intakes="selectedIntakes" @created="submitted" @close="mode = 'detail'" />
         <p v-else-if="detailLoading" class="portal-empty" role="status">加载来件详情…</p>
-        <template v-else-if="detail"><div class="agent-toolbar"><div><h2>{{ detail.intake.intakeNo }}</h2><p class="muted-copy">{{ detail.intake.clientName }} · {{ agentStatusLabel(detail.intake.statusCode) }}</p></div><span class="status-pill">{{ detail.intake.checkedInCardCount }} / {{ detail.intake.expectedCardCount }} 张已清点</span></div><dl class="agent-facts"><div><dt>客户来件</dt><dd>{{ detail.intake.carrierName }} · {{ detail.intake.trackingNumber }}</dd></div><div><dt>签收时间</dt><dd>{{ agentDateLabel(detail.intake.receivedAt) }}</dd></div><div v-if="detail.intake.notes"><dt>备注</dt><dd>{{ detail.intake.notes }}</dd></div><div v-if="detail.intake.orderNo"><dt>送评订单</dt><dd><router-link :to="`/account/orders/${detail.intake.orderNo}`">{{ detail.intake.orderNo }}</router-link> · <router-link to="/account/merchant-orders">{{ detail.intake.batchNo }}</router-link></dd></div></dl>
+        <template v-else-if="detail"><div class="agent-toolbar"><div><h2>{{ detail.intake.intakeNo }}</h2><p class="muted-copy">{{ detail.intake.clientName }} · {{ agentStatusLabel(detail.intake.statusCode) }}</p></div><span class="status-pill">{{ detail.intake.checkedInCardCount }} / {{ detail.intake.expectedCardCount }} 张已清点</span></div><dl class="agent-facts"><div><dt>客户来件</dt><dd>{{ detail.intake.carrierName }} · {{ detail.intake.trackingNumber }}</dd></div><div><dt>签收时间</dt><dd>{{ agentDateLabel(detail.intake.receivedAt) }}</dd></div><div v-if="detail.intake.notes"><dt>备注</dt><dd>{{ detail.intake.notes }}</dd></div><div v-if="detail.intake.orderNo"><dt>送评订单</dt><dd><router-link :to="{ path: '/nxr/agent-workbench', query: { tab: 'batches', order: detail.intake.orderNo, company: api.companyId } }">{{ detail.intake.orderNo }}</router-link> · <router-link :to="{ path: '/nxr/agent-workbench', query: { tab: 'batches', company: api.companyId } }">{{ detail.intake.batchNo }}</router-link></dd></div></dl>
           <form v-if="detail.intake.statusCode === 'expected'" class="portal-form agent-operation" @submit.prevent="receive"><label>签收备注（选填）<input v-model="receiveNote" maxlength="2000" :disabled="busy" /></label><button class="btn-primary" :disabled="busy" data-testid="agent-receive-intake">确认签收来件</button></form>
           <form v-if="canScan" class="portal-form agent-operation" @submit.prevent="checkIn"><h3>逐卡清点</h3><label>扫描或输入库存码<input ref="scanInput" v-model="scan.inventoryCode" required autocomplete="off" autocapitalize="off" spellcheck="false" :disabled="busy" placeholder="扫描后按回车" data-testid="agent-check-in-code" /></label><label class="agent-checkbox"><input v-model="scan.hasException" type="checkbox" :disabled="busy" data-testid="agent-check-in-exception" />此卡存在异常</label><label>{{ scan.hasException ? '异常情况' : '清点备注（选填）' }}<input v-model="scan.conditionNote" maxlength="2000" :required="scan.hasException" :disabled="busy" data-testid="agent-check-in-note" /></label><button class="btn-primary" :disabled="busy" data-testid="agent-check-in-submit">{{ busy ? '核对中…' : scan.hasException ? '登记异常' : '核对入库' }}</button><p v-if="detail.intake.exceptionCardCount" class="muted-copy">{{ detail.intake.exceptionCardCount }} 张卡存在异常；处理后取消异常勾选，重新扫码复核。</p></form>
           <p v-if="detail.intake.statusCode === 'ready'" class="agent-success">卡片已齐全入库，可在左侧勾选来件生成送评批次。</p>

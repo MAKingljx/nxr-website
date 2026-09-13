@@ -106,6 +106,7 @@ export default {
     orderManagement: '订单管理',
     orderList: '订单列表',
     gradingOrders: '送评订单',
+    agentWorkbench: '代理工作台',
     customerManagement: '客户管理',
     waitlist: '候补名单',
     submitters: '提交者名单',

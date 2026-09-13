@@ -22,7 +22,6 @@ const router = createRouter({
     { path: '/account/addresses', component: () => import('./views/WebAddressesView.vue') },
     { path: '/account/merchant-orders', component: () => import('./views/WebMerchantOrdersView.vue') },
     { path: '/account/company', component: () => import('./views/WebMerchantWalletView.vue') },
-    { path: '/account/agent', component: () => import('./views/WebAgentWorkbenchView.vue') },
   ],
 })
 

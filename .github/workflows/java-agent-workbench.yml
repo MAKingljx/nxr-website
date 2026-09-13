@@ -6,14 +6,18 @@ on:
     paths:
       - nxr_platform/nxr-backend-ruoyi/**
       - nxr_platform/nxr-frontend-web/**
+      - nxr_platform/nxr-frontend-admin-ruoyi/**
       - nxr_platform/nxr-sql/ruoyi/23_nxr_agent_workbench.sql
+      - nxr_platform/nxr-sql/ruoyi/24_nxr_agent_admin_access.sql
       - .github/workflows/java-agent-workbench.yml
   pull_request:
     branches: [java-version/java-platform]
     paths:
       - nxr_platform/nxr-backend-ruoyi/**
       - nxr_platform/nxr-frontend-web/**
+      - nxr_platform/nxr-frontend-admin-ruoyi/**
       - nxr_platform/nxr-sql/ruoyi/23_nxr_agent_workbench.sql
+      - nxr_platform/nxr-sql/ruoyi/24_nxr_agent_admin_access.sql
       - .github/workflows/java-agent-workbench.yml
   workflow_dispatch:
 
@@ -38,7 +42,12 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: nxr_platform/nxr-frontend-web/package-lock.json
+          cache-dependency-path: |
+            nxr_platform/nxr-frontend-web/package-lock.json
+            nxr_platform/nxr-frontend-admin-ruoyi/package-lock.json
       - name: Customer portal build
         working-directory: nxr_platform/nxr-frontend-web
         run: npm ci && npm run build
+      - name: Agent admin build
+        working-directory: nxr_platform/nxr-frontend-admin-ruoyi
+        run: npm ci && npm run build:prod

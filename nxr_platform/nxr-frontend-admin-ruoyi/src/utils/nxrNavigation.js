@@ -22,6 +22,7 @@ const MENU_TITLE_KEYS = new Map([
   ['订单列表', 'nav.orderList'],
   ['送评订单', 'nav.gradingOrders'],
   ['客户管理', 'nav.customerManagement'],
+  ['代理工作台', 'nav.agentWorkbench'],
   ['候补名单', 'nav.waitlist'],
   ['提交者名单', 'nav.submitters'],
   ['数据导出', 'nav.dataExport'],

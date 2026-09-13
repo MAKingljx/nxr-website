@@ -63,6 +63,7 @@ const MENU_LABELS = {
   '品牌设置': 'Brand Settings',
   '提交者名单': 'Submitters',
   '客户管理': 'Customer Management',
+  '代理工作台': 'Agent Workbench',
   '用户查询': 'View Users',
   '用户新增': 'Add Users',
   '用户修改': 'Edit Users',
