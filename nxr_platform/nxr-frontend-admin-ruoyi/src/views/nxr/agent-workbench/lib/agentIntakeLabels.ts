@@ -1,3 +1,4 @@
+import { activeLocale, tx } from '@/i18n'
 import QRCode from 'qrcode'
 import type { AgentCard, AgentIntake } from './agentWorkbench'
 
@@ -24,9 +25,9 @@ export function createAgentIntakeLabelPrinter() {
 
   // Open synchronously from the click; QR generation must not consume the user gesture first.
   function open(intake: AgentIntake, cards: AgentCard[]) {
-    if (!cards.length) throw new Error('此来件暂无可打印的卡片标签。')
+    if (!cards.length) throw new Error(tx('No card labels are available for this intake.'))
     if (!preview || preview.closed) preview = window.open('', '_blank', 'popup,width=940,height=820')
-    if (!preview) throw new Error('标签预览被浏览器拦截，请允许此站点打开弹窗后重试。')
+    if (!preview) throw new Error(tx('The browser blocked the label preview. Allow pop-ups for this site and try again.'))
     const target = preview, current = ++generation, doc = target.document
     target.opener = null
     const node = <K extends keyof HTMLElementTagNameMap>(tag: K, text = '', className = '') => {
@@ -35,16 +36,16 @@ export function createAgentIntakeLabelPrinter() {
       if (className) element.className = className
       return element
     }
-    const title = node('title', 'NXR 收卡标签')
+    const title = node('title', tx('NXR intake labels'))
     const meta = doc.createElement('meta'); meta.name = 'viewport'; meta.content = 'width=device-width,initial-scale=1'
     const style = node('style', labelStyles)
-    doc.documentElement.lang = 'zh-CN'
+    doc.documentElement.lang = activeLocale()
     doc.head.replaceChildren(title, meta, style)
     const toolbar = node('header', '', 'toolbar')
-    const print = node('button', '打印标签'); print.type = 'button'; print.disabled = true; print.dataset.testid = 'agent-labels-print'
-    const exit = node('button', '关闭'); exit.type = 'button'; exit.addEventListener('click', close)
-    const status = node('p', '正在生成二维码…'); status.setAttribute('role', 'status')
-    toolbar.append(node('h1', '收卡标签'), print, exit, status)
+    const print = node('button', tx('Print labels')); print.type = 'button'; print.disabled = true; print.dataset.testid = 'agent-labels-print'
+    const exit = node('button', tx('Close')); exit.type = 'button'; exit.addEventListener('click', close)
+    const status = node('p', tx('Generating QR codes…')); status.setAttribute('role', 'status')
+    toolbar.append(node('h1', tx('Intake labels')), print, exit, status)
     const sheet = node('main', '', 'labels'); sheet.dataset.testid = 'agent-labels-preview'
     doc.body.replaceChildren(toolbar, sheet)
     const inventory = cards.map(card => ({ inventoryCode: card.inventoryCode, cardName: card.cardName }))
@@ -63,21 +64,21 @@ export function createAgentIntakeLabelPrinter() {
         const images: HTMLImageElement[] = []
         inventory.forEach((card, index) => {
           const label = node('article', '', 'label'); label.dataset.testid = 'agent-intake-label'
-          const qr = node('img'); qr.alt = `库存码 ${card.inventoryCode}`; qr.src = sources[index]!; images.push(qr)
+          const qr = node('img'); qr.alt = tx('Inventory code {p1}', { p1: card.inventoryCode }); qr.src = sources[index]!; images.push(qr)
           const copy = node('div', '', 'copy')
           // Customer-provided text is always a text node, never parsed as markup.
-          copy.append(node('p', card.cardName, 'name'), node('p', `客户：${clientName}`), node('p', `来件：${intakeNo}`), node('code', card.inventoryCode))
+          copy.append(node('p', card.cardName, 'name'), node('p', tx('Customer: {p1}', { p1: clientName })), node('p', tx('Intake: {p1}', { p1: intakeNo })), node('code', card.inventoryCode))
           label.append(qr, copy); sheet.append(label)
         })
         await Promise.all(images.map(qr => qr.decode()))
         if (target.closed || current !== generation) return
-        status.textContent = `${inventory.length} 张标签 · 二维码内容为库存码。请按实际大小打印。`
+        status.textContent = tx('{p1} labels · QR codes contain inventory codes. Print at actual size.', { p1: inventory.length })
         print.disabled = false
         sheet.dataset.ready = 'true'
       } catch {
         if (!target.closed && current === generation) {
           sheet.replaceChildren()
-          status.textContent = '标签生成失败，请关闭预览后重新打开。'
+          status.textContent = tx('Unable to generate labels. Close the preview and open it again.')
           status.setAttribute('role', 'alert')
         }
       }

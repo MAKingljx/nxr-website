@@ -1,7 +1,12 @@
 import { createI18n } from 'vue-i18n'
 import en from './messages/en'
 import zhCN from './messages/zh-CN'
-import literalZhCN from './literal-zh-CN'
+import baseLiteralZhCN from './literal-zh-CN'
+import workspaceZhCN from './partner-workspace-zh-CN'
+import partnerZhCN from './partner-management-zh-CN'
+
+const literalZhCN = { ...baseLiteralZhCN, ...workspaceZhCN, ...partnerZhCN }
+export const allowLocaleSelection = ['development', 'java-stage'].includes(import.meta.env.VITE_APP_ENV)
 
 export const supportedLocales = [
   { code: 'en', label: 'English' },
@@ -24,6 +29,8 @@ const ENGLISH_BY_CHINESE_LITERAL = new Map(
 )
 
 function resolveInitialLocale() {
+  // Hosted builds have no language selector, so stale local choices must not change their language.
+  if (!allowLocaleSelection) return 'en'
   if (typeof window === 'undefined') return 'en'
   const savedLocale = window.localStorage.getItem(STORAGE_KEY)
   return supportedLocales.some((item) => item.code === savedLocale) ? savedLocale : 'en'

@@ -4,7 +4,8 @@ const ROLE_LABELS = {
   '超级管理员': 'Super Administrator',
   '普通角色': 'General Role',
   'NXR管理员': 'NXR Administrator',
-  'NXR审核员': 'NXR Reviewer'
+  'NXR审核员': 'NXR Reviewer',
+  '子代理操作员': 'Partner Operator'
 }
 
 const POST_LABELS = {
@@ -65,6 +66,8 @@ const MENU_LABELS = {
   '客户管理': 'Customer Management',
   '送评工作台': 'Submission Workspace',
   '子代理管理': 'Partner Management',
+  '子代理账号绑定': 'Partner Account Binding',
+  '子代理管理操作': 'Manage Partners',
   '用户查询': 'View Users',
   '用户新增': 'Add Users',
   '用户修改': 'Edit Users',

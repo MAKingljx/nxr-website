@@ -1,3 +1,4 @@
+import { activeLocale, tx } from '@/i18n'
 import { inject, ref, type InjectionKey } from 'vue'
 import request from '@/utils/request'
 const base = '/api/admin/agent'
@@ -55,14 +56,14 @@ export type AgentOrder = { orderNo: string; statusCode: string; totalCardCount: 
 export type AgentAdmission = { admissionStatus: string; termsVersion: string; termsText: string; quoteAmount: number; quoteCurrency: string; canAcceptTerms: boolean; canPay: boolean; canResubmit: boolean; canResubmit: boolean; decisionNote?: string; paymentDueAtIso?: string; supplementalPhotoIds?: number[]; events: Array<{ id: number; title: string; detail?: string; createdAt: string }> }
 type Query = Record<string, string | number | boolean | undefined>
 function queryString(query: Query) { const params = new URLSearchParams(); Object.entries(query).forEach(([key,value]) => { if (value !== undefined && value !== '') params.set(key,String(value)) }); return params.toString() }
-export function formatMoney(amount: number | string, currency: string) { return new Intl.NumberFormat('zh-CN', { style: 'currency', currency }).format(Number(amount)) }
+export function formatMoney(amount: number | string, currency: string) { return new Intl.NumberFormat(activeLocale(), { style: 'currency', currency }).format(Number(amount)) }
 export function privateTrackingUrl(value: string) {
   if (/^\/track\/[A-Za-z0-9_-]+$/.test(value)) return value
   try {
     const url = new URL(value)
     if (['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && /^\/track\/[A-Za-z0-9_-]+$/.test(url.pathname) && !url.search && !url.hash) return url.href
   } catch { /* A relative link must already point at the customer tracking route. */ }
-  throw new Error('客户查询地址尚未配置正确，请联系 NXR。')
+  throw new Error(tx('The customer tracking URL is not configured correctly. Please contact NXR.'))
 }
 export function normalizeAgentReturnScan(value: string) {
   const scan = value.trim()
@@ -73,7 +74,7 @@ export function normalizeAgentReturnScan(value: string) {
     const match = link?.[1]?.match(/^\/card\/([A-Za-z0-9_-]{1,64})\/?$/)
     if (match) return match[1]!
   }
-  throw new Error('请扫描库存码、证号或 NXR 官方证书二维码。')
+  throw new Error(tx('Scan an inventory code, certificate ID or official NXR certificate QR code.'))
 }
 
 export function createAgentApi(companyId?: number) {
@@ -81,13 +82,13 @@ export function createAgentApi(companyId?: number) {
   let active = true
   const headers = () => ({ ...(companyId ? { 'X-NXR-Agent-Id': String(companyId) } : {}), repeatSubmit: false })
   async function send<T>(path: string, config: Record<string, unknown> = {}): Promise<T> {
-    if (!active) throw new Error('企业操作页面已关闭。')
+    if (!active) throw new Error(tx('The company workspace has been closed.'))
     try {
       const value = await request({ url: path, method: 'get', suppressErrorMessage: true, ...config, headers: { ...headers(), ...(config.headers as object || {}) }, signal: controller.signal })
-      if (!active) throw new Error('企业操作页面已关闭。')
+      if (!active) throw new Error(tx('The company workspace has been closed.'))
       return value as T
     } catch (error: any) {
-      throw new Error(error?.response?.data?.message || error?.response?.data?.msg || error?.message || '请求未完成，请重试。')
+      throw new Error(error?.response?.data?.message || error?.response?.data?.msg || error?.message || tx('The request was not completed. Please try again.'))
     }
   }
   function scopedRequest<T>(path: string, init: RequestInit = {}) {
@@ -158,7 +159,7 @@ const uploadAgentCardPhoto = (id: number, side: 'front' | 'back', file: File) =>
 
 export type AgentApi = ReturnType<typeof createAgentApi>
 export const AgentApiKey: InjectionKey<AgentApi> = Symbol('agent-company-api')
-export function useAgentApi() { const api = inject(AgentApiKey); if (!api) throw new Error('子代理企业信息尚未准备好。'); return api }
+export function useAgentApi() { const api = inject(AgentApiKey); if (!api) throw new Error(tx('Sub-agent company information is not ready.')); return api }
 // A failed operation keeps its key only while its content remains identical.
 export function useAgentActions() {
   const api = useAgentApi()
@@ -181,7 +182,7 @@ export function useAgentActions() {
       success.value = message
       return true
     } catch (e) {
-      error.value = e instanceof Error ? e.message : '操作未完成，请重试。'
+      error.value = e instanceof Error ? e.message : tx('The operation was not completed. Please try again.')
       return false
     } finally { if (api.isActive()) busy.value = false }
   }
@@ -189,25 +190,25 @@ export function useAgentActions() {
 }
 
 const statusLabels: Record<string, string> = {
-  expected: '待签收', received: '待清点', ready: '已齐全入库', exception: '有异常', in_stock: '已入库',
-  submitted: '已送评', returned: '回卡已核对', return_shipped: '已回寄客户', shipped: '已发件', delivered: '已签收',
-  draft: '待处理', awaiting_inbound: '待寄往 NXR', inbound_shipped: '寄往 NXR 中', grading: '评级中',
-  outbound_shipped: 'NXR 已寄回', completed: '评级完成', cancelled: '已取消',
-  admission_review: '申请审核中', pending_review: '申请审核中', needs_information: '待补充资料', approved: '申请已通过',
-  terms_confirmation: '待确认条款', awaiting_payment: '待付款', payment_review: '核款中', payment_expired: '付款已逾期',
-  payment_exception: '付款异常待核查', confirmed: '已确认', rejected: '已拒绝', pending: '待核款', open: '批次准备中',
-  intake_exception: 'NXR 收卡异常', review: '评级复核中', quality_check: '质检中', quality_hold: '质检复核中',
-  in_transit: '运输中', processing: '处理中', expired: '已过期',
+  expected: 'Awaiting receipt', received: 'Awaiting inventory check', ready: 'Intake complete', exception: 'Exception', in_stock: 'In inventory',
+  submitted: 'Submitted for grading', returned: 'Returned card checked', return_shipped: 'Shipped to customer', shipped: 'Shipped', delivered: 'Delivered',
+  draft: 'Pending', awaiting_inbound: 'Awaiting shipment to NXR', inbound_shipped: 'In transit to NXR', grading: 'Grading',
+  outbound_shipped: 'Returned by NXR', completed: 'Grading completed', cancelled: 'Cancelled',
+  admission_review: 'Application under review', pending_review: 'Application under review', needs_information: 'More information required', approved: 'Application approved',
+  terms_confirmation: 'Awaiting terms acceptance', awaiting_payment: 'Awaiting payment', payment_review: 'Verifying payment', payment_expired: 'Payment overdue',
+  payment_exception: 'Payment exception under review', confirmed: 'Confirmed', rejected: 'Rejected', pending: 'Awaiting payment verification', open: 'Batch in preparation',
+  intake_exception: 'NXR intake exception', review: 'Grading review', quality_check: 'Quality check', quality_hold: 'Quality review',
+  in_transit: 'In transit', processing: 'Processing', expired: 'Expired',
 }
-export const agentStatusLabel = (code: string) => statusLabels[code] || code
+export const agentStatusLabel = (code: string) => tx(statusLabels[code] || code)
 const eventLabels: Record<string, string> = {
-  client_created: '建立客户档案', client_updated: '更新客户档案', client_archived: '归档客户', client_reactivated: '恢复客户',
-  intake_created: '登记来件', intake_received: '签收来件', card_checked_in: '卡片清点入库', card_exception: '登记卡片异常',
-  card_photo_uploaded: '上传卡片照片', submission_created: '生成送评批次', card_return_checked: '回卡核对',
-  return_shipment_created: '回寄客户', return_shipment_delivered: '客户签收',
-  photo_added: '上传卡片照片', intake_submitted: '来件已送评', card_return_shipped: '卡片已回寄客户',
-  shipment_created: '登记客户回寄', client_received_card: '客户已收到卡片', shipment_delivered: '客户签收回寄',
+  client_created: 'Customer record created', client_updated: 'Customer record updated', client_archived: 'Archive customer', client_reactivated: 'Restore customer',
+  intake_created: 'Intake registered', intake_received: 'Intake received', card_checked_in: 'Card checked into inventory', card_exception: 'Card exception recorded',
+  card_photo_uploaded: 'Upload card photo', submission_created: 'Create submission batch', card_return_checked: 'Check returned cards',
+  return_shipment_created: 'Return to customer', return_shipment_delivered: 'Customer delivery confirmed',
+  photo_added: 'Upload card photo', intake_submitted: 'Intake submitted for grading', card_return_shipped: 'Card shipped to customer',
+  shipment_created: 'Customer return recorded', client_received_card: 'Customer received cards', shipment_delivered: 'Return delivered to customer',
 }
-export const agentEventLabel = (code: string) => eventLabels[code] || code
-export const agentDateLabel = (value: string | null) => value ? new Date(value).toLocaleString('zh-CN') : '—'
+export const agentEventLabel = (code: string) => tx(eventLabels[code] || code)
+export const agentDateLabel = (value: string | null) => value ? new Date(value).toLocaleString(activeLocale()) : '—'
 export const agentAddressLabel = (address: AgentAddress) => [address.country, address.region, address.city, address.addressLine1, address.addressLine2, address.postalCode].filter(Boolean).join(' · ')

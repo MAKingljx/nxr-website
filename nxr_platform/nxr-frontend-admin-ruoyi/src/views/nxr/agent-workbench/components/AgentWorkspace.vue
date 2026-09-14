@@ -11,12 +11,12 @@ import AgentAddressesPanel from './AgentAddressesPanel.vue'
 const props=defineProps<{api:AgentApi}>()
 provide(AgentApiKey,props.api)
 const route=useRoute(),router=useRouter(),busy=props.api.busy
-const tabs=[{id:'clients',label:'客户档案'},{id:'intakes',label:'来件与库存'},{id:'returns',label:'客户回寄'},{id:'batches',label:'送评批次'},{id:'wallet',label:'企业余额'},{id:'addresses',label:'返程地址'}]
+const tabs=[{id:'clients',label:'Customer records'},{id:'intakes',label:'Intakes and inventory'},{id:'returns',label:'Customer returns'},{id:'batches',label:'Submission batches'},{id:'wallet',label:'Company wallet'},{id:'addresses',label:'Return addresses'}]
 const tab=computed(()=>tabs.some(item=>item.id===route.query.tab)?String(route.query.tab):'clients')
 const selectedClientId=computed(()=>{const id=Number(route.query.clientId);return Number.isSafeInteger(id)&&id>0?id:undefined})
 async function navigate(next:string,clientId?:number){if(busy.value)return;await router.replace({path:'/nxr/submission-workbench',query:{tab:next,company:String(props.api.companyId),...(clientId?{clientId:String(clientId)}:{})}})}
 </script>
-<template><section class="agent-workbench" data-testid="agent-workbench"><nav class="agent-tabs" aria-label="送评工作台导航"><button v-for="item in tabs" :key="item.id" type="button" :class="{active:tab===item.id}" :aria-current="tab===item.id?'page':undefined" :disabled="busy" :data-testid="`agent-tab-${item.id}`" @click="navigate(item.id)">{{item.label}}</button></nav><AgentClientsPanel v-if="tab==='clients'" @navigate="navigate" /><AgentIntakesPanel v-else-if="tab==='intakes'" :key="`intakes-${selectedClientId||0}`" :initial-client-id="selectedClientId" /><AgentReturnsPanel v-else-if="tab==='returns'" :key="`returns-${selectedClientId||0}`" :initial-client-id="selectedClientId" /><AgentBatchesPanel v-else-if="tab==='batches'" /><AgentWalletPanel v-else-if="tab==='wallet'" /><AgentAddressesPanel v-else /></section></template>
+<template><section class="agent-workbench" data-testid="agent-workbench"><nav class="agent-tabs" :aria-label="$tx('Submission Workspace navigation')"><button v-for="item in tabs" :key="item.id" type="button" :class="{active:tab===item.id}" :aria-current="tab===item.id?'page':undefined" :disabled="busy" :data-testid="`agent-tab-${item.id}`" @click="navigate(item.id)">{{$tx(item.label)}}</button></nav><AgentClientsPanel v-if="tab==='clients'" @navigate="navigate" /><AgentIntakesPanel v-else-if="tab==='intakes'" :key="`intakes-${selectedClientId||0}`" :initial-client-id="selectedClientId" /><AgentReturnsPanel v-else-if="tab==='returns'" :key="`returns-${selectedClientId||0}`" :initial-client-id="selectedClientId" /><AgentBatchesPanel v-else-if="tab==='batches'" /><AgentWalletPanel v-else-if="tab==='wallet'" /><AgentAddressesPanel v-else /></section></template>
 
 <style scoped>
 

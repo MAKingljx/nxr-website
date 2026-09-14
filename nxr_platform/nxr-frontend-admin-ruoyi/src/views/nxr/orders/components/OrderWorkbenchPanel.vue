@@ -16,9 +16,9 @@
     </template>
     <el-table v-if="snapshot?.items?.length" :data="snapshot.items" size="small" border class="mt12">
       <el-table-column label="#" prop="itemNo" width="54" />
-      <el-table-column label="收卡编号" min-width="220"><template #default="scope"><code>{{identities[scope.row.orderItemId]?.receiptCode||scope.row.barcode}}</code></template></el-table-column>
-      <el-table-column label="原始客户" min-width="150"><template #default="scope">{{identities[scope.row.orderItemId]?.ownerDisplayName||'—'}}<small v-if="identities[scope.row.orderItemId]?.clientReference"> · {{identities[scope.row.orderItemId].clientReference}}</small></template></el-table-column>
-      <el-table-column label="送评来源" min-width="170"><template #default="scope">{{identities[scope.row.orderItemId]?.sourceType==='partner'?'子代理：'+identities[scope.row.orderItemId].partnerCompanyName:identities[scope.row.orderItemId]?'客户直寄 NXR':'—'}}</template></el-table-column>
+      <el-table-column :label="$tx('Intake code')" min-width="220"><template #default="scope"><code>{{identities[scope.row.orderItemId]?.receiptCode||scope.row.barcode}}</code></template></el-table-column>
+      <el-table-column :label="$tx('Original customer')" min-width="150"><template #default="scope">{{identities[scope.row.orderItemId]?.ownerDisplayName||'—'}}<small v-if="identities[scope.row.orderItemId]?.clientReference"> · {{identities[scope.row.orderItemId].clientReference}}</small></template></el-table-column>
+      <el-table-column :label="$tx('Submission source')" min-width="170"><template #default="scope">{{identities[scope.row.orderItemId]?.sourceType==='partner'?$tx('Partner: ')+identities[scope.row.orderItemId].partnerCompanyName:identities[scope.row.orderItemId]?$tx('Customer direct to NXR'):'—'}}</template></el-table-column>
       <el-table-column :label="$tx('Current label barcode')" min-width="300"><template #default="scope"><template v-if="scope.row.labelBarcode"><code>{{ scope.row.labelBarcode }}</code><el-button link type="primary" @click="copyLabelBarcode(scope.row.labelBarcode)">{{ $tx('Copy') }}</el-button></template><span v-else>-</span></template></el-table-column>
       <el-table-column :label="$tx('Card')" prop="cardName" min-width="160" />
       <el-table-column :label="$tx('Result / Cert')" min-width="180"><template #default="scope">{{ scope.row.finalGradeLabel || scope.row.finalGradeValue || scope.row.vintageClassification || scope.row.merchDescription || scope.row.productType || '-' }} · {{ scope.row.certId || '-' }}</template></el-table-column>

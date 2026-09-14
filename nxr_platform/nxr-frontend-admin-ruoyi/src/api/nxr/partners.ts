@@ -1,4 +1,5 @@
 import request from '@/utils/request'
+import { tx, localizeBackendMessage } from '@/i18n'
 
 export type PartnerPage<T> = { items:T[]; total:number; page:number; pageSize:number }
 export type PartnerSummary = {
@@ -16,7 +17,7 @@ export type PartnerProvisionInput = {existingCustomerId?:number;email?:string;di
 // Credential-bearing provisioning requests must bypass the generic sessionStorage duplicate-submit cache.
 async function partnerRequest<T>(path:string,method='get',data?:object,params?:object):Promise<T>{
   try{return await request({url:`/api/admin/partners${path}`,method,data,params,headers:{repeatSubmit:false},suppressErrorMessage:true}) as T}
-  catch(error:any){throw new Error(error?.response?.data?.message||error?.response?.data?.msg||error?.message||'操作未完成，请重试。')}
+  catch(error:any){throw new Error(localizeBackendMessage(error?.response?.data?.message||error?.response?.data?.msg||error?.message)||tx('The operation could not be completed. Please try again.'))}
 }
 export const listPartners=(params:object)=>partnerRequest<PartnerPage<PartnerSummary>>('','get',undefined,params)
 export const getPartner=(id:number)=>partnerRequest<PartnerDetail>(`/${id}`)

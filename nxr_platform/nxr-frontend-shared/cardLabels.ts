@@ -15,7 +15,7 @@ type Encoder = (value: string) => Promise<string>
 export function createCardLabelPrinter() {
   let preview: Window | null = null, generation = 0
   function close() { generation++; if (preview && !preview.closed) preview.close(); preview = null }
-  async function open(load: () => Promise<CardIdentityOrder>, encode: Encoder, locale: 'zh-CN' | 'en' = 'zh-CN') {
+  async function open(load: () => Promise<CardIdentityOrder>, encode: Encoder, locale: 'zh-CN' | 'en' = 'en') {
     const zh = locale === 'zh-CN'
     const title = zh ? 'NXR 收卡标签' : 'NXR Intake Labels'
     if (!preview || preview.closed) preview = window.open('', '_blank', 'popup,width=980,height=850')
