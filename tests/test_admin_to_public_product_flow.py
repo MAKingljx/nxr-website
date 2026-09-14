@@ -115,6 +115,53 @@ class AdminToPublicProductFlowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.get_json()["success"])
 
+    def test_code_only_restart_skips_bootstrap_but_default_start_keeps_initialization(self):
+        import runpy
+        from nxr_admin import app_updated
+
+        for flag, expected_calls in (("1", 0), ("", 1)):
+            with self.subTest(flag=flag), patch.dict(os.environ, {"NXR_SKIP_DB_INIT": flag}):
+                with patch.object(admin_core, "initialize_databases") as initialize:
+                    loaded = runpy.run_path(app_updated.__file__, run_name="isolated_admin_startup")
+                self.assertIs(loaded["app"], admin_core.app)
+                self.assertEqual(initialize.call_count, expected_calls)
+
+    def test_french_language_can_be_selected_saved_edited_filtered_and_published(self):
+        client = self.admin_client()
+        form = client.get("/admin/entry/new")
+        self.assertEqual(form.status_code, 200)
+        self.assertIn(b'<option value="FR"', form.data)
+
+        entry = self.create_entry(
+            client, "8234567893", "merch_product", language="French",
+            merch_description="French-language collectible fixture",
+        )
+        self.assertEqual(entry["language"], "FR")
+
+        # Imported legacy spellings must remain editable and discoverable without a data migration.
+        with admin_core.get_temp_db_connection() as conn:
+            conn.execute("UPDATE temp_cards SET language = ? WHERE id = ?", ("Français", entry["id"]))
+            conn.commit()
+        filtered = client.get("/admin/entries?language=FR")
+        self.assertIn(b"8234567893", filtered.data)
+        edit = client.get(f"/admin/entries/{entry['id']}/edit")
+        self.assertEqual(edit.status_code, 200)
+        self.assertRegex(edit.get_data(as_text=True), r'<option value="FR"\s+selected')
+
+        response = client.post(f"/admin/entries/{entry['id']}/edit", data={
+            "cert_id": entry["cert_id"], "product_type": "merch_product",
+            "card_category": "trading_card", "card_name": entry["card_name"],
+            "year": "1999", "brand": "Pokemon", "variety": "Test Variant",
+            "language": "fr", "set_name": "Integration Set", "card_number": "001",
+            "merch_description": "French-language collectible fixture",
+        })
+        self.assertEqual(response.status_code, 302)
+        self.approve_and_upload(client, entry["id"], entry["cert_id"])
+        with admin_core.get_main_db_connection() as conn:
+            saved = conn.execute("SELECT language FROM cards WHERE cert_id = ?", (entry["cert_id"],)).fetchone()
+        self.assertEqual(saved["language"], "FR")
+        self.assertEqual(public_site.get_card(entry["cert_id"])["language_label"], "French")
+
     def test_merch_and_vintage_entries_reach_the_classic_public_layout(self):
         client = self.admin_client()
         merch = self.create_entry(

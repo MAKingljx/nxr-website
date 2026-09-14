@@ -154,6 +154,7 @@ LANGUAGE_OPTIONS = [
     "IN",    # Indonesian
     "KO",    # Korean
     "TH",    # Thai
+    "FR",    # French
     "Other"
 ]
 
@@ -382,6 +383,12 @@ LANGUAGE_ALIASES = {
     'korean': 'KO',
     'th': 'TH',
     'thai': 'TH',
+    'fr': 'FR',
+    'french': 'FR',
+    'français': 'FR',
+    'francais': 'FR',
+    '法语': 'FR',
+    '法語': 'FR',
     'other': 'Other',
 }
 
@@ -393,6 +400,7 @@ LANGUAGE_DB_VARIANTS = {
     'IN': ['IN', 'Indonesian'],
     'KO': ['KO', 'Korean'],
     'TH': ['TH', 'Thai'],
+    'FR': ['FR', 'French', 'Français', 'Francais', '法语', '法語'],
     'Other': ['Other'],
 }
 
