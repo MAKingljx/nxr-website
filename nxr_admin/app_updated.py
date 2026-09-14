@@ -24,7 +24,9 @@ from nxr_admin import routes_settings
 from nxr_admin import routes_uploads  # noqa: F401
 
 
-initialize_databases()
+# Code-only restarts may skip bootstrap maintenance after the schema is verified.
+if os.environ.get("NXR_SKIP_DB_INIT") != "1":
+    initialize_databases()
 
 
 if __name__ == '__main__':
