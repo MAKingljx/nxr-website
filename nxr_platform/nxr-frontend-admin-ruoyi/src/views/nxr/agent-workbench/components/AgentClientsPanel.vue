@@ -11,6 +11,7 @@ import AgentAddressFields from './AgentAddressFields.vue'
 import AgentPagination from './AgentPagination.vue'
 import AgentTimeline from './AgentTimeline.vue'
 
+const props = defineProps<{ initialRecordId?: number }>()
 const api = useAgentApi()
 const { fetchAgentClients, fetchAgentClient, createAgentClient, updateAgentClient } = api
 
@@ -70,7 +71,7 @@ async function toggleActive() {
   const saved = await run(`client:${client.id}:active`, payload, () => updateAgentClient(client.id, payload), value => { if (detail.value) detail.value.client = value }, payload.active ? tx('Customer restored.') : tx('Customer archived. Historical records have been retained.'))
   if (saved) await load(clients.value.page)
 }
-onMounted(() => load())
+onMounted(async () => { await load(); if (props.initialRecordId) await selectClient(props.initialRecordId) })
 </script>
 
 <template>

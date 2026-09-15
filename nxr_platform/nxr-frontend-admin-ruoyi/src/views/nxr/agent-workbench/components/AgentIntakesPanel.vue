@@ -18,7 +18,7 @@ const api = useAgentApi()
 const { fetchApplicationConfig } = api
 const { fetchAgentIntakes, fetchAgentIntake, createAgentIntake, receiveAgentIntake, checkInAgentCard, uploadAgentCardPhoto } = api
 
-const props = defineProps<{ initialClientId?: number }>()
+const props = defineProps<{ initialClientId?: number; initialRecordId?: number }>()
 const rows = ref(emptyAgentPage<AgentIntake>()), detail = ref<AgentIntakeDetail | null>(null)
 const loading = ref(false), detailLoading = ref(false), query = ref(''), statusCode = ref(''), clientFilter = ref(props.initialClientId || 0)
 const mode = ref<'detail' | 'new' | 'submission'>('detail'), selected = ref<Record<number, AgentIntake>>({}), createdSubmission = ref<AgentSubmission | null>(null)
@@ -96,7 +96,7 @@ function printLabels() {
   try { labelPrinter.open(detail.value.intake, detail.value.cards) }
   catch (e) { error.value = e instanceof Error ? e.message : tx('Unable to open the label preview. Please try again.') }
 }
-onMounted(async () => { await load(); try { maxCards.value = (await fetchApplicationConfig()).maxCardsPerOrder } catch (e) { error.value = e instanceof Error ? e.message : tx('Unable to load the card quantity limit.') } })
+onMounted(async () => { await load(); if (props.initialRecordId) await show(props.initialRecordId); try { maxCards.value = (await fetchApplicationConfig()).maxCardsPerOrder } catch (e) { error.value = e instanceof Error ? e.message : tx('Unable to load the card quantity limit.') } })
 onBeforeUnmount(labelPrinter.close)
 </script>
 

@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { tx } from '@/i18n'
 import { onMounted, reactive, ref } from 'vue'
+import { useRoute } from 'vue-router'
 import { agentDateLabel, agentStatusLabel, emptyAgentPage, formatMoney, useAgentApi, useAgentActions, type AgentWallet, type AgentTransaction, type AgentRecharge } from '../lib/agentWorkbench'
 import AgentPagination from './AgentPagination.vue'
 const api = useAgentApi(), balances = ref<AgentWallet[]>([]), transactions = ref(emptyAgentPage<AgentTransaction>()), recharges = ref(emptyAgentPage<AgentRecharge>())
-const profile = reactive({ companyName: '', contactName: '' }), currency = ref('USD'), loading = ref(false)
+const route = useRoute()
+const initialCurrency = ['USD','CNY','EUR','GBP','HKD','JPY','CAD','AUD','SGD'].includes(String(route.query.currency)) ? String(route.query.currency) : 'USD'
+const profile = reactive({ companyName: '', contactName: '' }), currency = ref(initialCurrency), loading = ref(false)
 const currencies = ['USD','CNY','EUR','GBP','HKD','JPY','CAD','AUD','SGD']
-const form = reactive({ currencyCode: 'USD', amount: '', providerCode: 'bank_transfer', payerReference: '', proofReference: '' })
+const form = reactive({ currencyCode: initialCurrency, amount: '', providerCode: 'bank_transfer', payerReference: '', proofReference: '' })
 const { busy, error, success, run } = useAgentActions()
 async function loadTransactions(page = 1) { try { transactions.value = await api.fetchTransactions(currency.value, page) } catch (e) { error.value = e instanceof Error ? e.message : tx('Unable to load wallet transactions.') } }
 async function loadRecharges(page = 1) { try { recharges.value = await api.fetchRecharges(page) } catch (e) { error.value = e instanceof Error ? e.message : tx('Unable to load top-up history.') } }

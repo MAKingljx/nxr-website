@@ -16,7 +16,7 @@ import AgentTimeline from './AgentTimeline.vue'
 const api = useAgentApi()
 const { fetchAgentCards, checkAgentReturn, fetchAgentShipments, fetchAgentShipment, createAgentShipment, deliverAgentShipment } = api
 
-const props = defineProps<{ initialClientId?: number }>()
+const props = defineProps<{ initialClientId?: number; initialRecordId?: number }>()
 const shipments = ref(emptyAgentPage<AgentShipment>()), pendingCards = ref(emptyAgentPage<AgentCard>()), returnCards = ref(emptyAgentPage<AgentCard>())
 const detail = ref<AgentShipmentDetail | null>(null), lastChecked = ref<AgentCard | null>(null)
 const mode = ref<'check' | 'new' | 'detail'>('check'), query = ref(''), cardQuery = ref(''), clientFilter = ref(props.initialClientId || 0)
@@ -102,7 +102,7 @@ async function delivered() {
   if (saved) await loadShipments(shipments.value.page)
 }
 function clearFilter() { clientFilter.value = 0; loadShipments(); loadPending() }
-onMounted(() => Promise.all([loadShipments(), loadPending()]))
+onMounted(async () => { await Promise.all([loadShipments(), loadPending()]); if (props.initialRecordId) await show(props.initialRecordId) })
 </script>
 
 <template>

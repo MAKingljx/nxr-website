@@ -9,19 +9,23 @@ import useUserStore from '@/store/modules/user'
 import useLockStore from '@/store/modules/lock'
 import useSettingsStore from '@/store/modules/settings'
 import usePermissionStore from '@/store/modules/permission'
+import { legacyWorkspaceLocation, workspacePath } from '@/utils/submissionWorkspace'
 
 NProgress.configure({ showSpinner: false })
 
 const whiteList = ['/login', '/register']
 
 function agentLandingPath(target) {
-  if (target.path === '/nxr/agent-workbench') return '/nxr/submission-workbench'
   if (!['/', '/index'].includes(target.path)) return null
   const user = useUserStore()
   const permissions = user.permissions || []
   if (user.roles.includes('admin') || permissions.includes('*:*:*') || permissions.includes('nxr:dashboard:view')) return null
   const agentOnly = user.roles.length === 1 && user.roles.includes('nxr_agent')
-  return agentOnly || permissions.includes('nxr:agent:workbench') ? '/nxr/submission-workbench' : null
+  return (agentOnly || permissions.includes('nxr:agent:workbench')) && router.hasRoute('NxrWorkspaceClients') ? workspacePath('clients') : null
+}
+
+function legacyLanding(target) {
+  return router.hasRoute('NxrWorkspaceClients') ? legacyWorkspaceLocation(target) : null
 }
 
 const isWhiteList = (path) => {
@@ -61,6 +65,8 @@ router.beforeEach(async (to, from) => {
             router.addRoute(route)
           }
         })
+        const legacy = legacyLanding(to)
+        if (legacy) return legacy
         // Resolve the agent landing page only after the permission-filtered routes exist.
         const landing = agentLandingPath(to)
         if (landing) return { path: landing, query: to.query, hash: to.hash, replace: true }
@@ -71,6 +77,8 @@ router.beforeEach(async (to, from) => {
         return { path: '/' }
       }
     }
+    const legacy = legacyLanding(to)
+    if (legacy) return legacy
     const landing = agentLandingPath(to)
     if (landing) return { path: landing, query: to.query, hash: to.hash, replace: true }
     return true

@@ -4,8 +4,9 @@ import zhCN from './messages/zh-CN'
 import baseLiteralZhCN from './literal-zh-CN'
 import workspaceZhCN from './partner-workspace-zh-CN'
 import partnerZhCN from './partner-management-zh-CN'
+import overviewZhCN from './workspace-overview-zh-CN'
 
-const literalZhCN = { ...baseLiteralZhCN, ...workspaceZhCN, ...partnerZhCN }
+const literalZhCN = { ...baseLiteralZhCN, ...workspaceZhCN, ...partnerZhCN, ...overviewZhCN }
 export const allowLocaleSelection = ['development', 'java-stage'].includes(import.meta.env.VITE_APP_ENV)
 
 export const supportedLocales = [

@@ -1,4 +1,5 @@
 import { i18n } from '@/i18n'
+import { groupSubmissionWorkspaceRoutes } from './submissionWorkspace.js'
 
 const HIDDEN_TOOL_COMPONENTS = new Set(['tool/build/index', 'tool/gen/index', 'tool/swagger/index'])
 
@@ -99,11 +100,6 @@ function normalizeRoute(route) {
     normalized.meta.title = titleKey ? i18n.global.t(titleKey) : normalized.meta.title
   }
 
-  if (component === 'nxr/agent-workbench/index') {
-    normalized.alias = ['/nxr/agent-workbench']
-    normalized.meta = { ...normalized.meta, title: i18n.global.t('nav.submissionWorkspace') }
-  }
-
   if (normalized.component === 'nxr/customers/index' && normalized.meta) {
     normalized.meta.title = i18n.global.t('nav.customerManagement')
     normalized.meta.icon = 'peoples'
@@ -127,5 +123,6 @@ function normalizeRoute(route) {
 }
 
 export function prepareNxrBusinessRoutes(routes = []) {
-  return routes.map((route) => normalizeRoute(route)).filter(Boolean)
+  const normalized = routes.map((route) => normalizeRoute(route)).filter(Boolean)
+  return groupSubmissionWorkspaceRoutes(normalized, key => i18n.global.t(key))
 }
