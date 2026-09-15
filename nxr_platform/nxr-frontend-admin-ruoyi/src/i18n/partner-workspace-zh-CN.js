@@ -1,4 +1,5 @@
 export default {
+  "Inventory code": "库存码",
   "Registered at": "登记时间",
   "Close details": "收起详情",
   "Checked / expected": "已清点 / 应收",
