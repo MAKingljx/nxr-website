@@ -18,6 +18,9 @@ public class AgentOverviewService {
     private static final String COMPANY_NAME = "COALESCE(NULLIF(TRIM(p.company_name),''),c.display_name)";
     private final JdbcClient jdbc;
     private final AgentOperatorScopeService scope;
+    private EnterpriseCreditService credits;
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setEnterpriseCreditService(EnterpriseCreditService credits) { this.credits=credits; }
 
     public AgentOverviewService(JdbcClient jdbc, AgentOperatorScopeService scope) {
         this.jdbc = jdbc;
@@ -26,7 +29,7 @@ public class AgentOverviewService {
 
     public record OverviewRow(long id, long companyId, String companyName, boolean companyActive,
         String reference, String title, String clientName, String statusCode, Integer cardCount,
-        BigDecimal amount, String currencyCode, String detail, LocalDateTime updatedAt) { }
+        @com.fasterxml.jackson.annotation.JsonFormat(shape = com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING) BigDecimal amount, String currencyCode, String detail, LocalDateTime updatedAt) { }
 
     private record View(String from, String reference, String title, String clientName, String status,
         String cardCount, String amount, String currency, String detail, String updatedAt, List<String> search) { }
@@ -74,7 +77,7 @@ public class AgentOverviewService {
         return new AgentWorkbenchService.Page<>(items, total, safePage, safeSize);
     }
 
-    private static View definition(String view) {
+    private View definition(String view) {
         if (view == null) throw badRequest("Select a workspace view");
         // Every SQL identifier and expression comes from this fixed list, never from the request.
         return switch (view) {
@@ -104,7 +107,10 @@ public class AgentOverviewService {
                 "NULL", "NULL", "CONCAT_WS(' · ',NULLIF(r.carrier_name,''),NULLIF(r.tracking_number,''))",
                 "COALESCE(r.delivered_at,r.shipped_at)", List.of("r.shipment_no", "cl.display_name", "r.tracking_number", "r.carrier_name"));
             case "wallet" -> new View(
-                "FROM merchant_wallet r JOIN customer_account c ON c.id=r.customer_id",
+                credits==null ? "FROM merchant_wallet r JOIN customer_account c ON c.id=r.customer_id"
+                    : "FROM (SELECT c.id,c.id AS customer_id,'PTS' AS currency_code,COALESCE(w.balance,0) AS balance,"
+                        + "COALESCE(w.updated_at,c.created_at) AS updated_at FROM customer_account c LEFT JOIN merchant_wallet w"
+                        + " ON w.customer_id=c.id AND w.currency_code='PTS') r JOIN customer_account c ON c.id=r.customer_id",
                 "r.currency_code", "r.currency_code", "NULL", "NULL", "NULL", "r.balance", "r.currency_code", "NULL",
                 "r.updated_at", List.of("r.currency_code"));
             case "addresses" -> new View(

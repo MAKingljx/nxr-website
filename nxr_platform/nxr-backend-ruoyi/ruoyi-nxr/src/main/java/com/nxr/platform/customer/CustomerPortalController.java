@@ -352,6 +352,20 @@ public class CustomerPortalController {
         return merchantWalletService.saveMerchantProfile(current(customerToken).id(), request);
     }
 
+    @GetMapping("/merchant/enterprise-credit")
+    public EnterpriseCreditService.Summary credits(@RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken) {
+        return merchantWalletService.credits().summary(current(customerToken).id());
+    }
+    @PostMapping("/merchant/credit-quote")
+    public EnterpriseCreditService.Quote creditQuote(@RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
+        @RequestBody EnterpriseCreditService.QuoteRequest request) {
+        return merchantWalletService.credits().quote(current(customerToken).id(),request);
+    }
+    @GetMapping("/orders/{orderNo}/credit-quote")
+    public EnterpriseCreditService.OrderQuote orderCreditQuote(@RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken,
+        @PathVariable String orderNo) {
+        return merchantWalletService.credits().orderQuote(current(customerToken).id(),orderNo);
+    }
     @GetMapping("/merchant/wallets")
     public java.util.List<MerchantWalletService.WalletBalance> merchantWallets(
         @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken

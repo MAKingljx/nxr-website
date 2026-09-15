@@ -53,7 +53,7 @@ public class PartnerManagementService {
     }
     public record PartnerSummary(long id,String displayName,String email,String mobile,String companyName,String contactName,
         boolean active,long operatorCount,long activeOperatorCount,String operatorAccounts,long clientCount,long inventoryCount,
-        long pendingBatchCount,String currencyCode,BigDecimal walletBalance,Long pendingRechargeCount,boolean financeVisible,LocalDateTime createdAt) { }
+        long pendingBatchCount,String currencyCode,@com.fasterxml.jackson.annotation.JsonFormat(shape = com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING) BigDecimal walletBalance,Long pendingRechargeCount,boolean financeVisible,LocalDateTime createdAt) { }
     public record Operator(long sysUserId,String userName,String nickName,boolean active,boolean backendActive) { }
     public record Detail(PartnerSummary partner,List<Operator> operators,List<MerchantWalletService.WalletBalance> wallets,
         MerchantWalletService.RechargePage recharges,MerchantBatchService.BatchPage batches,boolean financeVisible) { }
@@ -64,7 +64,11 @@ public class PartnerManagementService {
     }
     public record ProvisionResult(long customerId,long sysUserId,boolean replayed) { }
     public record UpdateRequest(String displayName,String email,String mobile,String companyName,String contactName,Boolean active) { }
-    public record RechargeRequest(String requestKey,String currencyCode,BigDecimal amount,String providerCode,String payerReference,String proofReference) { }
+    public record RechargeRequest(String requestKey,String currencyCode,BigDecimal amount,String providerCode,String payerReference,String proofReference,Long settingsVersion) {
+        public RechargeRequest(String requestKey,String currencyCode,BigDecimal amount,String providerCode,String payerReference,String proofReference) {
+            this(requestKey,currencyCode,amount,providerCode,payerReference,proofReference,null);
+        }
+    }
     private record Command(long customerId,Long sysUserId,Long rechargeId,String requestHash) { }
 
     private static final String SUMMARY_COLUMNS="""
@@ -82,7 +86,7 @@ public class PartnerManagementService {
 
     public AgentWorkbenchService.Page<PartnerSummary> list(long actor,int page,int pageSize,String query,Boolean active,String currencyCode) {
         scope.requirePlatformPermissions(actor,"nxr:partner:list");
-        boolean finance=scope.hasPlatformPermission(actor,"nxr:customer:finance");String currency=currency(currencyCode);
+        boolean finance=scope.hasPlatformPermission(actor,"nxr:customer:finance");String currency=wallet.usesEnterpriseCredit()?"PTS":currency(currencyCode);
         Map<String,Object> params=params("currency",currency);String where=" WHERE c.account_type_code='merchant'";
         if(active!=null) {where+=" AND c.is_active=:active";params.put("active",active?1:0);}
         if(optional(query,255)!=null) {where+=" AND (LOWER(c.email) LIKE :query OR LOWER(c.display_name) LIKE :query OR LOWER(p.company_name) LIKE :query OR LOWER(p.contact_name) LIKE :query OR EXISTS(SELECT 1 FROM agent_operator_binding b JOIN sys_user u ON u.user_id=b.sys_user_id WHERE b.merchant_customer_id=c.id AND LOWER(u.user_name) LIKE :query))";params.put("query","%"+query.strip().toLowerCase(Locale.ROOT)+"%");}
@@ -95,7 +99,7 @@ public class PartnerManagementService {
 
     public Detail detail(long actor,long customerId,String currencyCode) {
         scope.requirePlatformPermissions(actor,"nxr:partner:list");boolean finance=scope.hasPlatformPermission(actor,"nxr:customer:finance");
-        PartnerSummary summary=requirePartner(customerId,finance,currency(currencyCode));
+        PartnerSummary summary=requirePartner(customerId,finance,wallet.usesEnterpriseCredit()?"PTS":currency(currencyCode));
         List<Operator> operators=jdbc.sql("""
             SELECT b.sys_user_id,u.user_name,u.nick_name,b.active,
               CASE WHEN u.status='0' AND u.del_flag='0' THEN TRUE ELSE FALSE END AS backend_active
@@ -187,14 +191,13 @@ public class PartnerManagementService {
         if(!partner.active())throw conflict("Enable this partner before registering a new recharge");
         String provider=required(request.providerCode(),"Transfer method",32).toLowerCase(Locale.ROOT);
         if(!Set.of("manual_transfer","bank_transfer","wechat_transfer","alipay_transfer").contains(provider))throw bad("Only an offline transfer application can be registered here");
-        var recharge=wallet.createRecharge(customerId,new MerchantWalletService.RechargeRequest(request.currencyCode(),request.amount(),provider,request.payerReference(),request.proofReference()));
+        var recharge=wallet.createRecharge(customerId,new MerchantWalletService.RechargeRequest(request.currencyCode(),request.amount(),provider,request.payerReference(),request.proofReference(),request.settingsVersion()));
         recordCommand(actor,"recharge",key,fingerprint,customerId,null,recharge.id());
         return recharge;
     }
 
     private MerchantWalletService.RechargeRecord recharge(long customer,long id) {
-        return jdbc.sql("SELECT id,recharge_no,customer_id,currency_code,amount,provider_code,payer_reference,proof_reference,provider_transaction_id,status_code,reviewed_by_user_id,reviewed_at,review_note,created_at,updated_at FROM merchant_wallet_recharge WHERE id=:id AND customer_id=:customer")
-            .params(params("id",id,"customer",customer)).query(MerchantWalletService.RechargeRecord.class).optional().orElseThrow(()->conflict("The registered recharge is unavailable"));
+        return wallet.requireRecharge(customer,id);
     }
     private void lockCustomer(long id) {
         jdbc.sql("SELECT id FROM customer_account WHERE id=:id AND account_type_code='merchant' FOR UPDATE").param("id",id).query(Long.class).optional()

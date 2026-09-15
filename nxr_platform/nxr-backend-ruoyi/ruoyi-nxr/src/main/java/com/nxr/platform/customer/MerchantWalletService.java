@@ -2,6 +2,7 @@ package com.nxr.platform.customer;
 
 import com.nxr.platform.admission.OrderAdmissionService;
 import java.math.BigDecimal;
+import com.fasterxml.jackson.annotation.JsonFormat;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -18,7 +19,7 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
-/** Currency-isolated prepaid wallets for merchant accounts. */
+/** Unified enterprise credits with preserved historical currency wallets. */
 @Service
 public class MerchantWalletService {
 
@@ -33,6 +34,17 @@ public class MerchantWalletService {
 
     private final JdbcClient jdbcClient;
     private OrderAdmissionService orderAdmissionService;
+    private EnterpriseCreditService enterpriseCreditService;
+
+    @Autowired
+    public void setEnterpriseCreditService(EnterpriseCreditService service) { this.enterpriseCreditService = service; }
+
+    public boolean usesEnterpriseCredit() { return enterpriseCreditService != null; }
+
+    public EnterpriseCreditService credits() {
+        if (enterpriseCreditService == null) throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Enterprise credit service is unavailable");
+        return enterpriseCreditService;
+    }
 
     public MerchantWalletService(JdbcClient jdbcClient) {
         this.jdbcClient = jdbcClient;
@@ -96,10 +108,11 @@ public class MerchantWalletService {
         return jdbcClient.sql(
                 """
                 SELECT id, customer_id, currency_code, balance, created_at, updated_at
-                FROM merchant_wallet WHERE customer_id = :customerId ORDER BY currency_code
+                FROM merchant_wallet WHERE customer_id = :customerId AND (:credit = 0 OR currency_code = 'PTS') ORDER BY currency_code
                 """
             )
             .param("customerId", customerId)
+            .param("credit", enterpriseCreditService == null ? 0 : 1)
             .query((rs, rowNum) -> new WalletBalance(
                 rs.getLong("id"), rs.getLong("customer_id"), rs.getString("currency_code"),
                 rs.getBigDecimal("balance"), rs.getObject("created_at", LocalDateTime.class),
@@ -110,7 +123,8 @@ public class MerchantWalletService {
 
     public WalletTransactionPage listTransactions(long customerId, String requestedCurrency, int requestedPage, int requestedPageSize) {
         requireMerchant(customerId);
-        String currency = requestedCurrency == null || requestedCurrency.isBlank() ? "" : normalizeCurrency(requestedCurrency);
+        String currency = requestedCurrency == null || requestedCurrency.isBlank() ? ""
+            : EnterpriseCreditService.UNIT.equalsIgnoreCase(requestedCurrency) ? EnterpriseCreditService.UNIT : normalizeCurrency(requestedCurrency);
         int page = Math.max(1, requestedPage);
         int pageSize = Math.max(1, Math.min(100, requestedPageSize));
         int offset = (page - 1) * pageSize;
@@ -153,6 +167,10 @@ public class MerchantWalletService {
         if (amount.compareTo(MAX_RECHARGE) > 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Recharge amount is too large");
         }
+        // Customer precedes configuration and wallets: INSERT foreign-key checks also lock the customer.
+        lockCustomer(customerId);
+        EnterpriseCreditService.Quote quote = enterpriseCreditService == null ? null
+            : enterpriseCreditService.prepare(currency, amount, request.settingsVersion());
         String provider = normalizeProvider(request.providerCode());
         String rechargeNo = generateReference("RCH");
         jdbcClient.sql(
@@ -170,6 +188,8 @@ public class MerchantWalletService {
             .param("payerReference", blankToNull(clean(request.payerReference(), 255)))
             .param("proofReference", blankToNull(clean(request.proofReference(), 512)))
             .update();
+        RechargeRecord created = requireRechargeByNumber(rechargeNo);
+        if (quote != null) enterpriseCreditService.saveSnapshot(customerId, "wallet_recharge", created.id(), quote);
         return requireRechargeByNumber(rechargeNo);
     }
 
@@ -209,6 +229,7 @@ public class MerchantWalletService {
     public RechargeRecord reviewRecharge(
         long customerId, long rechargeId, long adminUserId, boolean approved, RechargeReviewRequest request
     ) {
+        if (enterpriseCreditService != null) enterpriseCreditService.requireFinance(adminUserId);
         requireMerchant(customerId);
         RechargeRecord recharge = lockRecharge(customerId, rechargeId);
         if (!"pending".equals(recharge.statusCode())) {
@@ -276,6 +297,16 @@ public class MerchantWalletService {
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public WalletOrderPayment debitOrder(long customerId, long orderId, String requestedIdempotencyKey) {
+        return debitOrder(customerId, orderId, requestedIdempotencyKey, null, null);
+    }
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public WalletOrderPayment debitOrder(long customerId, long orderId, String requestedIdempotencyKey, Long settingsVersion) {
+        return debitOrder(customerId, orderId, requestedIdempotencyKey, settingsVersion, null);
+    }
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public WalletOrderPayment debitOrder(long customerId, long orderId, String requestedIdempotencyKey, Long settingsVersion, BigDecimal expectedPoints) {
         requireMerchant(customerId);
         String idempotencyKey = requireText(requestedIdempotencyKey, "Idempotency key", 128);
         OrderCharge order = jdbcClient.sql(
@@ -299,6 +330,8 @@ public class MerchantWalletService {
             }
             return existing;
         }
+        // Preserve the outer order/payment lock, then use the common customer -> config -> wallet order.
+        lockCustomer(customerId);
         if (orderAdmissionService != null) {
             orderAdmissionService.requirePaymentAllowed(order.id(), customerId);
         }
@@ -342,18 +375,28 @@ public class MerchantWalletService {
         if (activeGatewayAttempts) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "An online payment attempt is still active for this order");
         }
-        long walletId = ensureAndLockWallet(customerId, currency);
-        BigDecimal balance = walletBalance(walletId);
-        if (balance.compareTo(order.amount()) < 0) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Insufficient " + currency + " wallet balance");
+        EnterpriseCreditService.Quote quote = enterpriseCreditService == null ? null
+            : enterpriseCreditService.prepare(currency, order.amount(), settingsVersion);
+        if (quote != null) {
+            if (expectedPoints == null) throw new ResponseStatusException(HttpStatus.CONFLICT, "Review and confirm the points amount before paying");
+            BigDecimal acknowledged = normalizePositiveAmount(expectedPoints, EnterpriseCreditService.UNIT, "Quoted points");
+            if (acknowledged.compareTo(quote.points()) != 0)
+                throw new ResponseStatusException(HttpStatus.CONFLICT, "The order points amount changed. Refresh the quote and try again.");
         }
-        BigDecimal balanceAfter = balance.subtract(order.amount()).setScale(2, RoundingMode.HALF_UP);
+        String settlementCurrency = quote == null ? currency : EnterpriseCreditService.UNIT;
+        BigDecimal settlementAmount = quote == null ? order.amount() : quote.points();
+        long walletId = ensureAndLockWallet(customerId, settlementCurrency);
+        BigDecimal balance = walletBalance(walletId);
+        if (balance.compareTo(settlementAmount) < 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Insufficient " + (quote == null ? currency + " wallet balance" : "enterprise credit balance"));
+        }
+        BigDecimal balanceAfter = balance.subtract(settlementAmount).setScale(2, RoundingMode.HALF_UP);
         jdbcClient.sql("UPDATE merchant_wallet SET balance = :balance, updated_at = CURRENT_TIMESTAMP WHERE id = :walletId")
             .param("balance", balanceAfter)
             .param("walletId", walletId)
             .update();
         long transactionId = insertTransaction(
-            walletId, "order_payment", "debit", order.amount(), balanceAfter, "grading_order", order.id(),
+            walletId, "order_payment", "debit", settlementAmount, balanceAfter, "grading_order", order.id(),
             idempotencyKey, "Wallet payment for grading order", "customer", customerId, null
         );
         jdbcClient.sql(
@@ -367,9 +410,10 @@ public class MerchantWalletService {
             .param("walletId", walletId)
             .param("transactionId", transactionId)
             .param("idempotencyKey", idempotencyKey)
-            .param("amount", order.amount())
-            .param("currency", currency)
+            .param("amount", settlementAmount)
+            .param("currency", settlementCurrency)
             .update();
+        if (quote != null) enterpriseCreditService.saveSnapshot(customerId, "grading_order", order.id(), quote);
         int confirmed = jdbcClient.sql(
                 """
                 UPDATE payment_record SET provider_code = 'wallet', status_code = 'confirmed',
@@ -420,8 +464,11 @@ public class MerchantWalletService {
         if (!"paid".equals(payment.statusCode())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Wallet order payment is not refundable");
         }
+        long walletCustomerId = jdbcClient.sql("SELECT customer_id FROM merchant_wallet WHERE id = :walletId")
+            .param("walletId", payment.walletId()).query(Long.class).single();
+        lockCustomer(walletCustomerId);
         BigDecimal balance = walletBalance(payment.walletId());
-        BigDecimal balanceAfter = balance.add(payment.amount()).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal balanceAfter = EnterpriseCreditService.checked(balance.add(payment.amount()).setScale(2, RoundingMode.HALF_UP));
         jdbcClient.sql("UPDATE merchant_wallet SET balance = :balance, updated_at = CURRENT_TIMESTAMP WHERE id = :walletId")
             .param("balance", balanceAfter)
             .param("walletId", payment.walletId())
@@ -456,6 +503,8 @@ public class MerchantWalletService {
     private void creditRecharge(
         RechargeRecord recharge, String actorType, Long actorCustomerId, Long actorAdminId, String providerTransactionId, String note
     ) {
+        // Both finance approval and verified gateway callbacks arrive with the recharge row locked.
+        lockCustomer(recharge.customerId());
         int duplicateProviderTransaction = jdbcClient.sql(
                 """
                 SELECT COUNT(*) FROM merchant_wallet_recharge
@@ -470,14 +519,20 @@ public class MerchantWalletService {
         if (duplicateProviderTransaction > 0) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Provider transaction has already funded another recharge");
         }
-        long walletId = ensureAndLockWallet(recharge.customerId(), recharge.currencyCode());
-        BigDecimal balanceAfter = walletBalance(walletId).add(recharge.amount()).setScale(2, RoundingMode.HALF_UP);
+        EnterpriseCreditService.Quote quote = enterpriseCreditService == null ? null : enterpriseCreditService.snapshot("wallet_recharge", recharge.id());
+        if (enterpriseCreditService != null && quote == null)
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Review and confirm the points quote for this legacy recharge first");
+        if (quote != null && (!quote.sourceCurrency().equals(recharge.currencyCode()) || quote.sourceAmount().compareTo(recharge.amount()) != 0))
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Recharge details no longer match its points quote");
+        BigDecimal creditedAmount = quote == null ? recharge.amount() : quote.points();
+        long walletId = ensureAndLockWallet(recharge.customerId(), quote == null ? recharge.currencyCode() : EnterpriseCreditService.UNIT);
+        BigDecimal balanceAfter = EnterpriseCreditService.checked(walletBalance(walletId).add(creditedAmount).setScale(2, RoundingMode.HALF_UP));
         jdbcClient.sql("UPDATE merchant_wallet SET balance = :balance, updated_at = CURRENT_TIMESTAMP WHERE id = :walletId")
             .param("balance", balanceAfter)
             .param("walletId", walletId)
             .update();
         insertTransaction(
-            walletId, "recharge", "credit", recharge.amount(), balanceAfter, "wallet_recharge", recharge.id(),
+            walletId, "recharge", "credit", creditedAmount, balanceAfter, "wallet_recharge", recharge.id(),
             "recharge:" + recharge.id(), note, actorType, actorCustomerId, actorAdminId
         );
         try {
@@ -496,6 +551,11 @@ public class MerchantWalletService {
         } catch (DataIntegrityViolationException exception) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Provider transaction has already funded another recharge", exception);
         }
+    }
+
+    private void lockCustomer(long customerId) {
+        jdbcClient.sql("SELECT id FROM customer_account WHERE id = :customerId FOR UPDATE")
+            .param("customerId", customerId).query(Long.class).single();
     }
 
     private long ensureAndLockWallet(long customerId, String currency) {
@@ -572,7 +632,7 @@ public class MerchantWalletService {
             .single();
     }
 
-    private RechargeRecord requireRecharge(long customerId, long rechargeId) {
+    public RechargeRecord requireRecharge(long customerId, long rechargeId) {
         return jdbcClient.sql(rechargeSelect() + " WHERE id = :rechargeId AND customer_id = :customerId")
             .param("rechargeId", rechargeId)
             .param("customerId", customerId)
@@ -639,23 +699,29 @@ public class MerchantWalletService {
             """;
     }
 
-    private static RechargeRecord mapRecharge(java.sql.ResultSet rs) throws java.sql.SQLException {
+    private RechargeRecord mapRecharge(java.sql.ResultSet rs) throws java.sql.SQLException {
         return new RechargeRecord(
             rs.getLong("id"), rs.getString("recharge_no"), rs.getLong("customer_id"),
             rs.getString("currency_code"), rs.getBigDecimal("amount"), rs.getString("provider_code"),
             rs.getString("payer_reference"), rs.getString("proof_reference"), rs.getString("provider_transaction_id"),
             rs.getString("status_code"), rs.getObject("reviewed_by_user_id", Long.class),
             rs.getObject("reviewed_at", LocalDateTime.class), rs.getString("review_note"),
-            rs.getObject("created_at", LocalDateTime.class), rs.getObject("updated_at", LocalDateTime.class)
+            rs.getObject("created_at", LocalDateTime.class), rs.getObject("updated_at", LocalDateTime.class),
+            enterpriseCreditService == null ? null : enterpriseCreditService.snapshot("wallet_recharge", rs.getLong("id"))
         );
     }
 
-    private static WalletTransaction mapTransaction(java.sql.ResultSet rs) throws java.sql.SQLException {
+    private WalletTransaction mapTransaction(java.sql.ResultSet rs) throws java.sql.SQLException {
+        EnterpriseCreditService.Quote quote = enterpriseCreditService == null ? null
+            : enterpriseCreditService.snapshot(rs.getString("reference_type_code"), rs.getLong("reference_id"));
         return new WalletTransaction(
             rs.getLong("id"), rs.getString("transaction_no"), rs.getString("currency_code"),
             rs.getString("transaction_type_code"), rs.getString("direction_code"), rs.getBigDecimal("amount"),
             rs.getBigDecimal("balance_after"), rs.getString("reference_type_code"), rs.getLong("reference_id"),
-            rs.getString("note"), rs.getString("actor_type_code"), rs.getObject("created_at", LocalDateTime.class)
+            rs.getString("note"), rs.getString("actor_type_code"), rs.getObject("created_at", LocalDateTime.class),
+            quote == null ? rs.getString("currency_code") : quote.sourceCurrency(),
+            quote == null ? rs.getBigDecimal("amount") : quote.sourceAmount(),
+            quote == null ? null : quote.points(), quote == null ? null : quote.settingsVersion()
         );
     }
 
@@ -724,21 +790,26 @@ public class MerchantWalletService {
 
     public record MerchantProfile(long customerId, String companyName, String contactName, LocalDateTime createdAt, LocalDateTime updatedAt) {}
     public record MerchantProfileRequest(String companyName, String contactName) {}
-    public record WalletBalance(long id, long customerId, String currencyCode, BigDecimal balance, LocalDateTime createdAt, LocalDateTime updatedAt) {}
+    public record WalletBalance(long id, long customerId, String currencyCode, @JsonFormat(shape = JsonFormat.Shape.STRING) BigDecimal balance, LocalDateTime createdAt, LocalDateTime updatedAt) {}
     public record WalletTransaction(long id, String transactionNo, String currencyCode, String transactionTypeCode,
-                                    String directionCode, BigDecimal amount, BigDecimal balanceAfter,
+                                    String directionCode, @JsonFormat(shape = JsonFormat.Shape.STRING) BigDecimal amount, @JsonFormat(shape = JsonFormat.Shape.STRING) BigDecimal balanceAfter,
                                     String referenceTypeCode, long referenceId, String note,
-                                    String actorTypeCode, LocalDateTime createdAt) {}
+                                    String actorTypeCode, LocalDateTime createdAt, String sourceCurrency, @JsonFormat(shape = JsonFormat.Shape.STRING) BigDecimal sourceAmount,
+                                    @JsonFormat(shape = JsonFormat.Shape.STRING) BigDecimal points, Long settingsVersion) {}
     public record WalletTransactionPage(List<WalletTransaction> items, int page, int pageSize, int total) {}
-    public record RechargeRequest(String currencyCode, BigDecimal amount, String providerCode,
-                                  String payerReference, String proofReference) {}
+    public record RechargeRequest(String currencyCode, @JsonFormat(shape = JsonFormat.Shape.STRING) BigDecimal amount, String providerCode,
+                                  String payerReference, String proofReference, Long settingsVersion) {
+        public RechargeRequest(String currencyCode, BigDecimal amount, String providerCode, String payerReference, String proofReference) {
+            this(currencyCode, amount, providerCode, payerReference, proofReference, null);
+        }
+    }
     public record RechargeReviewRequest(String providerTransactionId, String note) {}
-    public record RechargeRecord(long id, String rechargeNo, long customerId, String currencyCode, BigDecimal amount,
+    public record RechargeRecord(long id, String rechargeNo, long customerId, String currencyCode, @JsonFormat(shape = JsonFormat.Shape.STRING) BigDecimal amount,
                                  String providerCode, String payerReference, String proofReference,
                                  String providerTransactionId, String statusCode, Long reviewedByUserId,
-                                 LocalDateTime reviewedAt, String reviewNote, LocalDateTime createdAt, LocalDateTime updatedAt) {}
+                                 LocalDateTime reviewedAt, String reviewNote, LocalDateTime createdAt, LocalDateTime updatedAt, EnterpriseCreditService.Quote creditQuote) {}
     public record RechargePage(List<RechargeRecord> items, int page, int pageSize, int total) {}
     public record WalletOrderPayment(long orderId, long walletId, long debitTransactionId, Long refundTransactionId,
-                                     String idempotencyKey, BigDecimal amount, String currencyCode, String statusCode,
+                                     String idempotencyKey, @JsonFormat(shape = JsonFormat.Shape.STRING) BigDecimal amount, String currencyCode, String statusCode,
                                      LocalDateTime paidAt, LocalDateTime refundedAt) {}
 }

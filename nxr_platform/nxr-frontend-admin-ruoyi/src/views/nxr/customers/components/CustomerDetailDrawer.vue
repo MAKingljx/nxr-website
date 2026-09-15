@@ -61,7 +61,7 @@
             </div>
           </el-tab-pane>
 
-          <el-tab-pane v-if="detail.customer.accountTypeCode === 'merchant' && canFinance" label="公司与预充值" name="wallet" lazy>
+          <el-tab-pane v-if="detail.customer.accountTypeCode === 'merchant' && canFinance" :label="$tx('Company and enterprise credits')" name="wallet" lazy>
             <CustomerWalletPanel :customer-id="detail.customer.id" />
           </el-tab-pane>
           <el-tab-pane :label="$tx('Cards {count}', { count: detail.cards.length })" name="cards">

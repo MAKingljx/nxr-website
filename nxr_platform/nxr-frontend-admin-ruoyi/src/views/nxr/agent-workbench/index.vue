@@ -16,7 +16,7 @@ const management = shallowRef(createAgentApi()), activeApi = shallowRef<AgentApi
 const company = ref<Company | null>(null), platformManager = ref(false), companies = ref<Company[]>([])
 const selectedId = ref<number>(), loading = ref(true), searching = ref(false), error = ref('')
 const view = computed(() => resolveWorkspaceView(route))
-const titles: Record<string, string> = { clients:'Customer records', intakes:'Intakes and inventory', batches:'Submission batches', returns:'Customer returns', wallet:'Company wallet', addresses:'Return addresses' }
+const titles: Record<string, string> = { clients:'Customer records', intakes:'Intakes and inventory', batches:'Submission batches', returns:'Customer returns', wallet:'Enterprise credits', addresses:'Return addresses' }
 const title = computed(() => tx(titles[view.value]))
 let generation = 0, searchGeneration = 0, initialization = 0, initializing = false, visible = true
 let scopeCompanyId: number | undefined

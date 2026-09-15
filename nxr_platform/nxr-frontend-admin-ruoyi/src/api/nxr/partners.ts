@@ -1,14 +1,15 @@
 import request from '@/utils/request'
+import type { CreditQuote } from './enterpriseCredit'
 import { tx, localizeBackendMessage } from '@/i18n'
 
 export type PartnerPage<T> = { items:T[]; total:number; page:number; pageSize:number }
 export type PartnerSummary = {
   id:number;displayName:string;email:string;mobile:string|null;companyName:string;contactName:string;active:boolean;
   operatorCount:number;activeOperatorCount:number;operatorAccounts:string|null;clientCount:number;inventoryCount:number;pendingBatchCount:number;
-  currencyCode:string;walletBalance:number|null;pendingRechargeCount:number|null;financeVisible:boolean;createdAt:string;
+  currencyCode:string;walletBalance:number|string|null;pendingRechargeCount:number|null;financeVisible:boolean;createdAt:string;
 }
 export type PartnerOperator = {sysUserId:number;userName:string;nickName:string;active:boolean;backendActive:boolean}
-export type PartnerRecharge = {id:number;rechargeNo:string;currencyCode:string;amount:number;statusCode:string;payerReference:string;proofReference:string;reviewNote?:string;createdAt:string}
+export type PartnerRecharge = {id:number;rechargeNo:string;currencyCode:string;amount:number|string;statusCode:string;payerReference:string;proofReference:string;reviewNote?:string;createdAt:string;creditQuote?:CreditQuote|null}
 export type PartnerBatch = {id:number;batchNo:string;batchName:string;statusCode:string;totalRows:number;acceptedRows:number;createdAt:string}
 export type PartnerDetail = {partner:PartnerSummary;operators:PartnerOperator[];wallets:Array<{currencyCode:string;balance:number}>;recharges:PartnerPage<PartnerRecharge>;batches:PartnerPage<PartnerBatch>;financeVisible:boolean}
 export type PartnerProfileInput = Pick<PartnerSummary,'displayName'|'email'|'companyName'|'contactName'|'active'> & {mobile:string}

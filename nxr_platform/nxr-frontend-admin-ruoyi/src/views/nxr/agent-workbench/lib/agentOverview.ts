@@ -4,7 +4,7 @@ import type { AgentPage } from './agentWorkbench'
 export type AgentOverviewRow = {
   id: number; companyId: number; companyName: string; companyActive: boolean;
   reference: string; title: string; clientName: string | null; statusCode: string | null;
-  cardCount: number | null; amount: number | null; currencyCode: string | null;
+  cardCount: number | null; amount: number | string | null; currencyCode: string | null;
   detail: string | null; updatedAt: string | null;
 }
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { tx, localizeBackendMessage } from '@/i18n'
-import { agentDateLabel, agentStatusLabel, emptyAgentPage, formatMoney } from '../lib/agentWorkbench'
+import { agentDateLabel, agentStatusLabel, emptyAgentPage, formatPoints } from '../lib/agentWorkbench'
 import { fetchAgentOverview, type AgentOverviewRow } from '../lib/agentOverview'
 import AgentPagination from './AgentPagination.vue'
 
@@ -45,10 +45,10 @@ onBeforeUnmount(() => { generation++; controller?.abort() })
           <template #default="{row}">{{ row.companyName }} <el-tag v-if="!row.companyActive" size="small" type="info">{{ $tx('Disabled') }}</el-tag></template>
         </el-table-column>
         <el-table-column v-if="view !== 'wallet'" prop="reference" :label="view === 'addresses' ? $tx('Address name') : $tx('Reference')" min-width="170" />
-        <el-table-column :prop="['intakes','returns'].includes(view) ? 'detail' : 'title'" :label="titleLabel" min-width="160" />
+        <el-table-column v-if="view !== 'wallet'" :prop="['intakes','returns'].includes(view) ? 'detail' : 'title'" :label="titleLabel" min-width="160" />
         <el-table-column v-if="['intakes','returns'].includes(view)" prop="clientName" :label="$tx('Customer')" min-width="140" />
         <el-table-column v-if="['clients','intakes','batches','returns'].includes(view)" :label="$tx('Cards')" width="90"><template #default="{row}">{{ row.cardCount ?? '—' }}</template></el-table-column>
-        <el-table-column v-if="view === 'wallet'" :label="$tx('Balance')" min-width="150"><template #default="{row}">{{ row.amount != null && row.currencyCode ? formatMoney(row.amount,row.currencyCode) : '—' }}</template></el-table-column>
+        <el-table-column v-if="view === 'wallet'" :label="$tx('Enterprise credits')" min-width="150"><template #default="{row}">{{ row.amount != null ? formatPoints(row.amount) : '—' }}</template></el-table-column>
         <el-table-column v-if="view === 'addresses'" prop="detail" :label="$tx('Address')" min-width="260" />
         <el-table-column v-if="!['wallet','addresses'].includes(view)" :label="$tx('Status')" min-width="155"><template #default="{row}">{{ status(row.statusCode) }}</template></el-table-column>
         <el-table-column :label="$tx('Updated')" min-width="170"><template #default="{row}">{{ agentDateLabel(row.updatedAt) }}</template></el-table-column>

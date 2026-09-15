@@ -100,6 +100,19 @@ public class AgentCommerceController {
     public MerchantWalletService.MerchantProfile profile(@RequestHeader(name=COMPANY,required=false) Long company,@RequestBody MerchantWalletService.MerchantProfileRequest request) {
         return wallet.saveMerchantProfile(owner(company),request);
     }
+    @GetMapping("/merchant/enterprise-credit")
+    public EnterpriseCreditService.Summary credits(@RequestHeader(name=COMPANY,required=false) Long company) {
+        return wallet.credits().summary(owner(company));
+    }
+    @PostMapping("/merchant/credit-quote")
+    public EnterpriseCreditService.Quote creditQuote(@RequestHeader(name=COMPANY,required=false) Long company,
+        @RequestBody EnterpriseCreditService.QuoteRequest request) {
+        return wallet.credits().quote(owner(company),request);
+    }
+    @GetMapping("/orders/{orderNo}/credit-quote")
+    public EnterpriseCreditService.OrderQuote orderCreditQuote(@RequestHeader(name=COMPANY,required=false) Long company,@PathVariable String orderNo) {
+        return wallet.credits().orderQuote(owner(company),orderNo);
+    }
     @GetMapping("/merchant/wallets")
     public List<MerchantWalletService.WalletBalance> wallets(@RequestHeader(name=COMPANY,required=false) Long company) { return wallet.listWallets(owner(company)); }
     @GetMapping("/merchant/wallet-transactions")

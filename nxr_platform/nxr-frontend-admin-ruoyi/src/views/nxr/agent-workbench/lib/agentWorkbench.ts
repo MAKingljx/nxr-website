@@ -1,6 +1,7 @@
 import { activeLocale, tx } from '@/i18n'
 import { inject, ref, type InjectionKey } from 'vue'
 import request from '@/utils/request'
+import type { CreditQuote, EnterpriseCreditSummary } from '@/api/nxr/enterpriseCredit'
 const base = '/api/admin/agent'
 export type AgentPage<T> = { items: T[]; total: number; page: number; pageSize: number }
 export const emptyAgentPage = <T>(): AgentPage<T> => ({ items: [], total: 0, page: 1, pageSize: 20 })
@@ -48,15 +49,42 @@ export type AgentOperatorCandidate = { sysUserId: number; userName: string; nick
 export type CustomerAddress = { id: number; label: string; contactName: string; contactPhone: string; addressLine1: string; addressLine2: string | null; city: string; region: string | null; postalCode: string; country: string; defaultAddress: boolean }
 export type OrderQuote = { currencyCode: string; cardCount: number; serviceFee: number; returnShippingFee: number; totalAmount: number; shippingSourceCode: string; shippingOptionCode: string; shippingDisplayName: string }
 export type BatchQuote = { aggregate: OrderQuote; allocations: Array<{ reference: string; cardCount: number; totalAmount: number }> }
-export type AgentWallet = { currencyCode: string; balance: number; updatedAt: string | null }
-export type AgentRecharge = { id: number; rechargeNo: string; currencyCode: string; amount: number; statusCode: string; payerReference: string; proofReference: string; reviewNote?: string; createdAt: string }
-export type AgentTransaction = { id: number; transactionTypeCode: string; directionCode: string; amount: number; balanceAfter: number; note?: string; createdAt: string }
+export type AgentWallet = { currencyCode: string; balance: number | string; updatedAt: string | null }
+export type AgentRecharge = { id: number; rechargeNo: string; currencyCode: string; amount: number | string; statusCode: string; payerReference: string; proofReference: string; reviewNote?: string; createdAt: string; creditQuote?: CreditQuote | null }
+export type AgentTransaction = { id: number; transactionTypeCode: string; directionCode: string; amount: number | string; balanceAfter: number | string; currencyCode: string; sourceCurrency?: string | null; sourceAmount?: number | string | null; points?: number | string | null; settingsVersion?: number | null; note?: string; createdAt: string }
+export type AgentOrderCreditQuote = { quote: CreditQuote; balance: number | string; sufficient: boolean }
 export type AgentBatch = { id?: number; batchId?: number; batchNo: string; batchName: string; statusCode: string; createdAt: string; orders?: Array<{ orderNo: string; clientReference: string; clientDisplayName?: string; admissionStatus?: string; statusCode: string; totalCardCount?: number; cardCount?: number }>; shipments?: Array<{ id: number; directionCode: string; carrierName: string; trackingNumber: string; statusCode: string; deliveredAt?: string }> }
 export type AgentOrder = { orderNo: string; statusCode: string; totalCardCount: number; totalAmount: number; currencyCode: string; items: Array<{ id: number; cardName: string; languageCode: string; gradingCertId?: string; frontPhotoId?: number; backPhotoId?: number; statusCode: string }>; timeline: Array<{ id: number; title: string; detail?: string; createdAt: string }> }
 export type AgentAdmission = { admissionStatus: string; termsVersion: string; termsText: string; quoteAmount: number; quoteCurrency: string; canAcceptTerms: boolean; canPay: boolean; canResubmit: boolean; canResubmit: boolean; decisionNote?: string; paymentDueAtIso?: string; supplementalPhotoIds?: number[]; events: Array<{ id: number; title: string; detail?: string; createdAt: string }> }
 type Query = Record<string, string | number | boolean | undefined>
 function queryString(query: Query) { const params = new URLSearchParams(); Object.entries(query).forEach(([key,value]) => { if (value !== undefined && value !== '') params.set(key,String(value)) }); return params.toString() }
-export function formatMoney(amount: number | string, currency: string) { return new Intl.NumberFormat(activeLocale(), { style: 'currency', currency }).format(Number(amount)) }
+export function formatPoints(amount: number | string) {
+  // Credit values arrive as decimal strings; never round large balances through Number.
+  const match = String(amount).match(/^(-?)(\d+)(?:\.(\d{1,2}))?$/)
+  if (!match) return '—'
+  const locale = activeLocale()
+  const integer = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(BigInt(`${match[1]}${match[2]}`))
+  const decimal = new Intl.NumberFormat(locale).formatToParts(1.1).find(part => part.type === 'decimal')?.value || '.'
+  return `${match[1] && BigInt(match[2]!) === 0n ? '−' : ''}${integer}${decimal}${(match[3] || '').padEnd(2, '0')} PTS`
+}
+export function formatMoney(amount: number | string, currency: string) {
+  if (currency === 'PTS') return formatPoints(amount)
+  const formatter = new Intl.NumberFormat(activeLocale(), { style: 'currency', currency })
+  if (typeof amount === 'number') return formatter.format(amount)
+  // Build currency units with integer arithmetic so DECIMAL(18,2) cents stay exact.
+  const match = amount.trim().match(/^([+-]?)(\d+)(?:\.(\d*))?$/)
+  if (!match) return '—'
+  const digits = formatter.resolvedOptions().maximumFractionDigits ?? 0
+  const factor = 10n ** BigInt(digits), fraction = match[3] || ''
+  let units = BigInt(match[2]!) * factor + BigInt((fraction + '0'.repeat(digits)).slice(0, digits) || '0')
+  // Match Intl's default half-expand rounding, including zero-decimal currencies.
+  if (fraction.length > digits && fraction.charAt(digits) >= '5') units += 1n
+  const whole = units / factor, negative = match[1] === '-'
+  const exactFraction = (units % factor).toString().padStart(digits, '0')
+  const parts = formatter.formatToParts(negative ? (whole === 0n ? -0 : -whole) : whole)
+  return parts.map(part => part.type === 'fraction' ? exactFraction : part.value).join('')
+}
+
 export function privateTrackingUrl(value: string) {
   if (/^\/track\/[A-Za-z0-9_-]+$/.test(value)) return value
   try {
@@ -138,6 +166,9 @@ const uploadAgentCardPhoto = (id: number, side: 'front' | 'back', file: File) =>
   const fetchMerchantProfile = () => send<{ companyName: string; contactName: string }>(`${base}/merchant/profile`)
   const saveMerchantProfile = (data: object) => send(`${base}/merchant/profile`, { method: 'put', data })
   const fetchWallets = () => send<AgentWallet[]>(`${base}/merchant/wallets`)
+  const fetchEnterpriseCredit = () => send<EnterpriseCreditSummary>(`${base}/merchant/enterprise-credit`)
+  const fetchCreditQuote = (data: { currencyCode: string; amount: string | number }) => send<CreditQuote>(`${base}/merchant/credit-quote`, { method: 'post', data })
+  const fetchOrderCreditQuote = (orderNo: string) => send<AgentOrderCreditQuote>(`${base}/orders/${encodeURIComponent(orderNo)}/credit-quote`)
   const fetchTransactions = (currencyCode: string, page = 1) => send<AgentPage<AgentTransaction>>(`${base}/merchant/wallet-transactions?${queryString({currencyCode,page,pageSize:20})}`)
   const fetchRecharges = (page = 1) => send<AgentPage<AgentRecharge>>(`${base}/merchant/wallet-recharges?page=${page}&pageSize=20`)
   const requestRecharge = (data: object, requestKey: string) => send<AgentRecharge>(`${base}/merchant/wallet-recharges`, { method: 'post', data: {...data,requestKey} })
@@ -149,12 +180,12 @@ const uploadAgentCardPhoto = (id: number, side: 'front' | 'back', file: File) =>
   const fetchOrder = (orderNo: string) => send<AgentOrder>(`${base}/orders/${encodeURIComponent(orderNo)}`)
   const fetchAdmission = (orderNo: string) => send<AgentAdmission>(`${base}/orders/${encodeURIComponent(orderNo)}/admission`)
   const acceptOrderTerms = (orderNo: string, data: object, key: string) => post<AgentAdmission>(`/orders/${encodeURIComponent(orderNo)}/admission/accept-terms`, data, key)
-  const payFromWallet = (orderNo: string, idempotencyKey: string) => send<AgentOrder>(`${base}/orders/${encodeURIComponent(orderNo)}/wallet-payment`, { method: 'post', data: {idempotencyKey} })
+  const payFromWallet = (orderNo: string, idempotencyKey: string, settingsVersion: number, expectedPoints: string) => send<AgentOrder>(`${base}/orders/${encodeURIComponent(orderNo)}/wallet-payment`, { method: 'post', data: {idempotencyKey,settingsVersion,expectedPoints} })
   const fetchPackingSlip = (orderNo: string) => send<{ orderNo: string; intakeCode: string; packingSlipCode: string; totalCardCount: number; qrPayload: string; packingInstructions: string[] }>(`${base}/orders/${encodeURIComponent(orderNo)}/packing-slip`)
   const resubmitOrder = (orderNo: string, data: { note: string; supplementalPhotoIds: number[] }, key: string) => post<AgentAdmission>(`/orders/${encodeURIComponent(orderNo)}/admission/resubmit`,data,key)
   const uploadSupplementalPhoto = (file: File) => { const body = new FormData();body.set('file',file);return scopedRequest<{id:number}>(`${base}/order-photos`,{method:'POST',body}) }
 
-  return { companyId, busy, isActive: () => active, dispose: () => { active = false; controller.abort(); busy.value = false }, fetchAgentClients, fetchAgentClient, createAgentClient, updateAgentClient, fetchAgentIntakes, fetchAgentIntake, createAgentIntake, receiveAgentIntake, checkInAgentCard, fetchAgentCards, fetchAgentEvents, createAgentSubmission, checkAgentReturn, fetchAgentShipments, fetchAgentShipment, createAgentShipment, deliverAgentShipment, uploadAgentCardPhoto, fetchContext, fetchCompanies, fetchOperators, fetchOperatorCandidates, updateOperator, fetchApplicationConfig, fetchCustomerAddresses, saveAddress, deleteAddress, fetchServicePrices, fetchShippingOptions, fetchOrderQuote, fetchBatchQuote, fetchPhoto, fetchMerchantProfile, saveMerchantProfile, fetchWallets, fetchTransactions, fetchRecharges, requestRecharge, fetchBatches, fetchBatch, rotateTrackingLink, revokeTrackingLink, addBatchInbound, fetchOrder, fetchAdmission, acceptOrderTerms, payFromWallet, fetchPackingSlip, resubmitOrder, uploadSupplementalPhoto }
+  return { companyId, busy, isActive: () => active, dispose: () => { active = false; controller.abort(); busy.value = false }, fetchAgentClients, fetchAgentClient, createAgentClient, updateAgentClient, fetchAgentIntakes, fetchAgentIntake, createAgentIntake, receiveAgentIntake, checkInAgentCard, fetchAgentCards, fetchAgentEvents, createAgentSubmission, checkAgentReturn, fetchAgentShipments, fetchAgentShipment, createAgentShipment, deliverAgentShipment, uploadAgentCardPhoto, fetchContext, fetchCompanies, fetchOperators, fetchOperatorCandidates, updateOperator, fetchApplicationConfig, fetchCustomerAddresses, saveAddress, deleteAddress, fetchServicePrices, fetchShippingOptions, fetchOrderQuote, fetchBatchQuote, fetchPhoto, fetchMerchantProfile, saveMerchantProfile, fetchWallets, fetchEnterpriseCredit, fetchCreditQuote, fetchOrderCreditQuote, fetchTransactions, fetchRecharges, requestRecharge, fetchBatches, fetchBatch, rotateTrackingLink, revokeTrackingLink, addBatchInbound, fetchOrder, fetchAdmission, acceptOrderTerms, payFromWallet, fetchPackingSlip, resubmitOrder, uploadSupplementalPhoto }
 }
 
 export type AgentApi = ReturnType<typeof createAgentApi>
