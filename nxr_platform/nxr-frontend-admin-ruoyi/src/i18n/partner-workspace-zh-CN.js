@@ -1,4 +1,9 @@
 export default {
+  "Registered at": "登记时间",
+  "Close details": "收起详情",
+  "Checked / expected": "已清点 / 应收",
+  "Intake details": "来件详情",
+  "All cards are in inventory. Select complete intakes in the list to create a submission batch.": "卡片已齐全入库，可在列表中勾选来件创建送评批次。",
   "Recipient": "收件人",
   "Phone number": "联系电话",
   "Address": "地址",
