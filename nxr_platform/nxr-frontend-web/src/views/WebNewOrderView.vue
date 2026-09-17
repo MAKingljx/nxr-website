@@ -152,7 +152,7 @@ async function submitOrder() {
   if (quoting.value || !selectedQuote.value) { errorMessage.value = 'Please wait for the current quote before submitting.'; return }
   submitting.value = true
   try {
-    const order = await createGradingOrder({
+    await createGradingOrder({
       serviceLevel: 'basic_grading',
       currencyCode: selectedCurrency.value,
       quotedTotalAmount: Number(selectedQuote.value.totalAmount),
@@ -172,7 +172,7 @@ async function submitOrder() {
       languageGroups: [],
       items: form.items.map(({ localId, ...item }) => ({ ...item, languageCode: item.languageCode.trim().toUpperCase() })),
     })
-    await router.push(`/account/orders/${encodeURIComponent(order.orderNo)}`)
+    await router.push('/account/cards')
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : 'Unable to create the grading order.'
   } finally {
@@ -228,7 +228,7 @@ onMounted(async () => {
         <h1>Send cards to NXR</h1>
         <p>Add your cards and return address. NXR reviews the application before you confirm the order and pay.</p>
       </div>
-      <router-link class="btn-secondary" to="/account/orders">My orders</router-link>
+      <router-link class="btn-secondary" to="/account/cards">My cards</router-link>
     </div>
     <p v-if="errorMessage" class="form-error">{{ errorMessage }}</p>
     <div v-if="loadingReferenceData" class="portal-empty">Loading pricing and addresses...</div>

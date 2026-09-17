@@ -41,6 +41,10 @@ async function loadOrders(page = currentPage.value, showLoader = true) {
 }
 
 onMounted(() => {
+  if (customerSession.value) {
+    void router.replace(customerSession.value.customer.accountTypeCode === 'merchant' ? '/account/merchant-orders' : '/account/cards')
+    return
+  }
   void loadOrders()
   timer = window.setInterval(() => { if (!document.hidden && !refreshing.value) void loadOrders(currentPage.value, false) }, 20000)
 })

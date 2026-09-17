@@ -116,7 +116,7 @@ onMounted(async () => {
   <main class="portal-page order-create-page">
     <div class="portal-heading">
       <div><p class="section-tag">Collector portal</p><h1>Return addresses</h1><p>Orders save an address snapshot, so later edits never change historical orders.</p></div>
-      <router-link class="btn-secondary" to="/account/orders">My orders</router-link>
+      <router-link class="btn-secondary" to="/account/cards">My cards</router-link>
     </div>
     <p v-if="errorMessage" class="form-error">{{ errorMessage }}</p>
     <form class="portal-form form-section" @submit.prevent="saveAddress">

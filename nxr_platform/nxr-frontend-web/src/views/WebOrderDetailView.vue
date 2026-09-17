@@ -181,6 +181,10 @@ watch(() => props.orderNo, async () => {
   refreshTimer = window.setInterval(() => { if (!document.hidden && !refreshing.value) void refreshOrder() }, 20000)
 }, { immediate: true })
 
+onMounted(() => {
+  if (customerSession.value?.customer.accountTypeCode === 'customer') void router.replace('/account/cards')
+})
+
 function refreshWhenVisible() { if (!document.hidden && !refreshing.value) void refreshOrder() }
 onMounted(() => document.addEventListener('visibilitychange', refreshWhenVisible))
 onBeforeUnmount(() => {
@@ -197,7 +201,7 @@ onBeforeUnmount(() => {
     <template v-else-if="order && operations">
       <div class="portal-heading">
         <div><p class="section-tag">Grading order</p><h1>{{ order.orderNo }}</h1><p>{{ order.totalCardCount }} card{{ order.totalCardCount === 1 ? '' : 's' }} · {{ order.returnShippingOptionName }} · created {{ dateLabel(order.createdAt) }}</p></div>
-        <div class="form-row form-actions"><router-link class="btn-secondary" to="/account/addresses">Addresses</router-link><router-link class="btn-secondary" to="/account/orders">All orders</router-link></div>
+        <div class="form-row form-actions"><router-link class="btn-secondary" to="/account/addresses">Addresses</router-link></div>
       </div>
       <p v-if="errorMessage" class="form-error">{{ errorMessage }}</p>
 

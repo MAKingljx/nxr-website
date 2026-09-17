@@ -32,7 +32,6 @@ async function signOut() {
       <li><router-link to="/about" :class="{ active: active === 'about' }">About</router-link></li>
       <li><router-link to="/faq" :class="{ active: active === 'faq' }">FAQ</router-link></li>
       <li v-if="isCustomerSignedIn"><router-link to="/account/cards" :class="{ active: active === 'account' }">My Cards</router-link></li>
-      <li v-if="isCustomerSignedIn"><router-link to="/account/orders" :class="{ active: active === 'account' }">My Orders</router-link></li>
     </ul>
     <div class="nav-account">
       <router-link v-if="!isCustomerSignedIn" class="nav-signin" to="/account/login">Sign In</router-link>

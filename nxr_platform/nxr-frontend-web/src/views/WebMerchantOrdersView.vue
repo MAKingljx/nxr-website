@@ -206,7 +206,7 @@ onMounted(async () => {
 <template>
   <LegacySiteNav active="account" cta-href="/submit/order" cta-label="New order" />
   <main class="portal-page">
-    <div class="portal-heading"><div><p class="section-tag">Merchant portal</p><h1>Bulk grading orders</h1><p>Group separate customer orders into one shipment to NXR, with private progress links for each customer.</p></div><div class="form-row form-actions"><router-link class="btn-secondary" to="/account/orders">My orders</router-link></div></div>
+    <div class="portal-heading"><div><p class="section-tag">Merchant portal</p><h1>Bulk grading orders</h1><p>Group separate customer orders into one shipment to NXR, with private progress links for each customer.</p></div><div class="form-row form-actions"><router-link class="btn-secondary" to="/account/company">Company & balance</router-link></div></div>
     <p v-if="errorMessage" class="form-error">{{ errorMessage }}</p>
     <div v-if="customerSession?.customer.accountTypeCode !== 'merchant'" class="portal-empty">Merchant batch ordering is not enabled for this account. Ask an administrator to change the account type.</div>
     <template v-else>
