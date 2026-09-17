@@ -7,6 +7,10 @@ defineEmits<{ refresh: [] }>()
 const steps = computed(() => orderProgress(props.order))
 const directions = [{ code: 'inbound', label: 'Shipment to NXR', empty: 'Add your tracking number after sending the parcel.' }, { code: 'outbound', label: 'Return shipment', empty: 'Carrier and tracking will appear when your cards are dispatched.' }]
 const dateLabel = (value: string) => new Date(value).toLocaleString()
+function trackingHref(carrier: string, trackingNumber: string) {
+  if (!/dhl/i.test(carrier || '') || !trackingNumber) return ''
+  return `https://www.dhl.com/us-en/home/tracking.html?tracking-id=${encodeURIComponent(trackingNumber)}&submit=1`
+}
 </script>
 
 <template>
@@ -25,7 +29,7 @@ const dateLabel = (value: string) => new Date(value).toLocaleString()
         <p v-if="!order.shipments.some(item => item.directionCode === direction.code)" class="muted-copy">{{ direction.empty }}</p>
         <div v-for="shipment in order.shipments.filter(item => item.directionCode === direction.code)" :key="shipment.id" class="shipment-detail">
           <div class="progress-heading"><strong>{{ shipment.carrierName }}</strong><span class="status-pill">{{ orderStatusLabel(shipment.statusCode) }}</span></div>
-          <p class="tracking-number">{{ shipment.trackingNumber }}</p>
+          <p class="tracking-number"><span>{{ shipment.trackingNumber }}</span><a v-if="trackingHref(shipment.carrierName, shipment.trackingNumber)" :href="trackingHref(shipment.carrierName, shipment.trackingNumber)" target="_blank" rel="noopener noreferrer">Track with DHL</a></p>
           <p class="muted-copy">Shipped {{ dateLabel(shipment.shippedAt) }}<br v-if="shipment.deliveredAt" /><template v-if="shipment.deliveredAt">Delivered {{ dateLabel(shipment.deliveredAt) }}</template></p>
           <ol v-if="trackingEvents.some(event => event.shipmentId === shipment.id)" class="order-timeline tracking-timeline">
             <li v-for="event in trackingEvents.filter(event => event.shipmentId === shipment.id)" :key="event.id"><span></span><div><strong>{{ event.eventTitle }}</strong><p v-if="event.locationLabel || event.eventDetail">{{ [event.locationLabel, event.eventDetail].filter(Boolean).join(' · ') }}</p><time>{{ dateLabel(event.eventTime) }}</time></div></li>
@@ -50,6 +54,6 @@ const dateLabel = (value: string) => new Date(value).toLocaleString()
 .current .milestone-number {background:var(--gold);color:#191919;box-shadow:0 0 0 4px #f5c84220}.done .milestone-number {background:#264b3c;color:#b7f2cf}
 .shipment-grid {display:grid;grid-template-columns:1fr 1fr;gap:20px}.shipment-card {border:1px solid var(--border2);border-radius:10px;padding:20px;min-width:0}
 .shipment-card h3 {margin:0 0 16px;font-size:17px}.shipment-detail+.shipment-detail {border-top:1px solid var(--border2);margin-top:20px;padding-top:20px}
-.tracking-number {font-family:monospace;overflow-wrap:anywhere;font-size:16px;user-select:all}.tracking-timeline {margin-top:22px}.progress-history {margin:22px 0}.progress-history summary {cursor:pointer;font-weight:600}
+.tracking-number {display:flex;flex-wrap:wrap;gap:12px;align-items:center;font-family:monospace;overflow-wrap:anywhere;font-size:16px;user-select:all}.tracking-number a {font-family:inherit;font-size:12px;color:var(--gold);user-select:none}.tracking-timeline {margin-top:22px}.progress-history {margin:22px 0}.progress-history summary {cursor:pointer;font-weight:600}
 @media(max-width:760px){.progress-steps {grid-template-columns:1fr 1fr}.shipment-grid {grid-template-columns:1fr}.progress-heading {flex-wrap:wrap}}
 </style>

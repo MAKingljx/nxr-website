@@ -27,6 +27,12 @@ public class LoginBody
      */
     private String uuid;
 
+    /**
+     * Whether this browser requested a persistent sign-in session.
+     * The server still controls the token lifetime; this flag is not a device trust bypass.
+     */
+    private boolean rememberMe;
+
     public String getUsername()
     {
         return username;
@@ -65,5 +71,15 @@ public class LoginBody
     public void setUuid(String uuid)
     {
         this.uuid = uuid;
+    }
+
+    public boolean isRememberMe()
+    {
+        return rememberMe;
+    }
+
+    public void setRememberMe(boolean rememberMe)
+    {
+        this.rememberMe = rememberMe;
     }
 }

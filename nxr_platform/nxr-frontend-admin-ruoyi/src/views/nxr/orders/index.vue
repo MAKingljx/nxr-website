@@ -14,7 +14,9 @@
       <div class="intake-lookup-row"><strong>{{ $tx('Warehouse Intake Scan') }}</strong><el-input v-model="intakeLookupCode" clearable :placeholder="$tx('Scan or enter an intake code')" @keyup.enter="lookupIntakeOrder" /><el-button type="primary" icon="Search" :loading="lookingUpIntake" @click="lookupIntakeOrder">{{ $tx('Find Order') }}</el-button></div>
     </el-card>
 
-    <merchant-batch-panel v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:shipping','nxr:order:batch']" />
+    <order-card-lookup v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:workbench']" @open-order="openDetail" />
+
+    <merchant-batch-panel @open-order="openDetail" v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:shipping','nxr:order:batch']" />
 
     <el-form ref="queryRef" :model="queryParams" :inline="true" @submit.prevent>
       <el-form-item :label="$tx('Order Status')" prop="status">
@@ -41,7 +43,7 @@
 
     <pagination v-show="total > 0" :total="total" v-model:page="queryParams.page" v-model:limit="queryParams.pageSize" @pagination="loadOrders" />
 
-    <el-dialog v-model="detailOpen" :title="$tx('Grading Order Details')" width="1080px" append-to-body>
+    <el-drawer direction="rtl" v-model="detailOpen" :title="$tx('Grading Order Details')" size="1080px" append-to-body>
       <template v-if="detail">
         <el-descriptions :column="3" border class="mb12">
           <el-descriptions-item :label="$tx('Order No.')">{{ detail.orderNo }}</el-descriptions-item>
@@ -132,20 +134,20 @@
         <el-divider content-position="left">{{ $tx('Customer-visible Timeline') }}</el-divider>
         <el-timeline><el-timeline-item v-for="event in detail.timeline" :key="event.id" :timestamp="parseTime(event.createdAt)"><strong>{{ event.title }}</strong><p v-if="event.detail" class="timeline-detail">{{ event.detail }}</p></el-timeline-item></el-timeline>
       </template>
-    </el-dialog>
+    </el-drawer>
 
-    <el-dialog v-model="paymentDialogOpen" :title="paymentAction === 'confirm' ? $tx('Confirm Payment') : $tx('Reject Payment')" width="460px" append-to-body>
+    <el-drawer direction="rtl" v-model="paymentDialogOpen" :title="paymentAction === 'confirm' ? $tx('Confirm Payment') : $tx('Reject Payment')" size="460px" append-to-body>
       <el-form :model="paymentForm" label-width="110px"><el-form-item v-if="paymentAction === 'confirm'" :label="$tx('Transaction ID')"><el-input v-model="paymentForm.providerTransactionId" :placeholder="$tx('Optional')" /></el-form-item><el-form-item :label="paymentAction === 'confirm' ? $tx('Note') : $tx('Rejection Reason')" required><el-input v-model="paymentForm.note" type="textarea" :rows="3" /></el-form-item></el-form>
       <template #footer><el-button @click="paymentDialogOpen = false">{{ $tx('Cancel') }}</el-button><el-button :type="paymentAction === 'confirm' ? 'success' : 'danger'" :loading="savingPayment" @click="savePaymentAction">{{ paymentAction === 'confirm' ? $tx('Confirm') : $tx('Reject') }}</el-button></template>
-    </el-dialog>
+    </el-drawer>
 
-    <el-dialog v-model="exceptionDialogOpen" :title="$tx('Resolve Intake Exception')" width="500px" append-to-body><el-form :model="exceptionResolutionForm" label-width="90px"><el-form-item :label="$tx('Exception')"><span>{{ activeException?.title }}</span></el-form-item><el-form-item :label="$tx('Resolution')" required><el-input v-model="exceptionResolutionForm.resolutionNote" type="textarea" :rows="4" maxlength="4000" show-word-limit /></el-form-item></el-form><template #footer><el-button @click="exceptionDialogOpen=false">{{ $tx('Cancel') }}</el-button><el-button type="primary" :loading="resolvingException" @click="resolveException">{{ $tx('Resolve') }}</el-button></template></el-dialog>
+    <el-drawer direction="rtl" v-model="exceptionDialogOpen" :title="$tx('Resolve Intake Exception')" size="500px" append-to-body><el-form :model="exceptionResolutionForm" label-width="90px"><el-form-item :label="$tx('Exception')"><span>{{ activeException?.title }}</span></el-form-item><el-form-item :label="$tx('Resolution')" required><el-input v-model="exceptionResolutionForm.resolutionNote" type="textarea" :rows="4" maxlength="4000" show-word-limit /></el-form-item></el-form><template #footer><el-button @click="exceptionDialogOpen=false">{{ $tx('Cancel') }}</el-button><el-button type="primary" :loading="resolvingException" @click="resolveException">{{ $tx('Resolve') }}</el-button></template></el-drawer>
 
-    <el-dialog v-model="ticketDialogOpen" :title="$tx('Handle Support Ticket')" width="560px" append-to-body><template v-if="activeTicket"><el-descriptions :column="1" border><el-descriptions-item :label="$tx('Ticket')">{{ activeTicket.ticketNo }} · {{ activeTicket.subject }}</el-descriptions-item><el-descriptions-item :label="$tx('Message History')"><div v-for="message in activeTicket.messages" :key="message.id" class="ticket-history"><strong>{{ message.actorTypeCode }}</strong><span>{{ message.message }}</span><small>{{ parseTime(message.createdAt) }}</small></div></el-descriptions-item></el-descriptions><el-form :model="ticketActionForm" label-width="90px" class="mt12"><el-form-item :label="$tx('Status')"><el-select v-model="ticketActionForm.statusCode"><el-option :label="$tx('Assigned')" value="assigned" /><el-option :label="$tx('Waiting for Customer')" value="waiting_customer" /><el-option :label="$tx('Resolved')" value="resolved" /><el-option :label="$tx('Closed')" value="closed" /></el-select></el-form-item><el-form-item :label="$tx('Reply')"><el-input v-model="ticketActionForm.message" type="textarea" :rows="3" maxlength="4000" /></el-form-item><el-form-item :label="$tx('Attachment Reference')"><el-input v-model="ticketActionForm.attachmentReference" maxlength="512" /></el-form-item></el-form></template><template #footer><el-button @click="ticketDialogOpen=false">{{ $tx('Cancel') }}</el-button><el-button type="primary" :loading="savingTicket" @click="saveTicketAction">{{ $tx('Save') }}</el-button></template></el-dialog>
+    <el-drawer direction="rtl" v-model="ticketDialogOpen" :title="$tx('Handle Support Ticket')" size="560px" append-to-body><template v-if="activeTicket"><el-descriptions :column="1" border><el-descriptions-item :label="$tx('Ticket')">{{ activeTicket.ticketNo }} · {{ activeTicket.subject }}</el-descriptions-item><el-descriptions-item :label="$tx('Message History')"><div v-for="message in activeTicket.messages" :key="message.id" class="ticket-history"><strong>{{ message.actorTypeCode }}</strong><span>{{ message.message }}</span><small>{{ parseTime(message.createdAt) }}</small></div></el-descriptions-item></el-descriptions><el-form :model="ticketActionForm" label-width="90px" class="mt12"><el-form-item :label="$tx('Status')"><el-select v-model="ticketActionForm.statusCode"><el-option :label="$tx('Assigned')" value="assigned" /><el-option :label="$tx('Waiting for Customer')" value="waiting_customer" /><el-option :label="$tx('Resolved')" value="resolved" /><el-option :label="$tx('Closed')" value="closed" /></el-select></el-form-item><el-form-item :label="$tx('Reply')"><el-input v-model="ticketActionForm.message" type="textarea" :rows="3" maxlength="4000" /></el-form-item><el-form-item :label="$tx('Attachment Reference')"><el-input v-model="ticketActionForm.attachmentReference" maxlength="512" /></el-form-item></el-form></template><template #footer><el-button @click="ticketDialogOpen=false">{{ $tx('Cancel') }}</el-button><el-button type="primary" :loading="savingTicket" @click="saveTicketAction">{{ $tx('Save') }}</el-button></template></el-drawer>
 
-    <el-dialog v-model="shippingActionDialogOpen" :title="shippingActionMode === 'settle' ? $tx('Record Shipping Adjustment') : (shippingReviewApproved ? $tx('Approve Return Shipping Change') : $tx('Reject Return Shipping Change'))" width="520px" append-to-body><el-form :model="shippingActionForm" label-width="130px"><el-form-item v-if="shippingActionMode === 'settle'" :label="$tx('Transaction / Refund ID')"><el-input v-model="shippingActionForm.providerTransactionId" maxlength="255" /></el-form-item><el-form-item :label="$tx('Processing Note')" required><el-input v-model="shippingActionForm.note" type="textarea" :rows="4" maxlength="2000" /></el-form-item></el-form><template #footer><el-button @click="shippingActionDialogOpen=false">{{ $tx('Cancel') }}</el-button><el-button type="primary" :loading="savingShippingAction" @click="saveShippingAction">{{ $tx('Confirm') }}</el-button></template></el-dialog>
+    <el-drawer direction="rtl" v-model="shippingActionDialogOpen" :title="shippingActionMode === 'settle' ? $tx('Record Shipping Adjustment') : (shippingReviewApproved ? $tx('Approve Return Shipping Change') : $tx('Reject Return Shipping Change'))" size="520px" append-to-body><el-form :model="shippingActionForm" label-width="130px"><el-form-item v-if="shippingActionMode === 'settle'" :label="$tx('Transaction / Refund ID')"><el-input v-model="shippingActionForm.providerTransactionId" maxlength="255" /></el-form-item><el-form-item :label="$tx('Processing Note')" required><el-input v-model="shippingActionForm.note" type="textarea" :rows="4" maxlength="2000" /></el-form-item></el-form><template #footer><el-button @click="shippingActionDialogOpen=false">{{ $tx('Cancel') }}</el-button><el-button type="primary" :loading="savingShippingAction" @click="saveShippingAction">{{ $tx('Confirm') }}</el-button></template></el-drawer>
 
-    <el-dialog v-model="shippingConfigOpen" :title="$tx('Grading & Return Shipping Pricing')" width="min(1040px, calc(100vw - 32px))" append-to-body>
+    <el-drawer direction="rtl" v-model="shippingConfigOpen" :title="$tx('Grading & Return Shipping Pricing')" size="min(1040px, calc(100vw - 32px))" append-to-body>
       <el-tabs v-model="shippingConfigTab" class="shipping-config-tabs">
         <el-tab-pane :label="$tx('Base Grading Service')" name="grading">
           <el-form :inline="true" :model="servicePriceForm" label-position="top" class="service-price-form">
@@ -166,7 +168,7 @@
         <el-tab-pane lazy :label="$tx('Application Photo Storage')" name="storage"><media-capacity-panel v-hasPermi="['nxr:order:manage','nxr:order:config']" /></el-tab-pane>
       </el-tabs>
       <template #footer><el-button @click="shippingConfigOpen=false">{{ $tx('Close') }}</el-button><template v-if="shippingConfigTab === 'shipping'"><el-button @click="resetShippingConfigForm">{{ $tx('Clear') }}</el-button><el-button type="primary" :loading="savingShippingConfig" @click="saveShippingConfig">{{ $tx('Save Option') }}</el-button></template></template>
-    </el-dialog>
+    </el-drawer>
   </main>
 </template>
 
@@ -175,6 +177,7 @@ import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
 import CommercePolicyPanel from './components/CommercePolicyPanel.vue'
 import MediaCapacityPanel from './components/MediaCapacityPanel.vue'
 import MerchantBatchPanel from './components/MerchantBatchPanel.vue'
+import OrderCardLookup from './components/OrderCardLookup.vue'
 import OrderAdmissionConfigPanel from './components/OrderAdmissionConfigPanel.vue'
 import OrderAdmissionPanel from './components/OrderAdmissionPanel.vue'
 import OrderApplicationPhoto from './components/OrderApplicationPhoto.vue'

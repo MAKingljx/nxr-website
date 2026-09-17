@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { customerSession, isCustomerSignedIn, logoutCustomer } from '../lib/customer'
 
@@ -10,6 +11,7 @@ defineProps<{
 
 const router = useRouter()
 const logoUrl = `${import.meta.env.BASE_URL}static/images/nxr-logo-circle.png`
+const customerCanSubmit = computed(() => customerSession.value?.customer.accountTypeCode !== 'merchant')
 
 async function signOut() {
   await logoutCustomer()
@@ -25,17 +27,16 @@ async function signOut() {
     <ul class="nav-links">
       <li><router-link to="/" :class="{ active: active === 'home' }">Home</router-link></li>
       <li><router-link to="/services" :class="{ active: active === 'services' }">Services</router-link></li>
-      <li><router-link to="/submit" :class="{ active: active === 'submit' }">Submit</router-link></li>
+      <li v-if="customerCanSubmit"><router-link to="/submit" :class="{ active: active === 'submit' }">Submit</router-link></li>
       <li><router-link to="/verify" :class="{ active: active === 'verify' }">Verify</router-link></li>
       <li><router-link to="/about" :class="{ active: active === 'about' }">About</router-link></li>
       <li><router-link to="/faq" :class="{ active: active === 'faq' }">FAQ</router-link></li>
       <li v-if="isCustomerSignedIn"><router-link to="/account/cards" :class="{ active: active === 'account' }">My Cards</router-link></li>
-      <li v-if="isCustomerSignedIn"><router-link to="/account/orders" :class="{ active: active === 'account' }">My Orders</router-link></li>
     </ul>
     <div class="nav-account">
       <router-link v-if="!isCustomerSignedIn" class="nav-signin" to="/account/login">Sign In</router-link>
       <button v-else class="nav-signin" type="button" :title="customerSession?.customer.email" @click="signOut">Sign Out</button>
-      <router-link class="nav-cta" :to="ctaHref ?? '/submit'">{{ ctaLabel ?? 'Submit Now' }}</router-link>
+      <router-link v-if="customerCanSubmit" class="nav-cta" :to="ctaHref ?? '/submit'">{{ ctaLabel ?? 'Submit Now' }}</router-link>
     </div>
   </nav>
 </template>

@@ -18,6 +18,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -41,6 +42,9 @@ public class MerchantBatchService {
     private final CommercePolicyService commercePolicyService;
     private final NotificationOutboxService notificationOutboxService;
     private final TransactionTemplate batchTransaction;
+
+    @Value("${nxr.public-site.base-url:https://nxrgrading.com}")
+    private String publicSiteBaseUrl = "https://nxrgrading.com";
 
     public MerchantBatchService(
         JdbcClient jdbcClient,
@@ -71,6 +75,19 @@ public class MerchantBatchService {
     }
 
     public BatchCreateResult createBatch(long merchantCustomerId, BatchCreateRequest request) {
+        return createBatch(merchantCustomerId, request, false);
+    }
+
+    /** Internal composition entry: inventory linkage and batch creation must commit together. */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public BatchCreateResult createBatchInCurrentTransaction(long merchantCustomerId, BatchCreateRequest request) {
+        if (!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("An active transaction is required for agent batch creation");
+        }
+        return createBatch(merchantCustomerId, request, true);
+    }
+
+    private BatchCreateResult createBatch(long merchantCustomerId, BatchCreateRequest request, boolean joinTransaction) {
         orderFulfillmentService.requireMerchant(merchantCustomerId);
         List<BatchOrderRequest> rows = request == null || request.orders() == null ? List.of() : request.orders();
         if (rows.isEmpty() || rows.size() > 200) {
@@ -112,7 +129,9 @@ public class MerchantBatchService {
             batchName = sourceName == null ? batchNo : sourceName;
         }
         String resolvedBatchName = batchName;
-        BatchCreateResult result = batchTransaction.execute(status -> createBatchAtomically(
+        BatchCreateResult result = joinTransaction ? createBatchAtomically(
+            merchantCustomerId, rows, batchQuote, allocations, batchNo, sourceName, resolvedBatchName
+        ) : batchTransaction.execute(status -> createBatchAtomically(
             merchantCustomerId, rows, batchQuote, allocations, batchNo, sourceName, resolvedBatchName
         ));
         if (result == null) {
@@ -845,8 +864,8 @@ public class MerchantBatchService {
         return fingerprint.toString();
     }
 
-    private static String trackingUrl(String token) {
-        return "/merchant-order-status/" + token;
+    private String trackingUrl(String token) {
+        return publicSiteBaseUrl.replaceAll("/+$", "") + "/track/" + token;
     }
 
     private static String requireText(String value, String label, int maxLength) {

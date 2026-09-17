@@ -146,6 +146,8 @@ token:
   secret: ${NXR_TOKEN_SECRET:local-development-token-change-me}
   # 令牌有效期（默认30分钟）
   expireTime: 30
+  # 勾选“保持登录”后的最长滑动有效期（默认30天）
+  rememberExpireTime: ${NXR_TOKEN_REMEMBER_EXPIRE_TIME:43200}
 
 # MyBatis配置
 mybatis:

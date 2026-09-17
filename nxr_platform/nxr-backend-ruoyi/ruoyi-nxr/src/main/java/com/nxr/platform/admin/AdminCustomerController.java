@@ -23,6 +23,13 @@ public class AdminCustomerController {
 
     private final AdminCustomerService adminCustomerService;
     private final OrderAccessScopeService accessScopeService;
+    private com.nxr.platform.customer.AgentOperatorScopeService operatorScope;
+    @org.springframework.beans.factory.annotation.Autowired
+    public void setOperatorScope(com.nxr.platform.customer.AgentOperatorScopeService scope) { this.operatorScope=scope; }
+    private void requireFinance() {
+        accessScopeService.requireUnrestricted(SecurityUtils.getUserId(), "Enterprise finance");
+        if(operatorScope != null) operatorScope.requirePlatformPermissions(SecurityUtils.getUserId(), "nxr:customer:finance");
+    }
 
     public AdminCustomerController(AdminCustomerService adminCustomerService, OrderAccessScopeService accessScopeService) {
         this.adminCustomerService = adminCustomerService;
@@ -99,7 +106,7 @@ public class AdminCustomerController {
     @PreAuthorize("@ss.hasPermi('nxr:customer:finance')")
     @GetMapping("/{customerId}/wallets")
     public AjaxResult wallets(@PathVariable long customerId) {
-        accessScopeService.requireUnrestricted(SecurityUtils.getUserId(), "全局客户和钱包管理");
+        requireFinance();
         return AjaxResult.success(adminCustomerService.wallets(customerId));
     }
 
@@ -111,7 +118,7 @@ public class AdminCustomerController {
         @RequestParam(defaultValue = "1") int page,
         @RequestParam(defaultValue = "20") int pageSize
     ) {
-        accessScopeService.requireUnrestricted(SecurityUtils.getUserId(), "全局客户和钱包管理");
+        requireFinance();
         return AjaxResult.success(adminCustomerService.walletTransactions(customerId, currencyCode, page, pageSize));
     }
 
@@ -123,7 +130,7 @@ public class AdminCustomerController {
         @RequestParam(defaultValue = "1") int page,
         @RequestParam(defaultValue = "20") int pageSize
     ) {
-        accessScopeService.requireUnrestricted(SecurityUtils.getUserId(), "全局客户和钱包管理");
+        requireFinance();
         return AjaxResult.success(adminCustomerService.walletRecharges(customerId, status, page, pageSize));
     }
 
@@ -135,7 +142,7 @@ public class AdminCustomerController {
         @PathVariable long rechargeId,
         @RequestBody MerchantWalletService.RechargeReviewRequest request
     ) {
-        accessScopeService.requireUnrestricted(SecurityUtils.getUserId(), "全局客户和钱包管理");
+        requireFinance();
         return AjaxResult.success(adminCustomerService.reviewRecharge(
             customerId, rechargeId, SecurityUtils.getUserId(), true, request
         ));
@@ -149,7 +156,7 @@ public class AdminCustomerController {
         @PathVariable long rechargeId,
         @RequestBody MerchantWalletService.RechargeReviewRequest request
     ) {
-        accessScopeService.requireUnrestricted(SecurityUtils.getUserId(), "全局客户和钱包管理");
+        requireFinance();
         return AjaxResult.success(adminCustomerService.reviewRecharge(
             customerId, rechargeId, SecurityUtils.getUserId(), false, request
         ));

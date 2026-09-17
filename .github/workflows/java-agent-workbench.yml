@@ -1,0 +1,65 @@
+name: Java Partner Submissions
+
+on:
+  push:
+    branches: [java-version/java-platform, 'codex/agent-workbench-*']
+    paths:
+      - nxr_platform/nxr-backend-ruoyi/**
+      - nxr_platform/nxr-frontend-web/**
+      - nxr_platform/nxr-frontend-admin-ruoyi/**
+      - nxr_platform/nxr-frontend-shared/**
+      - nxr_platform/nxr-scripts/verify-agent-workbench.py
+      - nxr_platform/nxr-scripts/verify-partner-card-identities.py
+      - nxr_platform/nxr-scripts/prepare-agent-workbench-qa.py
+      - nxr_platform/nxr-sql/ruoyi/23_nxr_agent_workbench.sql
+      - nxr_platform/nxr-sql/ruoyi/24_nxr_agent_admin_access.sql
+      - nxr_platform/nxr-sql/ruoyi/25_nxr_partner_management.sql
+      - .github/workflows/java-agent-workbench.yml
+  pull_request:
+    branches: [java-version/java-platform]
+    paths:
+      - nxr_platform/nxr-backend-ruoyi/**
+      - nxr_platform/nxr-frontend-web/**
+      - nxr_platform/nxr-frontend-admin-ruoyi/**
+      - nxr_platform/nxr-frontend-shared/**
+      - nxr_platform/nxr-scripts/verify-agent-workbench.py
+      - nxr_platform/nxr-scripts/verify-partner-card-identities.py
+      - nxr_platform/nxr-scripts/prepare-agent-workbench-qa.py
+      - nxr_platform/nxr-sql/ruoyi/23_nxr_agent_workbench.sql
+      - nxr_platform/nxr-sql/ruoyi/24_nxr_agent_admin_access.sql
+      - nxr_platform/nxr-sql/ruoyi/25_nxr_partner_management.sql
+      - .github/workflows/java-agent-workbench.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Java compilation and isolated H2 tests
+        working-directory: nxr_platform/nxr-backend-ruoyi
+        run: mvn -B -pl ruoyi-admin -am package
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            nxr_platform/nxr-frontend-web/package-lock.json
+            nxr_platform/nxr-frontend-admin-ruoyi/package-lock.json
+      - name: Customer portal build
+        working-directory: nxr_platform/nxr-frontend-web
+        run: npm ci && npm run build
+      - name: Agent admin build
+        working-directory: nxr_platform/nxr-frontend-admin-ruoyi
+        run: npm ci && npm run build:prod
+      - name: Acceptance helper syntax
+        run: python3 -m py_compile nxr_platform/nxr-scripts/verify-agent-workbench.py nxr_platform/nxr-scripts/verify-partner-card-identities.py nxr_platform/nxr-scripts/prepare-agent-workbench-qa.py

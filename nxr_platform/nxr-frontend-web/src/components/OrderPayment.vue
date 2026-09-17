@@ -3,15 +3,15 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { customerSession, submitPaymentProof, type GradingOrder } from '../lib/customer'
 import { createCheckout, fetchPaymentOptions, capturePaypal, type Checkout, type PaymentOption } from '../lib/payments'
-import { fetchWallets, payFromWallet, type Wallet } from '../lib/merchant'
-import { formatMoney } from '../lib/orderProgress'
+import { fetchOrderCreditQuote, payFromWallet, sameCreditAmount, type OrderCreditQuote } from '../lib/merchant'
+import { formatMoney, formatPoints } from '../lib/orderProgress'
 import PortalQrCode from './PortalQrCode.vue'
 const props = defineProps<{ order: GradingOrder; refreshTick?: string }>()
 const emit = defineEmits<{ refresh: [] }>()
 const route = useRoute()
 const router = useRouter()
 const options = ref<PaymentOption[]>([])
-const wallets = ref<Wallet[]>([])
+const creditQuote = ref<OrderCreditQuote | null>(null)
 const checkout = ref<Checkout | null>(null)
 const selectedProvider = ref('')
 const loading = ref(true)
@@ -24,7 +24,8 @@ const captureInFlightKey = ref('')
 let paymentDataGeneration = 0
 const proof = ref({ provider: 'bank_transfer', payerReference: '', proofReference: '' })
 const merchant = computed(() => customerSession.value?.customer.accountTypeCode === 'merchant')
-const balance = computed(() => Number(wallets.value.find(wallet => wallet.currencyCode === props.order.currencyCode)?.balance || 0))
+const balance = computed(() => creditQuote.value?.balance || 0)
+const validCredit = computed(() => Boolean(creditQuote.value && creditQuote.value.quote.sourceCurrency===props.order.currencyCode && sameCreditAmount(creditQuote.value.quote.sourceAmount,props.order.totalAmount)))
 const safePaymentUrl = computed(() => {
   if (!checkout.value?.paymentUrl) return ''
   try { const url = new URL(checkout.value.paymentUrl); return url.protocol === 'https:' && ['www.paypal.com', 'www.sandbox.paypal.com'].includes(url.hostname) ? url.href : '' } catch { return '' }
@@ -47,12 +48,16 @@ async function refreshPaymentData(showLoader = false) {
   if (showLoader) loading.value = true
   paymentDataError.value = ''
   try {
-    const [nextOptions, nextWallets] = await Promise.all([fetchPaymentOptions(props.order.currencyCode), merchant.value ? fetchWallets() : Promise.resolve([])])
+    const [optionResult, quoteResult] = await Promise.allSettled([fetchPaymentOptions(props.order.currencyCode), merchant.value ? fetchOrderCreditQuote(props.order.orderNo) : Promise.resolve(null)])
     if (generation !== paymentDataGeneration) return
-    options.value = nextOptions; wallets.value = nextWallets
-    if (!nextOptions.some(option => option.provider === selectedProvider.value)) selectedProvider.value = nextOptions[0]?.provider || ''
+    if(optionResult.status==='fulfilled') {
+      options.value=optionResult.value
+      if (!optionResult.value.some(option => option.provider === selectedProvider.value)) selectedProvider.value=optionResult.value[0]?.provider||''
+    } else {options.value=[];paymentDataError.value=optionResult.reason instanceof Error?optionResult.reason.message:'Unable to load payment options.'}
+    if(quoteResult.status==='fulfilled') creditQuote.value=quoteResult.value
+    else {creditQuote.value=null;paymentDataError.value=quoteResult.reason instanceof Error?quoteResult.reason.message:'Unable to calculate enterprise credits.'}
   } catch (e) {
-    if (generation === paymentDataGeneration) paymentDataError.value = e instanceof Error ? e.message : 'Unable to load payment options.'
+    if (generation === paymentDataGeneration) {creditQuote.value=null;paymentDataError.value = e instanceof Error ? e.message : 'Unable to load payment options.'}
   } finally {
     if (generation === paymentDataGeneration) loading.value = false
   }
@@ -79,11 +84,13 @@ function checkPaymentStatus() {
   emit('refresh')
 }
 async function pay(provider: string) {
+  if(provider==='wallet'&&(!validCredit.value||!creditQuote.value?.sufficient||loading.value))return
+  const displayedQuote=creditQuote.value
   busy.value = true; error.value = ''; message.value = ''
   try {
-    if (provider === 'wallet') { await payFromWallet(props.order.orderNo, attemptKey('wallet')); message.value = 'Order paid from your company balance.'; emit('refresh') }
+    if (provider === 'wallet') { await payFromWallet(props.order.orderNo, attemptKey(`wallet:${displayedQuote!.quote.settingsVersion}:${displayedQuote!.quote.points}`),displayedQuote!.quote.settingsVersion,String(displayedQuote!.quote.points)); message.value = 'Order paid from your enterprise credits.'; emit('refresh') }
     else { checkout.value = await createCheckout(props.order.orderNo, provider, attemptKey(provider)) }
-  } catch (e) { error.value = e instanceof Error ? e.message : 'Unable to start this payment.' }
+  } catch (e) {if(provider==='wallet')creditQuote.value=null; error.value = e instanceof Error ? e.message : 'Unable to start this payment.' }
   finally { busy.value = false }
 }
 async function saveProof() {
@@ -94,6 +101,7 @@ async function saveProof() {
 }
 watch(() => props.order.orderNo, () => {
   checkout.value = null
+  creditQuote.value = null
   capturedReturnKey.value = ''
   void refreshPaymentData(true)
   void capturePaypalReturn()
@@ -107,7 +115,7 @@ watch(() => [route.query.token, route.query.payment], () => { void capturePaypal
   <section id="payment" class="form-section action-section no-print">
     <h2>Payment · {{ formatMoney(order.totalAmount, order.currencyCode) }}</h2>
     <p v-if="error || paymentDataError" class="form-error" role="alert">{{ error || paymentDataError }}</p><p v-if="message" role="status">{{ message }}</p>
-    <div v-if="merchant" class="wallet-payment"><p>Company balance: <strong>{{ formatMoney(balance, order.currencyCode) }}</strong></p><button type="button" class="btn-primary" :disabled="busy || loading || balance < Number(order.totalAmount)" @click="pay('wallet')">Pay with company balance</button><router-link class="btn-secondary" to="/account/company">Top up balance</router-link></div>
+    <div v-if="merchant" class="wallet-payment"><p>Enterprise credits: <strong>{{formatPoints(balance)}}</strong></p><p v-if="validCredit&&creditQuote">{{formatMoney(creditQuote.quote.sourceAmount,creditQuote.quote.sourceCurrency)}} → <strong>{{formatPoints(creditQuote.quote.points)}}</strong> · Rate version {{creditQuote.quote.settingsVersion}}</p><p v-else>Refresh the credit quote before payment.</p><button type="button" class="btn-primary" :disabled="busy||loading||!validCredit||!creditQuote?.sufficient" @click="pay('wallet')">Pay with enterprise credits</button><button type="button" class="btn-secondary" :disabled="busy||loading" @click="refreshPaymentData(true)">Refresh credit quote</button><router-link class="btn-secondary" to="/account/company">Top up credits</router-link></div>
     <p v-if="loading" class="muted-copy">Loading available payment methods…</p>
     <div v-else-if="options.length" class="portal-form compact-form"><label>Online payment<select v-model="selectedProvider"><option v-for="option in options" :key="option.provider" :value="option.provider">{{ option.displayName }}{{ option.mode === 'sandbox' ? ' (test mode)' : '' }}</option></select></label><button class="btn-primary" :disabled="busy || !selectedProvider" @click="pay(selectedProvider)">{{ busy ? 'Please wait…' : 'Continue to payment' }}</button></div>
     <p v-else class="muted-copy">Online payment is not currently available for {{ order.currencyCode }}. Contact NXR for transfer instructions.</p>

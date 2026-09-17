@@ -46,6 +46,10 @@ public class TokenService
     @Value("${token.expireTime}")
     private int expireTime;
 
+    // Persistent sign-in lifetime; it is still a bearer token and must not be replaced by a device fingerprint.
+    @Value("${token.rememberExpireTime:${token.expireTime}}")
+    private int rememberExpireTime;
+
     protected static final long MILLIS_SECOND = 1000;
 
     protected static final long MILLIS_MINUTE = 60 * MILLIS_SECOND;
@@ -114,8 +118,14 @@ public class TokenService
      */
     public String createToken(LoginUser loginUser)
     {
+        return createToken(loginUser, false);
+    }
+
+    public String createToken(LoginUser loginUser, boolean rememberMe)
+    {
         String token = IdUtils.fastUUID();
         loginUser.setToken(token);
+        loginUser.setRememberMe(rememberMe);
         setUserAgent(loginUser);
         refreshToken(loginUser);
 
@@ -148,11 +158,12 @@ public class TokenService
      */
     public void refreshToken(LoginUser loginUser)
     {
+        int lifetimeMinutes = loginUser.isRememberMe() ? rememberExpireTime : expireTime;
         loginUser.setLoginTime(System.currentTimeMillis());
-        loginUser.setExpireTime(loginUser.getLoginTime() + expireTime * MILLIS_MINUTE);
+        loginUser.setExpireTime(loginUser.getLoginTime() + lifetimeMinutes * MILLIS_MINUTE);
         // 根据uuid将loginUser缓存
         String userKey = getTokenKey(loginUser.getToken());
-        redisCache.setCacheObject(userKey, loginUser, expireTime, TimeUnit.MINUTES);
+        redisCache.setCacheObject(userKey, loginUser, lifetimeMinutes, TimeUnit.MINUTES);
     }
 
     /**

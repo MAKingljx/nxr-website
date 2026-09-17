@@ -42,6 +42,11 @@ public class LoginUser implements UserDetails
     private Long expireTime;
 
     /**
+     * Persistent sign-in preference for this token. A device identifier alone never authenticates a request.
+     */
+    private boolean rememberMe;
+
+    /**
      * 登录IP地址
      */
     private String ipaddr;
@@ -236,6 +241,16 @@ public class LoginUser implements UserDetails
     public void setExpireTime(Long expireTime)
     {
         this.expireTime = expireTime;
+    }
+
+    public boolean isRememberMe()
+    {
+        return rememberMe;
+    }
+
+    public void setRememberMe(boolean rememberMe)
+    {
+        this.rememberMe = rememberMe;
     }
 
     public Set<String> getPermissions()

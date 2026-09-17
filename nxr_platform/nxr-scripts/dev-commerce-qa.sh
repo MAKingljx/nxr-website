@@ -8,7 +8,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/../nxr-backend-ruoyi"
 export SERVER_ADDRESS=127.0.0.1 SERVER_PORT=8090 SPRING_PROFILES_ACTIVE=druid
-export SPRING_DATA_REDIS_HOST=127.0.0.1 SPRING_DATA_REDIS_DATABASE=14
+export SPRING_DATA_REDIS_HOST=127.0.0.1 SPRING_DATA_REDIS_DATABASE="${NXR_QA_REDIS_DATABASE:-14}"
 export SPRING_QUARTZ_AUTO_STARTUP=false
 export NXR_DB_USERNAME="${NXR_QA_DB_USERNAME:-root}" NXR_DB_PASSWORD="${NXR_QA_DB_PASSWORD:-}"
 export NXR_DB_URL="jdbc:mysql://127.0.0.1:3306/${NXR_QA_DATABASE}?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=GMT%2B8"

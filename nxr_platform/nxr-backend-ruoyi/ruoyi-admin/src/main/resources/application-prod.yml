@@ -51,6 +51,8 @@ spring:
 token:
   # Deliberately has no default. Production startup must fail if it is absent.
   secret: ${NXR_TOKEN_SECRET}
+  expireTime: ${NXR_TOKEN_EXPIRE_TIME:30}
+  rememberExpireTime: ${NXR_TOKEN_REMEMBER_EXPIRE_TIME:43200}
 
 springdoc:
   api-docs:

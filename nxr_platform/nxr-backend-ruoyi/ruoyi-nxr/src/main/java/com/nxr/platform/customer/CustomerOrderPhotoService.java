@@ -60,7 +60,7 @@ public class CustomerOrderPhotoService {
             throw bad("Upload a JPEG or PNG image up to 15 MB");
         // A customer row lock makes pending limits effective for simultaneous uploads.
         jdbc.sql("SELECT id FROM customer_account WHERE id = :id FOR UPDATE").param("id", customerId).query(Long.class).single();
-        Map<String, Object> usage = jdbc.sql("SELECT COUNT(*) AS photo_count, COALESCE(SUM(byte_size), 0) AS total_bytes FROM customer_order_photo WHERE customer_id = :id AND order_id IS NULL")
+        Map<String, Object> usage = jdbc.sql("SELECT COUNT(*) AS photo_count, COALESCE(SUM(byte_size), 0) AS total_bytes FROM customer_order_photo WHERE customer_id = :id AND order_id IS NULL AND preserved_for_agent = 0")
             .param("id", customerId).query().singleRow();
         if (((Number) usage.get("photo_count")).longValue() >= 1000 ||
             ((Number) usage.get("total_bytes")).longValue() + file.getSize() > 1024L * 1024 * 1024)
@@ -104,7 +104,7 @@ public class CustomerOrderPhotoService {
     public void requireOwnedPhoto(long customerId, Long photoId) {
         if (photoId == null) return;
         Map<String, Object> photo = owned(customerId, photoId, false);
-        if (photo.get("order_id") != null) throw bad("This image is already attached to an application. Upload another copy for a different order.");
+        if (photo.get("order_id") != null || preserved(photo)) throw bad("This image is already attached to an application. Upload another copy for a different order.");
     }
 
     @Transactional
@@ -115,11 +115,48 @@ public class CustomerOrderPhotoService {
         if (matches != 1) throw missing();
         for (Long photoId : photoIds.stream().filter(java.util.Objects::nonNull).distinct().sorted().toList()) {
             Map<String, Object> photo = owned(customerId, photoId, true);
+            if (preserved(photo)) throw bad("Agent evidence can only be attached through its inventory card");
             if (photo.get("order_id") != null && ((Number) photo.get("order_id")).longValue() != orderId)
                 throw bad("This image belongs to another application");
             jdbc.sql("UPDATE customer_order_photo SET order_id = :orderId, attached_at = CURRENT_TIMESTAMP WHERE id = :id")
                 .param("orderId", orderId).param("id", photoId).update();
         }
+    }
+
+    /** Agent intake photos are permanent evidence, including before an NXR order exists. */
+    @Transactional
+    public void preserveForAgent(long customerId, long photoId) {
+        Map<String, Object> photo = owned(customerId, photoId, true);
+        if (photo.get("order_id") != null || preserved(photo)) throw bad("This image is already in use");
+        jdbc.sql("UPDATE customer_order_photo SET preserved_for_agent = 1 WHERE id = :id AND customer_id = :owner")
+            .param("id", photoId).param("owner", customerId).update();
+    }
+
+    /** Caller first establishes the exact owned inventory-card to order-item relation. */
+    @Transactional
+    public void attachAgentEvidence(long customerId, long cardId, long orderId, Collection<Long> photoIds) {
+        long ownedCard = jdbc.sql("""
+            SELECT COUNT(*) FROM agent_card c
+            JOIN grading_order_item oi ON oi.id = c.order_item_id
+            JOIN grading_order o ON o.id = oi.order_id AND o.customer_id = c.merchant_customer_id
+            WHERE c.id = :card AND c.merchant_customer_id = :owner AND o.id = :orderId
+            """).param("card", cardId).param("owner", customerId).param("orderId", orderId).query(Long.class).single();
+        if (ownedCard != 1) throw missing();
+        for (Long photoId : photoIds.stream().filter(java.util.Objects::nonNull).distinct().toList()) {
+            Map<String, Object> photo = owned(customerId, photoId, true);
+            long assigned = jdbc.sql("SELECT COUNT(*) FROM agent_card WHERE id = :card AND merchant_customer_id = :owner AND (front_photo_id = :photo OR back_photo_id = :photo)")
+                .param("card", cardId).param("owner", customerId).param("photo", photoId).query(Long.class).single();
+            if (assigned != 1 || !preserved(photo)) throw missing();
+            if (photo.get("order_id") != null && ((Number) photo.get("order_id")).longValue() != orderId)
+                throw bad("This image belongs to another application");
+            jdbc.sql("UPDATE customer_order_photo SET order_id = :orderId, attached_at = CURRENT_TIMESTAMP WHERE id = :id AND customer_id = :owner")
+                .param("orderId", orderId).param("id", photoId).param("owner", customerId).update();
+        }
+    }
+
+    private static boolean preserved(Map<String, Object> photo) {
+        Object value = photo.get("preserved_for_agent");
+        return value instanceof Number number ? number.intValue() != 0 : Boolean.TRUE.equals(value);
     }
 
     public FileSystemResource readOwned(long customerId, long photoId, boolean original) {
@@ -141,8 +178,8 @@ public class CustomerOrderPhotoService {
     @Transactional
     public void removeUnused(long customerId, long photoId) {
         Map<String, Object> photo = owned(customerId, photoId, true);
-        if (photo.get("order_id") != null) throw new ResponseStatusException(HttpStatus.CONFLICT, "Submitted images must be preserved");
-        jdbc.sql("DELETE FROM customer_order_photo WHERE id = :id AND order_id IS NULL").param("id", photoId).update();
+        if (photo.get("order_id") != null || preserved(photo)) throw new ResponseStatusException(HttpStatus.CONFLICT, "Submitted images must be preserved");
+        jdbc.sql("DELETE FROM customer_order_photo WHERE id = :id AND order_id IS NULL AND preserved_for_agent = 0").param("id", photoId).update();
         Runnable cleanup = () -> { deleteQuietly(path((String) photo.get("storage_key"), false)); deleteQuietly(path((String) photo.get("storage_key"), true)); };
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
@@ -152,7 +189,7 @@ public class CustomerOrderPhotoService {
     }
 
     public List<Map<String, Object>> unused(long customerId) {
-        return jdbc.sql("SELECT id, original_filename AS originalFilename, byte_size AS byteSize, created_at AS createdAt FROM customer_order_photo WHERE customer_id = :id AND order_id IS NULL ORDER BY id DESC LIMIT 1000")
+        return jdbc.sql("SELECT id, original_filename AS originalFilename, byte_size AS byteSize, created_at AS createdAt FROM customer_order_photo WHERE customer_id = :id AND order_id IS NULL AND preserved_for_agent = 0 ORDER BY id DESC LIMIT 1000")
             .param("id", customerId).query().listOfRows();
     }
 

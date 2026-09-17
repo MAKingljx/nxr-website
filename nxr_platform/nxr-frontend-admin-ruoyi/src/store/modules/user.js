@@ -27,8 +27,8 @@ const useUserStore = defineStore(
         const code = userInfo.code
         const uuid = userInfo.uuid
         return new Promise((resolve, reject) => {
-          login(username, password, code, uuid).then(res => {
-            setToken(res.token)
+        login(username, password, code, uuid, userInfo.rememberMe === true).then(res => {
+            setToken(res.token, { rememberMe: userInfo.rememberMe === true })
             this.token = res.token
             useLockStore().unlockScreen()
             resolve()

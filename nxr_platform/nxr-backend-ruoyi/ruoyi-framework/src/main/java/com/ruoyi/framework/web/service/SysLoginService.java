@@ -62,6 +62,14 @@ public class SysLoginService
      */
     public String login(String username, String password, String code, String uuid)
     {
+        return login(username, password, code, uuid, false);
+    }
+
+    /**
+     * Authenticate the user and issue either a normal sliding token or an explicitly requested persistent token.
+     */
+    public String login(String username, String password, String code, String uuid, boolean rememberMe)
+    {
         // 验证码校验
         validateCaptcha(username, code, uuid);
         // 登录前置校验
@@ -96,7 +104,7 @@ public class SysLoginService
         LoginUser loginUser = (LoginUser) authentication.getPrincipal();
         recordLoginInfo(loginUser.getUserId());
         // 生成token
-        return tokenService.createToken(loginUser);
+        return tokenService.createToken(loginUser, rememberMe);
     }
 
     /**

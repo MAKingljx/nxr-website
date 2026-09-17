@@ -174,6 +174,9 @@ const messages = {
 }
 
 function resolveInitialLocale(): SupportedLocale {
+  if (import.meta.env.PROD && import.meta.env.MODE !== 'java-stage') {
+    return 'en'
+  }
   if (typeof window === 'undefined') {
     return 'en'
   }
@@ -183,7 +186,7 @@ function resolveInitialLocale(): SupportedLocale {
     return savedLocale
   }
 
-  return navigator.language.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en'
+  return 'en'
 }
 
 export const i18n = createI18n({

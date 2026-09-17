@@ -6,6 +6,7 @@ import OrderAdmission from '../components/OrderAdmission.vue'
 import PrivateOrderPhoto from '../components/PrivateOrderPhoto.vue'
 import type { Admission } from '../lib/orderApplication'
 import PortalQrCode from '../components/PortalQrCode.vue'
+import OrderCardIdentity from '../components/OrderCardIdentity.vue'
 import { formatMoney, orderStatusLabel, orderDisplayStatus } from '../lib/orderProgress'
 import { cancelOrder } from '../lib/merchant'
 import { useRouter } from 'vue-router'
@@ -180,6 +181,10 @@ watch(() => props.orderNo, async () => {
   refreshTimer = window.setInterval(() => { if (!document.hidden && !refreshing.value) void refreshOrder() }, 20000)
 }, { immediate: true })
 
+onMounted(() => {
+  if (customerSession.value?.customer.accountTypeCode === 'customer') void router.replace('/account/cards')
+})
+
 function refreshWhenVisible() { if (!document.hidden && !refreshing.value) void refreshOrder() }
 onMounted(() => document.addEventListener('visibilitychange', refreshWhenVisible))
 onBeforeUnmount(() => {
@@ -196,7 +201,7 @@ onBeforeUnmount(() => {
     <template v-else-if="order && operations">
       <div class="portal-heading">
         <div><p class="section-tag">Grading order</p><h1>{{ order.orderNo }}</h1><p>{{ order.totalCardCount }} card{{ order.totalCardCount === 1 ? '' : 's' }} · {{ order.returnShippingOptionName }} · created {{ dateLabel(order.createdAt) }}</p></div>
-        <div class="form-row form-actions"><router-link class="btn-secondary" to="/account/addresses">Addresses</router-link><router-link class="btn-secondary" to="/account/orders">All orders</router-link></div>
+        <div class="form-row form-actions"><router-link class="btn-secondary" to="/account/addresses">Addresses</router-link></div>
       </div>
       <p v-if="errorMessage" class="form-error">{{ errorMessage }}</p>
 
@@ -222,9 +227,11 @@ onBeforeUnmount(() => {
         </div>
       </section>
 
-      <p v-if="operations.merchantBatchNo" class="muted-copy no-print">Part of agent batch {{ operations.merchantBatchNo }}. <router-link to="/account/merchant-orders">Manage the shared inbound and return parcel</router-link>.</p>
+      <p v-if="operations.merchantBatchNo" class="muted-copy no-print">Part of partner batch {{ operations.merchantBatchNo }}. <router-link to="/account/merchant-orders">Manage the shared inbound and return parcel</router-link>.</p>
       <OrderAdmission :order="order" :refresh-tick="lastRefreshed" @change="admission = $event" @refresh="refreshOrder()" />
       <OrderPayment v-if="canSubmitPayment" :order="order" :refresh-tick="lastRefreshed" @refresh="refreshOrder()" />
+
+      <OrderCardIdentity v-if="order" :order-no="order.orderNo" />
 
       <section v-if="operations.packingSlip" class="form-section packing-slip" id="packing-slip">
         <div class="form-row"><div><h2>Packing slip</h2><p class="muted-copy">Print this and place it inside the parcel.</p></div><button type="button" class="btn-secondary no-print" @click="printPackingSlip">Print packing slip</button></div>
