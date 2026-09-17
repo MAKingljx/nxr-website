@@ -1,15 +1,16 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import LegacySiteFooter from '../components/LegacySiteFooter.vue'
 import LegacySiteNav from '../components/LegacySiteNav.vue'
 import { fetchWaitlistCount, joinWaitlist } from '../lib/api'
-import { isCustomerSignedIn } from '../lib/customer'
+import { customerSession, isCustomerSignedIn } from '../lib/customer'
 
 const waitlistCount = ref<number | null>(null)
 const email = ref('')
 const errorMessage = ref('')
 const confirmedEmail = ref('')
 const isSubmitting = ref(false)
+const customerCanSubmit = computed(() => customerSession.value?.customer.accountTypeCode !== 'merchant')
 
 async function refreshWaitlistCount() {
   try {
@@ -41,7 +42,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <LegacySiteNav active="submit" :cta-href="isCustomerSignedIn ? '/submit/order' : '/account/register?next=/submit/order'" :cta-label="isCustomerSignedIn ? 'Start order' : 'Create account'" />
+  <LegacySiteNav active="submit" :cta-href="isCustomerSignedIn && customerCanSubmit ? '/submit/order' : '/account/register?next=/submit/order'" :cta-label="isCustomerSignedIn && customerCanSubmit ? 'Start order' : 'Create account'" />
 
   <main class="wl-hero">
     <div class="wl-inner">
@@ -55,7 +56,7 @@ onMounted(() => {
         system before opening to the public.
       </p>
       <p class="wl-note">Leave your email and you'll be the first to know when we open up.</p>
-      <div class="submit-order-callout">
+      <div v-if="customerCanSubmit" class="submit-order-callout">
         <div><strong>Customer grading orders are available locally.</strong><span>Create an order, submit payment confirmation, and follow inbound, grading, and return-shipment progress.</span></div>
         <router-link class="btn-primary" :to="isCustomerSignedIn ? '/submit/order' : '/account/register?next=/submit/order'">{{ isCustomerSignedIn ? 'Start grading order' : 'Create collector account' }}</router-link>
       </div>

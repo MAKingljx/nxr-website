@@ -51,6 +51,7 @@
 <script setup>
 import { ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
+import { allowLocaleSelection } from '@/i18n'
 import Breadcrumb from '@/components/Breadcrumb'
 import TopNav from './TopNav'
 import TopBar from './TopBar'
@@ -70,7 +71,7 @@ const userStore = useUserStore()
 const lockStore = useLockStore()
 const settingsStore = useSettingsStore()
 const { t } = useI18n()
-const showLanguageSwitcher = ['development', 'java-stage'].includes(import.meta.env.VITE_APP_ENV)
+const showLanguageSwitcher = allowLocaleSelection
 
 function toggleSideBar() {
   appStore.toggleSideBar()

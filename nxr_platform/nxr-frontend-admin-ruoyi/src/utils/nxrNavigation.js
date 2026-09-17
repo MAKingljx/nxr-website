@@ -1,4 +1,5 @@
 import { i18n } from '@/i18n'
+import { groupSubmissionWorkspaceRoutes } from './submissionWorkspace.js'
 
 const HIDDEN_TOOL_COMPONENTS = new Set(['tool/build/index', 'tool/gen/index', 'tool/swagger/index'])
 
@@ -22,6 +23,9 @@ const MENU_TITLE_KEYS = new Map([
   ['订单列表', 'nav.orderList'],
   ['送评订单', 'nav.gradingOrders'],
   ['客户管理', 'nav.customerManagement'],
+  ['代理工作台', 'nav.submissionWorkspace'],
+  ['送评工作台', 'nav.submissionWorkspace'],
+  ['子代理管理', 'nav.partnerManagement'],
   ['候补名单', 'nav.waitlist'],
   ['提交者名单', 'nav.submitters'],
   ['数据导出', 'nav.dataExport'],
@@ -29,6 +33,9 @@ const MENU_TITLE_KEYS = new Map([
   ['Excel导出', 'nav.excelExport'],
   ['系统设置', 'nav.systemSettings'],
   ['支付渠道', 'nav.paymentChannels'],
+  ['企业额度设置', 'nav.enterpriseCreditSettings'],
+  ['预充值余额', 'nav.workspaceWallet'],
+  ['企业额度', 'nav.workspaceWallet'],
   ['系统管理', 'nav.systemManagement'],
   ['管理员用户', 'nav.adminUsers'],
   ['用户管理', 'nav.adminUsers'],
@@ -119,5 +126,6 @@ function normalizeRoute(route) {
 }
 
 export function prepareNxrBusinessRoutes(routes = []) {
-  return routes.map((route) => normalizeRoute(route)).filter(Boolean)
+  const normalized = routes.map((route) => normalizeRoute(route)).filter(Boolean)
+  return groupSubmissionWorkspaceRoutes(normalized, key => i18n.global.t(key))
 }

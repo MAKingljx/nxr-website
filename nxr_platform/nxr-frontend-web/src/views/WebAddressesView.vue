@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import LegacySiteFooter from '../components/LegacySiteFooter.vue'
 import LegacySiteNav from '../components/LegacySiteNav.vue'
@@ -11,6 +11,7 @@ import {
   updateCustomerAddress,
   type CustomerAddress,
 } from '../lib/customer'
+import { addressCities, addressCountries, addressRegions, withCurrentOption } from '../lib/addressCatalog'
 
 const router = useRouter()
 const addresses = ref<CustomerAddress[]>([])
@@ -19,6 +20,20 @@ const loading = ref(true)
 const saving = ref(false)
 const errorMessage = ref('')
 const form = reactive(emptyAddress())
+const countryOptions = computed(() => withCurrentOption(addressCountries, form.country))
+const regionOptions = computed(() => withCurrentOption(addressRegions(form.country), form.region))
+const cityOptions = computed(() => withCurrentOption(addressCities(form.country, form.region), form.city))
+const knownCountry = computed(() => addressRegions(form.country).length > 0)
+const knownRegion = computed(() => addressCities(form.country, form.region).length > 0)
+
+function countryChanged() {
+  form.region = ''
+  form.city = ''
+}
+
+function regionChanged() {
+  form.city = ''
+}
 
 function emptyAddress() {
   return {
@@ -110,11 +125,11 @@ onMounted(async () => {
         <label>Label<input v-model="form.label" required maxlength="64" /></label>
         <label>Contact name<input v-model="form.contactName" required maxlength="128" /></label>
         <label>Phone<input v-model="form.contactPhone" required maxlength="64" /></label>
-        <label>Country<input v-model="form.country" required maxlength="128" /></label>
+        <label>Country / region<select v-if="countryOptions.length" v-model="form.country" required @change="countryChanged"><option v-for="option in countryOptions" :key="option.value" :value="option.value">{{ option.label }}</option><option value="">Choose country / region</option></select><input v-else v-model="form.country" required maxlength="128" /></label>
         <label class="form-wide">Address line 1<input v-model="form.addressLine1" required maxlength="255" /></label>
         <label class="form-wide">Address line 2<input v-model="form.addressLine2" maxlength="255" /></label>
-        <label>City<input v-model="form.city" required maxlength="128" /></label>
-        <label>Region / state<input v-model="form.region" maxlength="128" /></label>
+        <label>Region / state<select v-if="knownCountry" v-model="form.region" :required="knownCountry" @change="regionChanged"><option value="">Choose region / state</option><option v-for="option in regionOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select><input v-else v-model="form.region" maxlength="128" /></label>
+        <label>City<select v-if="knownRegion" v-model="form.city" required><option value="">Choose city</option><option v-for="option in cityOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select><input v-else v-model="form.city" required maxlength="128" /></label>
         <label>Postal code<input v-model="form.postalCode" required maxlength="64" /></label>
       </div>
       <label class="check-label"><input v-model="form.defaultAddress" type="checkbox" /> Use as the default return address</label>

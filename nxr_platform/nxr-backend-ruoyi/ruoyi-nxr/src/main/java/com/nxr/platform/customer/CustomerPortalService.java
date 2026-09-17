@@ -585,7 +585,7 @@ public class CustomerPortalService {
         MerchantWalletService wallet = requireMerchantWalletService();
         long orderId = lockCustomerOrderForPayment(customerId, orderNo);
         requireAdmissionPaymentAllowed(orderId, customerId);
-        wallet.debitOrder(customerId, orderId, request == null ? null : request.idempotencyKey());
+        wallet.debitOrder(customerId, orderId, request == null ? null : request.idempotencyKey(), request == null ? null : request.settingsVersion(), request == null ? null : request.expectedPoints());
         String currentStatus = currentLockedOrderStatus(orderId);
         if (Set.of("awaiting_payment", "payment_review").contains(currentStatus)) {
             updateOrderStatus(orderId, "awaiting_inbound", "Payment confirmed",
@@ -2096,7 +2096,9 @@ public class CustomerPortalService {
     public record PaymentSessionRequest(String provider) {
     }
 
-    public record WalletPaymentRequest(String idempotencyKey) {
+    public record WalletPaymentRequest(String idempotencyKey, Long settingsVersion, BigDecimal expectedPoints) {
+        public WalletPaymentRequest(String idempotencyKey) { this(idempotencyKey, null, null); }
+        public WalletPaymentRequest(String idempotencyKey, Long settingsVersion) { this(idempotencyKey, settingsVersion, null); }
     }
 
     public record CancelOrderRequest(String reason) {

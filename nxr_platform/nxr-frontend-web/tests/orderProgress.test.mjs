@@ -54,3 +54,32 @@ test('cancellation and payment expiry take precedence over old admission metadat
   assert.equal(orderDisplayStatus('payment_expired', 'approved'), 'payment_expired')
   assert.equal(orderDisplayStatus('admission_review', 'needs_information'), 'needs_information')
 })
+
+test('enterprise points use a unit label instead of a currency formatter', () => {
+  assert.equal(formatMoney(1234.5, 'PTS'), '1,234.50 PTS')
+  assert.equal(formatMoney(0, 'PTS'), '0.00 PTS')
+})
+
+test('large exact-decimal enterprise balances retain their cents', () => {
+  assert.equal(formatMoney('99999999999999.99', 'PTS'), '99,999,999,999,999.99 PTS')
+  assert.equal(formatMoney('0.01', 'PTS'), '0.01 PTS')
+})
+
+test('legacy USD and CNY preserve cents at the DECIMAL(18,2) limit', () => {
+  for (const currency of ['USD', 'CNY']) {
+    assert.match(formatMoney('9999999999999999.99', currency), /9,999,999,999,999,999\.99$/)
+    assert.match(formatMoney('-9999999999999999.98', currency), /-.*9,999,999,999,999,999\.98$/)
+  }
+})
+test('exact JPY uses zero decimals and integer rounding at large amounts', () => {
+  assert.match(formatMoney('9999999999999999.00', 'JPY'), /9,999,999,999,999,999$/)
+  assert.match(formatMoney('9999999999999999.50', 'JPY'), /10,000,000,000,000,000$/)
+})
+test('normal numbers retain Intl currency formatting and decimal signs', () => {
+  for (const currency of ['USD', 'CNY', 'JPY']) for (const amount of [0, 12.5, -0.01, 1234.567]) {
+    const expected = new Intl.NumberFormat('en', { style: 'currency', currency, currencyDisplay: 'code' }).format(amount)
+    assert.equal(formatMoney(amount, currency), expected)
+    assert.equal(formatMoney(String(amount), currency), expected)
+  }
+  assert.match(formatMoney('999.995', 'USD'), /1,000\.00$/)
+})

@@ -18,6 +18,7 @@ import {
   type CustomerAddress,
   type ShippingOption,
 } from '../lib/customer'
+import { addressCities, addressCountries, addressRegions, withCurrentOption } from '../lib/addressCatalog'
 
 const router = useRouter()
 const errorMessage = ref('')
@@ -50,6 +51,12 @@ const form = reactive({
   customerNote: '',
   items: [emptyApplicationCard()],
 })
+
+const countryOptions = computed(() => withCurrentOption(addressCountries, form.returnCountry))
+const regionOptions = computed(() => withCurrentOption(addressRegions(form.returnCountry), form.returnRegion))
+const cityOptions = computed(() => withCurrentOption(addressCities(form.returnCountry, form.returnRegion), form.returnCity))
+const knownCountry = computed(() => addressRegions(form.returnCountry).length > 0)
+const knownRegion = computed(() => addressCities(form.returnCountry, form.returnRegion).length > 0)
 
 const cardCount = computed(() => form.items.length)
 const selectedQuote = computed(() => quotes.value[selectedShippingOptionCode.value] || null)
@@ -118,6 +125,16 @@ async function applyAddress() {
   await loadShippingOptions()
 }
 
+function countryChanged() {
+  form.returnRegion = ''
+  form.returnCity = ''
+  void loadShippingOptions()
+}
+
+function regionChanged() {
+  form.returnCity = ''
+}
+
 async function submitOrder() {
   errorMessage.value = ''
   if (cardCount.value < 1 || cardCount.value > maxCards.value) {
@@ -166,6 +183,10 @@ async function submitOrder() {
 onMounted(async () => {
   if (!customerSession.value) {
     await router.replace('/account/login?next=/submit/order')
+    return
+  }
+  if (customerSession.value.customer.accountTypeCode === 'merchant') {
+    await router.replace('/account/company')
     return
   }
   form.contactName = customerSession.value.customer.displayName
@@ -233,10 +254,10 @@ onMounted(async () => {
           <label>Phone<input v-model="form.contactPhone" required maxlength="64" :disabled="Boolean(selectedAddressId)" /></label>
           <label class="form-wide">Address line 1<input v-model="form.returnAddressLine1" required maxlength="255" :disabled="Boolean(selectedAddressId)" /></label>
           <label class="form-wide">Address line 2<input v-model="form.returnAddressLine2" maxlength="255" :disabled="Boolean(selectedAddressId)" /></label>
-          <label>City<input v-model="form.returnCity" required maxlength="128" :disabled="Boolean(selectedAddressId)" /></label>
-          <label>Region / state<input v-model="form.returnRegion" maxlength="128" :disabled="Boolean(selectedAddressId)" /></label>
+          <label>Region / state<select v-if="knownCountry" v-model="form.returnRegion" :required="knownCountry" :disabled="Boolean(selectedAddressId)" @change="regionChanged"><option value="">Choose region / state</option><option v-for="option in regionOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select><input v-else v-model="form.returnRegion" maxlength="128" :disabled="Boolean(selectedAddressId)" /></label>
+          <label>City<select v-if="knownRegion" v-model="form.returnCity" required :disabled="Boolean(selectedAddressId)"><option value="">Choose city</option><option v-for="option in cityOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select><input v-else v-model="form.returnCity" required maxlength="128" :disabled="Boolean(selectedAddressId)" /></label>
           <label>Postal code<input v-model="form.returnPostalCode" required maxlength="64" :disabled="Boolean(selectedAddressId)" /></label>
-          <label>Country / region<input v-model="form.returnCountry" required maxlength="128" placeholder="US, CN, HK…" :disabled="Boolean(selectedAddressId)" @blur="loadShippingOptions" /></label>
+          <label>Country / region<select v-model="form.returnCountry" required :disabled="Boolean(selectedAddressId)" @change="countryChanged"><option value="">Choose country / region</option><option v-for="option in countryOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
         </div>
         <label v-if="!selectedAddressId" class="check-label"><input v-model="form.saveReturnAddress" type="checkbox" /> Save this address for future orders</label>
       </section>

@@ -19,8 +19,32 @@ export function orderDisplayStatus(statusCode: string, admissionStatus?: string 
   return statusCode === 'admission_review' && admissionStatus ? admissionStatus : statusCode
 }
 
+export function formatPoints(amount: number | string) {
+  // Credit values arrive as decimal strings; never round large balances through Number.
+  const match = String(amount).match(/^(-?)(\d+)(?:\.(\d{1,2}))?$/)
+  if (!match) return '—'
+  const locale = 'en'
+  const integer = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(BigInt(`${match[1]}${match[2]}`))
+  const decimal = new Intl.NumberFormat(locale).formatToParts(1.1).find(part => part.type === 'decimal')?.value || '.'
+  return `${match[1] && BigInt(match[2]!) === 0n ? '−' : ''}${integer}${decimal}${(match[3] || '').padEnd(2, '0')} PTS`
+}
+
 export function formatMoney(amount: number | string, currency: string) {
-  return new Intl.NumberFormat('en', { style: 'currency', currency, currencyDisplay: 'code' }).format(Number(amount))
+  if (currency === 'PTS') return formatPoints(amount)
+  const formatter = new Intl.NumberFormat('en', { style: 'currency', currency, currencyDisplay: 'code' })
+  if (typeof amount === 'number') return formatter.format(amount)
+  // Build currency units with integer arithmetic so DECIMAL(18,2) cents stay exact.
+  const match = amount.trim().match(/^([+-]?)(\d+)(?:\.(\d*))?$/)
+  if (!match) return '—'
+  const digits = formatter.resolvedOptions().maximumFractionDigits ?? 0
+  const factor = 10n ** BigInt(digits), fraction = match[3] || ''
+  let units = BigInt(match[2]!) * factor + BigInt((fraction + '0'.repeat(digits)).slice(0, digits) || '0')
+  // Match Intl's default half-expand rounding, including zero-decimal currencies.
+  if (fraction.length > digits && fraction.charAt(digits) >= '5') units += 1n
+  const whole = units / factor, negative = match[1] === '-'
+  const exactFraction = (units % factor).toString().padStart(digits, '0')
+  const parts = formatter.formatToParts(negative ? (whole === 0n ? -0 : -whole) : whole)
+  return parts.map(part => part.type === 'fraction' ? exactFraction : part.value).join('')
 }
 
 const milestones = [

@@ -32,7 +32,7 @@ class CustomerOrderPhotoServiceTest {
         transaction = new TransactionTemplate(new DataSourceTransactionManager(ds));
         jdbc.execute("CREATE TABLE customer_account(id BIGINT PRIMARY KEY)");
         jdbc.execute("CREATE TABLE grading_order(id BIGINT PRIMARY KEY, customer_id BIGINT NOT NULL)");
-        jdbc.execute("CREATE TABLE customer_order_photo(id BIGINT AUTO_INCREMENT PRIMARY KEY, customer_id BIGINT NOT NULL, order_id BIGINT, storage_key VARCHAR(64), original_filename VARCHAR(255), mime_type VARCHAR(64), byte_size BIGINT, width_px INT, height_px INT, checksum_sha256 VARCHAR(64), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, attached_at TIMESTAMP)");
+        jdbc.execute("CREATE TABLE customer_order_photo(id BIGINT AUTO_INCREMENT PRIMARY KEY, customer_id BIGINT NOT NULL, order_id BIGINT, preserved_for_agent TINYINT NOT NULL DEFAULT 0, storage_key VARCHAR(64), original_filename VARCHAR(255), mime_type VARCHAR(64), byte_size BIGINT, width_px INT, height_px INT, checksum_sha256 VARCHAR(64), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, attached_at TIMESTAMP)");
         jdbc.update("INSERT INTO customer_account VALUES(1),(2)");
         jdbc.update("INSERT INTO grading_order VALUES(10,1),(11,1),(20,2)");
         service = new CustomerOrderPhotoService(JdbcClient.create(jdbc), jdbc, new MediaCapacityService(0), directory.toString());
@@ -68,6 +68,23 @@ class CustomerOrderPhotoServiceTest {
         assertThat(service.readOwned(1, photo.id(), true).exists()).isTrue();
         transaction.executeWithoutResult(status -> service.removeUnused(1, photo.id()));
         try (var files = Files.list(directory.resolve("customer-uploads"))) { assertThat(files.toList()).isEmpty(); }
+    }
+
+    @Test void retainedAgentEvidenceDoesNotConsumePendingUploadQuotaAndCannotBeDeletedOrReused() throws Exception {
+        byte[] image = png();
+        var photo = transaction.execute(status -> service.upload(1, new MockMultipartFile("file", "card.png", "image/png", image)));
+        transaction.executeWithoutResult(status -> service.preserveForAgent(1, photo.id()));
+        // A retained evidence collection may exceed the separate unsubmitted-application allowance.
+        jdbc.update("UPDATE customer_order_photo SET byte_size = ? WHERE id = ?", 2L * 1024 * 1024 * 1024, photo.id());
+        assertThat(service.unused(1)).isEmpty();
+        assertThatThrownBy(() -> transaction.executeWithoutResult(status -> service.removeUnused(1, photo.id())))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("409");
+        assertThatThrownBy(() -> transaction.executeWithoutResult(status -> service.attachToOrder(1, 10, List.of(photo.id()))))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("inventory card");
+        var fresh = transaction.execute(status -> service.upload(1, new MockMultipartFile("file", "next.png", "image/png", image)));
+        assertThat(fresh.id()).isNotEqualTo(photo.id());
+        assertThat(service.unused(1)).hasSize(1);
+        assertThat(service.readOwned(1, photo.id(), true).exists()).isTrue();
     }
 
     private byte[] png() throws Exception {

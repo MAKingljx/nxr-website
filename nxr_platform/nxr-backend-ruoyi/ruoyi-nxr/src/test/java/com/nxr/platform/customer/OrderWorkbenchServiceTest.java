@@ -30,6 +30,7 @@ class OrderWorkbenchServiceTest {
         try (Connection connection = dataSource.getConnection()) {
             ScriptUtils.executeSqlScript(connection, new ClassPathResource("order_fulfillment_h2.sql"));
             ScriptUtils.executeSqlScript(connection, new ClassPathResource("order_workbench_h2.sql"));
+            ScriptUtils.executeSqlScript(connection, new ClassPathResource("order_card_identity_h2.sql"));
         }
         jdbcClient = JdbcClient.create(jdbc);
         service = new OrderWorkbenchService(jdbcClient);

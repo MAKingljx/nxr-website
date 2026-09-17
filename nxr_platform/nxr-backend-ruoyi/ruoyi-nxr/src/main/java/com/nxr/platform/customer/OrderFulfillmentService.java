@@ -575,6 +575,7 @@ public class OrderFulfillmentService {
     public AdminOperationsResponse updateWorkTask(long orderId, long taskId, long adminUserId, WorkTaskUpdateRequest request) {
         OrderRow order = lockOrder(orderId);
         assertPaymentNotOnHold(order);
+        assertGradingIntakeReady(order);
         WorkTaskRecord task = requireWorkTask(order.id(), taskId);
         String status = normalizeWorkTaskStatus(request.statusCode());
         if (task.statusCode().equals("completed") && !status.equals("completed")) {
@@ -616,6 +617,7 @@ public class OrderFulfillmentService {
     public AdminOperationsResponse createWorkTask(long orderId, long adminUserId, WorkTaskRequest request) {
         OrderRow order = lockOrder(orderId);
         assertPaymentNotOnHold(order);
+        assertGradingIntakeReady(order);
         String type = normalizeWorkTaskType(request.taskTypeCode());
         Long itemId = request.orderItemId();
         if (itemId != null) {
@@ -630,6 +632,31 @@ public class OrderFulfillmentService {
         }
         workTaskInsert.execute(taskValues(order.id(), itemId, type, adminUserId));
         return loadAdminOperations(order.id());
+    }
+
+    /** Grading work starts only after warehouse receipt and quantity reconciliation. */
+    private void assertGradingIntakeReady(OrderRow order) {
+        if (!Set.of("received", "grading", "review", "quality_check", "quality_hold", "completed", "return_shipped", "delivered")
+            .contains(order.statusCode())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Confirm receipt and reconcile the card quantity before starting grading work");
+        }
+        int openDifferences = jdbcClient.sql(
+                "SELECT COUNT(*) FROM order_exception WHERE order_id = :orderId AND status_code = 'open' "
+                    + "AND exception_type_code IN ('shortage','overage','damaged','wrong_item')")
+            .param("orderId", order.id()).query(Integer.class).single();
+        if (openDifferences > 0) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Resolve the receipt quantity exception before starting grading work");
+        }
+        boolean counted = jdbcClient.sql(
+                "SELECT expected_count = received_count FROM order_intake_receipt "
+                    + "WHERE order_id = :orderId ORDER BY received_at DESC, id DESC LIMIT 1")
+            .param("orderId", order.id()).query(Boolean.class).optional().orElse(false);
+        if (!counted) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "A matching receipt count is required before starting grading work");
+        }
     }
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
