@@ -3,6 +3,7 @@ import test, { type TestContext } from 'node:test'
 
 import {
   cancelScan,
+  getActiveScanCount,
   getScanConcurrency,
   scanPhoto,
 } from '../src/lib/scanner.ts'
@@ -105,7 +106,7 @@ class FakeClock {
 
 function installFakeRuntime(
   context: TestContext,
-  capabilities = { hardwareConcurrency: 8, deviceMemory: 8 },
+  capabilities = { hardwareConcurrency: 4, deviceMemory: 4 },
 ): FakeClock {
   cancelScan()
   const workerDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'Worker')
@@ -143,11 +144,14 @@ function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError'
 }
 
-test('getScanConcurrency uses one worker only on low-resource devices', () => {
+test('getScanConcurrency exposes a high-memory search ceiling without expanding low-memory devices', () => {
   assert.equal(getScanConcurrency({}), 2)
   assert.equal(getScanConcurrency({ hardwareConcurrency: 4, deviceMemory: 4 }), 2)
-  assert.equal(getScanConcurrency({ hardwareConcurrency: 2, deviceMemory: 8 }), 1)
+  assert.equal(getScanConcurrency({ hardwareConcurrency: 2, deviceMemory: 8 }), 2)
+  assert.equal(getScanConcurrency({ hardwareConcurrency: 1, deviceMemory: 8 }), 1)
   assert.equal(getScanConcurrency({ hardwareConcurrency: 8, deviceMemory: 2 }), 1)
+  assert.equal(getScanConcurrency({ hardwareConcurrency: 8, deviceMemory: 8 }), 5)
+  assert.equal(getScanConcurrency({ hardwareConcurrency: 14, deviceMemory: 36 }), 28)
 })
 
 test('scan pool runs at most two tasks, ignores wrong ids and reuses workers', async (context) => {
@@ -156,6 +160,7 @@ test('scan pool runs at most two tasks, ignores wrong ids and reuses workers', a
 
   assert.equal(FakeWorker.instances.length, 2)
   assert.equal(FakeWorker.active, 2)
+  assert.equal(getActiveScanCount(), 2)
   assert.equal(clock.timers.length, 2)
   const first = FakeWorker.instances[0]!
   first.wrongId()
@@ -179,7 +184,7 @@ test('scan pool runs at most two tasks, ignores wrong ids and reuses workers', a
 })
 
 test('a low-resource pool keeps its second task queued without starting its timer', async (context) => {
-  const clock = installFakeRuntime(context, { hardwareConcurrency: 2, deviceMemory: 8 })
+  const clock = installFakeRuntime(context, { hardwareConcurrency: 1, deviceMemory: 8 })
   const first = scanPhoto(fakeFile('first.jpg'))
   const second = scanPhoto(fakeFile('second.jpg'))
   assert.equal(FakeWorker.instances.length, 1)
@@ -241,6 +246,7 @@ test('cancel rejects running and queued scans without reviving the queue, then a
   assert.equal(FakeWorker.instances.length, 2)
   assert.ok(FakeWorker.instances.every(worker => worker.terminated))
   assert.equal(FakeWorker.active, 0)
+  assert.equal(getActiveScanCount(), 0)
   await Promise.all(rejected)
   assert.equal(FakeWorker.instances.length, 2)
 
@@ -251,4 +257,55 @@ test('cancel rejects running and queued scans without reviving the queue, then a
   assert.equal(FakeWorker.instances[2]!.current?.file.name, 'recovered.jpg')
   FakeWorker.instances[2]!.succeed('7999999999')
   assert.deepEqual((await recovered).certIds, ['7999999999'])
+})
+
+test('desktop-class scan pool runs fourteen independent jobs and preserves caller order', async (context) => {
+  installFakeRuntime(context, { hardwareConcurrency: 14, deviceMemory: 36 })
+  const jobs = Array.from({ length: 28 }, (_, i) => scanPhoto(fakeFile(`parallel-${i}.jpg`), 'deep'))
+  assert.equal(FakeWorker.active, 14)
+  while (FakeWorker.running().length) {
+    const worker = FakeWorker.running().at(-1)!
+    const index = /parallel-(\d+)/.exec(worker.current!.file.name)![1]
+    worker.succeed(`700000${index}`)
+  }
+  assert.equal(FakeWorker.maxActive, 14)
+  assert.deepEqual((await Promise.all(jobs)).map(job => job.certIds[0]), Array.from({ length: 28 }, (_, i) => `700000${i}`))
+})
+
+test('healthy high-memory scan work can grow above fourteen and cancellation drains the expanded pool', async (context) => {
+  installFakeRuntime(context, { hardwareConcurrency: 14, deviceMemory: 36 })
+  const performanceDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'performance')
+  let tick = 0
+  Object.defineProperty(globalThis, 'performance', {
+    configurable: true,
+    value: { now: () => ++tick },
+  })
+  context.after(() => restoreGlobal('performance', performanceDescriptor))
+
+  const jobs = Array.from({ length: 80 }, (_, index) =>
+    scanPhoto(fakeFile(`growth-${index}.jpg`), 'deep'),
+  )
+  const outcomes = jobs.map(job => job.then(
+    () => 'fulfilled' as const,
+    error => {
+      if (isAbortError(error)) return 'aborted' as const
+      throw error
+    },
+  ))
+  assert.equal(getActiveScanCount(), 14)
+
+  let completions = 0
+  while (FakeWorker.maxActive <= 14 && completions < 50) {
+    FakeWorker.running()[0]!.succeed(`700001${completions}`)
+    completions += 1
+  }
+  assert.ok(FakeWorker.maxActive > 14 && FakeWorker.maxActive <= 28)
+  assert.equal(getActiveScanCount(), FakeWorker.active)
+
+  cancelScan()
+  assert.equal(getActiveScanCount(), 0)
+  assert.equal(FakeWorker.active, 0)
+  const settled = await Promise.all(outcomes)
+  assert.ok(settled.includes('fulfilled'))
+  assert.ok(settled.includes('aborted'))
 })

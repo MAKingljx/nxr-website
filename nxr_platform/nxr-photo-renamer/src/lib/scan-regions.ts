@@ -1,6 +1,7 @@
 import type { ScanMode } from './scan-policy'
 
 export type PixelTreatment = 'original' | 'contrast-if-low' | 'contrast' | 'local-threshold'
+  | 'gold' | 'gold-strong' | 'blue-channel' | 'red-channel' | 'gray-range'
 
 export interface ScanRegion {
   sx: number
@@ -9,7 +10,7 @@ export interface ScanRegion {
   sh: number
   rotation: 0 | 90 | 180 | 270
   maxEdge: number
-  kind: 'overview' | 'resampled' | 'coarse' | 'detail' | 'fine' | 'fallback'
+  kind: 'overview' | 'label' | 'resampled' | 'coarse' | 'detail' | 'fine' | 'fallback'
   treatment: PixelTreatment
 }
 
@@ -25,7 +26,24 @@ export function buildScanRegions(width: number, height: number, mode: ScanMode =
 }
 
 export function countsTowardConflictVerification(region: ScanRegion): boolean {
-  return region.kind !== 'resampled'
+  return region.kind !== 'resampled' && region.kind !== 'label'
+}
+
+/** Overlapping label crops preserve QR quiet zones at several module scales. */
+export function buildLabelRegions(width: number, height: number): ScanRegion[] {
+  const regions: ScanRegion[] = []
+  for (const [x, y, w, h, edges] of [
+    [0.15, 0.14, 0.35, 0.20, [900, 750, 600, 450]],
+    [0.10, 0.10, 0.50, 0.27, [900, 600, 450]],
+  ] as const) {
+    for (const maxEdge of edges) {
+      for (const treatment of ['original', 'gold', 'gold-strong', 'blue-channel', 'red-channel', 'gray-range'] as const) {
+        regions.push({ sx: width * x, sy: height * y, sw: width * w, sh: height * h,
+          rotation: 0, maxEdge, kind: 'label', treatment })
+      }
+    }
+  }
+  return regions
 }
 
 function buildStandardRegions(width: number, height: number): ScanRegion[] {
@@ -34,6 +52,14 @@ function buildStandardRegions(width: number, height: number): ScanRegion[] {
   // The worker skips this pass for normal/high-contrast photos. It gives faded
   // labels one inexpensive second chance without doubling every empty scan.
   regions.push(whole(width, height, 0, 1600, 'overview', 'contrast-if-low'))
+  regions.push(...buildLabelRegions(width, height))
+
+  // Labels usually sit near the top. These cheap downsampled regions recover
+  // soft camera QR edges before expensive native-detail scans. They do not
+  // replace full-image conflict verification or the remaining coverage.
+  if (Math.max(width, height) > 1600) {
+    regions.push(...gridRegions(width, height, 3, 0.16, 600, 'resampled').slice(0, 3))
+  }
 
   // Large QR codes can be cut by every small sliding window. Two overlapping
   // halves keep large codes intact and separate codes on opposite sides.
@@ -66,6 +92,7 @@ function buildDeepRegions(width: number, height: number): ScanRegion[] {
   regions.push(whole(width, height, 0, 2400, 'overview'))
   regions.push(whole(width, height, 0, 2400, 'overview', 'contrast'))
   regions.push(whole(width, height, 0, 2400, 'overview', 'local-threshold'))
+  regions.push(...buildLabelRegions(width, height))
 
   // A low-resolution copy of the complete 3x3 coverage recovers soft QR module
   // edges before the more expensive high-resolution regions consume the budget.

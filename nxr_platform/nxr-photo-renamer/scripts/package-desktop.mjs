@@ -91,6 +91,7 @@ export async function createDesktopStage({ projectRoot, stageRoot }) {
     path.join(root, 'desktop', 'policy.cjs'),
     path.join(destination, 'desktop', 'policy.cjs'),
   )
+  await copyRequiredFile(path.join(root, 'desktop', 'preload.cjs'), path.join(destination, 'desktop', 'preload.cjs'))
   await copyDistTree(path.join(root, 'dist'), path.join(destination, 'dist'), 'dist')
 
   const runtimePackage = {
@@ -123,6 +124,15 @@ export async function packageDesktop({
     throw new Error(`invalid desktop release version: ${String(version)}`)
   }
   const packagingVersions = await verifyPackagingVersions(root, projectPackage)
+  // Use the checksums shipped by the exact pinned Electron npm package, as
+  // Electron's own installer does. Cached runtimes remain verified offline.
+  const electronChecksums = JSON.parse(await readFile(path.join(root, 'node_modules/electron/checksums.json'), 'utf8'))
+  for (const runtimeArch of target.arch === 'universal' ? ['arm64', 'x64'] : [target.arch]) {
+    const runtimeZip = `electron-v${packagingVersions.electron}-${target.platform}-${runtimeArch}.zip`
+    if (!/^[a-f0-9]{64}$/i.test(electronChecksums[runtimeZip] ?? '')) {
+      throw new Error(`pinned Electron checksum missing for ${runtimeZip}`)
+    }
+  }
   const releaseRoot = path.join(root, 'release')
   const versionRoot = path.join(releaseRoot, version)
   await ensureRealDirectory(releaseRoot)
@@ -148,6 +158,7 @@ export async function packageDesktop({
       platform: target.platform,
       arch: target.arch,
       electronVersion: packagingVersions.electron,
+      download: { checksums: electronChecksums },
       appVersion: version,
       buildVersion: version,
       appBundleId: APP_BUNDLE_ID,

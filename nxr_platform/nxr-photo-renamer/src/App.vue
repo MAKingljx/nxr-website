@@ -1,16 +1,16 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, shallowRef } from "vue";
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from "vue";
 import type { Pair, Photo, RenameRequest } from "./lib/types";
 import {
   isSupportedImage,
   naturalCompare,
   validatePairs,
 } from "./lib/pairing";
-import { scanPhoto, cancelScan, getScanConcurrency } from "./lib/scanner";
+import { scanPhoto, cancelScan, getScanConcurrency, getActiveScanCount } from "./lib/scanner";
 import { scanTextReference, cancelTextReference } from "./lib/text-reference";
 import PhotoReviewDialog from "./components/PhotoReviewDialog.vue";
-import { deepScanCandidates, mergeDeepScanPairs, mergeScanEvidence, type ScanMode } from "./lib/scan-policy";
-import { convertToLosslessWebp, getWebpConcurrency } from "./lib/webp-converter";
+import { deepScanCandidates, nextDeepScanBatch, mergeDeepScanPairs, mergeScanEvidence, type ScanMode } from "./lib/scan-policy";
+import { convertToWebp, convertToLosslessWebp, getWebpConcurrency, getActiveWebpCount, disposeWebpWorkers } from "./lib/webp-converter";
 import {
   hashFile,
   listJournals,
@@ -18,17 +18,35 @@ import {
   restoreJournal,
 } from "./lib/file-operations";
 
+import { getProcessingConcurrency } from "./lib/performance-policy";
+import { mapConcurrent } from "./lib/batch-processing";
+import { fingerprintFile, digest, scanCache } from './lib/scan-cache';
+import { sessionKey, saveScanSession, restoreScanSession } from './lib/scan-session';
+const outputQuality = ref<'quality' | 'lossless'>('quality');
+const photoPage = ref(0), pairPage = ref(0);
+const PAGE_SIZE = 100;
 const photos = ref<Photo[]>([]);
 const pairs = ref<Pair[]>([]);
+const visiblePhotos = computed(() => photos.value.slice(photoPage.value * PAGE_SIZE, (photoPage.value + 1) * PAGE_SIZE));
+const visiblePairs = computed(() => pairs.value.slice(pairPage.value * PAGE_SIZE, (pairPage.value + 1) * PAGE_SIZE));
+watch(() => pairs.value.length, length => { pairPage.value = Math.min(pairPage.value, Math.max(0, Math.ceil(length / PAGE_SIZE) - 1)); });
 const directory = shallowRef<FileSystemDirectoryHandle | null>(null);
 const folderName = ref("尚未选择文件夹");
 const allNames = ref<string[]>([]);
 const writable = ref(false);
 const busy = ref("");
+const activeWorkers = ref(0);
+let activityTimer: ReturnType<typeof setInterval> | undefined;
 const progress = ref(0);
 const progressText = ref("");
 const stoppingConversion = ref(false);
 let conversionController: AbortController | null = null;
+watch(busy, value => {
+  window.nxrDesktop?.setProcessingBusy(!!value);
+  clearInterval(activityTimer); activeWorkers.value = 0;
+  if (value) activityTimer = setInterval(() => { activeWorkers.value = getActiveScanCount() + getActiveWebpCount(); }, 250);
+}, { flush: 'sync' });
+onBeforeUnmount(() => { clearInterval(activityTimer); clearTimeout(sessionSaveTimer); });
 const notice = ref<{ text: string; tone: string } | null>(null);
 const journals = ref<
   { name: string; state: string; createdAt: string; count: number }[]
@@ -75,6 +93,22 @@ const scannedCount = computed(
     ).length,
 );
 const hasScan = computed(() => scannedCount.value > 0);
+const interruptedScan = ref(false);
+let activeSessionKey: string | undefined;
+let sessionSaveTimer: ReturnType<typeof setTimeout> | undefined;
+const continueScan = computed(() => {
+  if (interruptedScan.value) return true;
+  const paired = new Set(pairs.value.flatMap(pair => [pair.frontId, pair.backId]));
+  return hasScan.value && photos.value.some(photo => photo.scanState === 'pending' && !paired.has(photo.id));
+});
+async function persistScanState(interrupted = interruptedScan.value) {
+  await saveScanSession(activeSessionKey, photos.value, pairs.value, interrupted);
+}
+watch(pairs, () => {
+  if (busy.value || !activeSessionKey) return;
+  clearTimeout(sessionSaveTimer);
+  sessionSaveTimer = setTimeout(() => { void persistScanState(); }, 150);
+}, { deep: true });
 const unresolvedCount = computed(() => {
   const used = new Set(
     pairs.value.flatMap((pair) => [pair.frontId, pair.backId]),
@@ -95,11 +129,16 @@ function errorMessage(error: unknown) {
     : "操作未完成，请检查文件夹后重试。";
 }
 function releasePhotos() {
+  clearTimeout(sessionSaveTimer);
+  void persistScanState();
+  activeSessionKey = undefined;
+  interruptedScan.value = false;
   stopTextReferences();
   for (const photo of photos.value)
     if (photo.thumbnailUrl) URL.revokeObjectURL(photo.thumbnailUrl);
   photos.value = [];
   pairs.value = [];
+  photoPage.value = pairPage.value = 0;
 }
 async function thumbnail(file: File) {
   try {
@@ -122,16 +161,52 @@ async function makePhoto(
   file: File,
   handle?: FileSystemFileHandle,
 ): Promise<Photo> {
-  return {
-    id: crypto.randomUUID(),
+  const [thumbnailUrl, contentHash] = await Promise.all([thumbnail(file), fingerprintFile(file)]);
+  const photo: Photo = {
+    id: contentHash ? await digest(`${contentHash}\0${file.name}`) : crypto.randomUUID(),
     name: file.name,
     file,
     handle,
-    thumbnailUrl: await thumbnail(file),
+    thumbnailUrl,
+    contentHash,
     scanState: "pending",
     certIds: [],
     qrTexts: [],
   };
+  const [standard, deep] = await Promise.all([
+    scanCache.read(contentHash, file.size, 'standard'), scanCache.read(contentHash, file.size, 'deep'),
+  ]);
+  const evidence = deep ? mergeScanEvidence(standard ?? { certIds: [], qrTexts: [] }, deep) : standard;
+  if (evidence) applyScanResult(photo, evidence);
+  return photo;
+}
+function applyScanResult(photo: Photo, result: Awaited<ReturnType<typeof scanPhoto>>) {
+  photo.certIds = result.certIds; photo.qrTexts = result.qrTexts; photo.error = result.error;
+  photo.scanState = result.certIds.length > 1 ? 'ambiguous' : result.error ? 'error' : result.certIds.length === 1 ? 'found' : 'none';
+  if (!result.certIds.length && result.qrTexts.length) {
+    photo.scanState = 'error'; photo.error = '二维码不是可识别的 NXR 证书链接';
+  }
+}
+async function restoreLoadedScan() {
+  activeSessionKey = await sessionKey(photos.value);
+  const saved = await restoreScanSession(activeSessionKey, photos.value, allNames.value);
+  pairs.value = saved.pairs;
+  interruptedScan.value = saved.interrupted;
+}
+async function loadPhotosConcurrently<T>(items: T[], loader: (item: T) => Promise<Photo>) {
+  const created: Photo[] = [];
+  try {
+    return await mapConcurrent(items, getProcessingConcurrency('thumbnail'), async item => {
+      const photo = await loader(item);
+      created.push(photo);
+      progressText.value = `读取图片 ${created.length} / ${items.length}`;
+      return photo;
+    });
+  } catch (error) {
+    // The loader drains active work first, so no late thumbnail can escape cleanup.
+    for (const photo of created) if (photo.thumbnailUrl) URL.revokeObjectURL(photo.thumbnailUrl);
+    throw error;
+  }
 }
 async function refreshJournals() {
   if (!directory.value) {
@@ -141,6 +216,7 @@ async function refreshJournals() {
   journals.value = await listJournals(directory.value);
 }
 async function loadDirectory(handle: FileSystemDirectoryHandle) {
+  await persistScanState();
   releasePhotos();
   allNames.value = [];
   const handles: FileSystemFileHandle[] = [];
@@ -154,10 +230,11 @@ async function loadDirectory(handle: FileSystemDirectoryHandle) {
     if (isSupportedImage(name)) handles.push(child);
   }
   handles.sort((a, b) => naturalCompare(a.name, b.name));
-  for (const child of handles) {
+  photos.value = await loadPhotosConcurrently(handles, async child => {
     const file = await child.getFile();
-    photos.value.push(await makePhoto(file, child));
-  }
+    return makePhoto(file, child);
+  });
+  await restoreLoadedScan();
   await refreshJournals();
   if (subfolders)
     showNotice(
@@ -215,6 +292,7 @@ async function selectPreview(event: Event) {
   if (!files.length || busy.value) return;
   busy.value = "读取图片";
   try {
+    await persistScanState();
     releasePhotos();
     directory.value = null;
     writable.value = false;
@@ -226,11 +304,9 @@ async function selectPreview(event: Event) {
         file.webkitRelativePath.split("/").length === 2,
     );
     allNames.value = topLevel.map((file) => file.name);
-    for (const file of topLevel
-      .filter((file) => isSupportedImage(file.name))
-      .sort((a, b) => naturalCompare(a.name, b.name))) {
-      photos.value.push(await makePhoto(file));
-    }
+    const ordered = topLevel.filter(file => isSupportedImage(file.name)).sort((a, b) => naturalCompare(a.name, b.name));
+    photos.value = await loadPhotosConcurrently(ordered, file => makePhoto(file));
+    await restoreLoadedScan();
     showNotice(
       "当前为只读预览。直接改名需要在电脑端 Chrome / Edge 中选择并授权文件夹。",
     );
@@ -250,6 +326,9 @@ async function startScan() {
   const selections = new Map(pairs.value.map((pair) => [pair.id, pair.selected]));
   const targets = photos.value.filter((photo) => !manualPhotos.has(photo.id));
   if (!targets.length) return;
+  const useCache = !hasScan.value || continueScan.value;
+  interruptedScan.value = true;
+  void persistScanState(true);
   busy.value = "识别二维码";
   notice.value = null;
   pairs.value = manualPairs;
@@ -272,9 +351,15 @@ async function startScan() {
     const previous = { scanState: photo.scanState, certIds: photo.certIds,
       qrTexts: photo.qrTexts, error: photo.error };
     photo.scanState = "scanning";
-    let result: Awaited<ReturnType<typeof scanPhoto>>;
+    let result: Awaited<ReturnType<typeof scanPhoto>> | undefined;
     try {
-      result = await scanPhoto(photo.file, mode);
+      if (!useCache && mode === 'standard') await scanCache.forget(photo.contentHash);
+      result = useCache ? await scanCache.read(photo.contentHash, photo.file.size, mode) : undefined;
+      if (run !== scanGeneration) { Object.assign(photo, previous); return false; }
+      if (!result) {
+        result = await scanPhoto(photo.file, mode);
+        if (run === scanGeneration) await scanCache.write(photo.contentHash, photo.file.size, mode, result);
+      }
     } catch (error) {
       result = { certIds: [], qrTexts: [], error: errorMessage(error) };
     }
@@ -283,24 +368,18 @@ async function startScan() {
       return false;
     }
     if (mode === "deep") result = mergeScanEvidence(previous, result);
-    photo.certIds = result.certIds;
-    photo.qrTexts = result.qrTexts;
-    photo.error = result.error;
-    photo.scanState = result.certIds.length > 1 ? "ambiguous"
-      : result.error ? "error" : result.certIds.length === 1 ? "found" : "none";
-    if (!result.certIds.length && result.qrTexts.length) {
-      photo.scanState = "error";
-      photo.error = "二维码不是可识别的 NXR 证书链接";
-    }
+    applyScanResult(photo, result);
     return true;
   };
   try {
     let nextIndex = 0;
     let completed = 0;
+    const scanStartedAt = performance.now();
     const active = new Map<number, string>();
     const updateProgress = () => {
-      const names = [...active].sort(([a], [b]) => a - b).map(([, name]) => name);
-      progressText.value = `${completed} / ${targets.length}${names.length ? ` · ${names.join("、")}` : ""}`;
+      const elapsedMinutes = (performance.now() - scanStartedAt) / 60_000;
+      const rate = completed > 0 && elapsedMinutes > 0 ? ` · ${Math.round(completed / elapsedMinutes)} 张/分钟` : '';
+      progressText.value = `${completed} / ${targets.length}${rate}`;
       progress.value = Math.round((completed / targets.length) * 100);
     };
     // Each lane takes the next photo as soon as it is free. Completion order
@@ -320,16 +399,19 @@ async function startScan() {
     updatePairs(manualPairs, new Set(targets.map((photo) => photo.id)));
     // Finish the ordinary pass first so known A/B pairs do not need a retry.
     // Scan remaining files from the end: a recovered B also resolves its A.
-    const retries = deepScanCandidates(photos.value, pairs.value).reverse();
+    const retryTotal = deepScanCandidates(photos.value, pairs.value).length;
+    const attempted = new Set<string>();
     let retryCount = 0;
-    for (let index = 0; index < retries.length && run === scanGeneration; index++) {
-      const photo = retries[index]!;
-      if (!deepScanCandidates(photos.value, pairs.value).some((item) => item.id === photo.id)) continue;
-      progressText.value = `自动深度补扫 · ${index + 1} / ${retries.length} · ${photo.name}`;
-      progress.value = Math.round((index / retries.length) * 100);
-      retryCount++;
-      if (!await scanOne(photo, "deep")) break;
-      updatePairs(pairs.value, new Set([photo.id]));
+    while (run === scanGeneration) {
+      const batch = nextDeepScanBatch(photos.value, pairs.value, attempted, getScanConcurrency());
+      if (!batch.length) break;
+      for (const photo of batch) attempted.add(photo.id);
+      progressText.value = `自动深度补扫 · ${attempted.size} / ${retryTotal}`;
+      progress.value = Math.round((attempted.size / retryTotal) * 100);
+      retryCount += batch.length;
+      await Promise.all(batch.map(photo => scanOne(photo, 'deep')));
+      // Merge the wave in natural file order, never in worker completion order.
+      if (run === scanGeneration) updatePairs(pairs.value, new Set(batch.map(photo => photo.id)));
     }
     progress.value = 100;
     const count = pairs.value.length;
@@ -340,6 +422,9 @@ async function startScan() {
     showNotice(errorMessage(error), "error");
   } finally {
     cancelScan();
+    interruptedScan.value = run !== scanGeneration;
+    await persistScanState();
+    void scanCache.prune();
     busy.value = "";
     progressText.value = "";
   }
@@ -458,21 +543,24 @@ async function confirmDialog() {
         });
         resultText = "原文件名已恢复，原图内容与处理前一致。";
       } else {
-        const requests: RenameRequest[] = [];
-        for (const item of planned.value) {
+        let hashed = 0;
+        const requests: RenameRequest[] = await mapConcurrent(planned.value, getWebpConcurrency(), async item => {
           if (controller.signal.aborted) throw new DOMException("已取消本次改名。", "AbortError");
-          requests.push({
+          const expectedHash = await hashFile(item.source.file);
+          if (controller.signal.aborted) throw new DOMException("已取消本次改名。", "AbortError");
+          progressText.value = `正在核对原图 ${++hashed} / ${planned.value.length}`;
+          return {
             sourceName: item.source.name,
             targetName: item.targetName,
             expectedSize: item.source.file.size,
             expectedLastModified: item.source.file.lastModified,
-            expectedHash: await hashFile(item.source.file),
-            outputFormat: "webp-lossless",
-          });
-        }
+            expectedHash,
+            outputFormat: outputQuality.value === "lossless" ? "webp-lossless" as const : "webp-quality" as const,
+          };
+        });
         await renameFiles(handle, requests, (text) => {
           progressText.value = text;
-        }, convertToLosslessWebp, {
+        }, outputQuality.value === "lossless" ? convertToLosslessWebp : convertToWebp, {
           signal: controller.signal,
           conversionConcurrency: getWebpConcurrency(),
         });
@@ -496,6 +584,7 @@ async function confirmDialog() {
   } finally {
     controller.abort();
     conversionController = null;
+    disposeWebpWorkers();
     stoppingConversion.value = false;
     busy.value = "";
     progressText.value = "";
@@ -531,8 +620,10 @@ function beforeUnload(event: BeforeUnloadEvent) {
 window.addEventListener("beforeunload", beforeUnload);
 onBeforeUnmount(() => {
   conversionController?.abort();
+  disposeWebpWorkers();
   stopScan();
   releasePhotos();
+  window.nxrDesktop?.setProcessingBusy(false);
   window.removeEventListener("beforeunload", beforeUnload);
 });
 </script>
@@ -588,6 +679,12 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div class="toolbar-actions">
+          <label class="output-quality">WebP 画质
+            <select v-model="outputQuality" :disabled="!!busy" aria-label="WebP 画质">
+              <option value="quality">高清 · 更快</option>
+              <option value="lossless">无损 · 较慢</option>
+            </select>
+          </label>
           <button
             v-if="directory && !writable"
             class="button secondary"
@@ -625,7 +722,7 @@ onBeforeUnmount(() => {
             @click="startScan()"
           >
             <span class="scan-icon" aria-hidden="true"></span
-            >{{ hasScan ? "重新识别" : "开始识别" }}
+            >{{ continueScan ? "继续识别" : hasScan ? "重新识别" : "开始识别" }}
           </button>
         </div>
         <input
@@ -645,7 +742,7 @@ onBeforeUnmount(() => {
           :style="{ width: busy === '识别二维码' ? `${progress}%` : '100%' }"
         ></div>
         <span class="spinner"></span><strong>{{ busy }}</strong
-        ><span>{{ progressText }}</span>
+        ><span>{{ progressText }}<template v-if="busy === '识别二维码' || busy === '正在改名'"> · 实际并行 <b data-testid="active-worker-count">{{ activeWorkers }}</b> 路</template></span>
         <button v-if="busy === '正在改名'" class="text-button" :disabled="stoppingConversion" @click="stopConversion">{{ stoppingConversion ? '正在停止…' : '停止处理' }}</button>
       </div>
 
@@ -664,7 +761,7 @@ onBeforeUnmount(() => {
           </div>
           <div v-else class="photo-list">
             <div
-              v-for="(photo, index) in photos"
+              v-for="(photo, index) in visiblePhotos"
               :key="photo.id"
               class="photo-row"
               data-testid="photo-row"
@@ -677,7 +774,7 @@ onBeforeUnmount(() => {
               @keydown.space.prevent="!busy && photoReview?.openPhoto(photo.id)"
             >
               <span class="photo-index">{{
-                String(index + 1).padStart(2, "0")
+                String(photoPage * PAGE_SIZE + index + 1).padStart(2, "0")
               }}</span>
               <img
                 v-if="photo.thumbnailUrl"
@@ -702,6 +799,11 @@ onBeforeUnmount(() => {
                 >✓</span
               >
             </div>
+          </div>
+          <div v-if="photos.length > PAGE_SIZE" class="batch-pagination">
+            <button class="text-button" :disabled="photoPage === 0" @click="photoPage--">上一页</button>
+            <span>{{ photoPage + 1 }} / {{ Math.ceil(photos.length / PAGE_SIZE) }}</span>
+            <button class="text-button" :disabled="(photoPage + 1) * PAGE_SIZE >= photos.length" @click="photoPage++">下一页</button>
           </div>
           <div class="photo-panel-footer">
             <span class="tiny-square"></span>仅处理当前文件夹，不包含子文件夹
@@ -758,9 +860,14 @@ onBeforeUnmount(() => {
               ><code>5703018202_B.webp</code>
             </div>
           </div>
-          <div v-else class="pairs-list">
+          <div v-if="pairs.length > PAGE_SIZE" class="batch-pagination">
+            <button class="text-button" :disabled="pairPage === 0" @click="pairPage--">上一页</button>
+            <span>{{ pairPage + 1 }} / {{ Math.ceil(pairs.length / PAGE_SIZE) }}</span>
+            <button class="text-button" :disabled="(pairPage + 1) * PAGE_SIZE >= pairs.length" @click="pairPage++">下一页</button>
+          </div>
+          <div v-if="pairs.length" class="pairs-list">
             <article
-              v-for="(pair, index) in pairs"
+              v-for="(pair, index) in visiblePairs"
               :key="pair.id"
               class="pair-card"
               :class="{
@@ -775,9 +882,9 @@ onBeforeUnmount(() => {
                     v-model="pair.selected"
                     type="checkbox"
                     :disabled="!!busy"
-                    :aria-label="`选择第 ${index + 1} 组`"
+                    :aria-label="`选择第 ${pairPage * PAGE_SIZE + index + 1} 组`"
                   /><span
-                    >第 {{ String(index + 1).padStart(2, "0") }} 组</span
+                    >第 {{ String(pairPage * PAGE_SIZE + index + 1).padStart(2, "0") }} 组</span
                   ></label
                 ><span
                   class="pill"
@@ -788,7 +895,7 @@ onBeforeUnmount(() => {
                 ><button
                   class="remove-pair"
                   :disabled="!!busy"
-                  :aria-label="`跳过第 ${index + 1} 组`"
+                  :aria-label="`跳过第 ${pairPage * PAGE_SIZE + index + 1} 组`"
                   @click="pairs = pairs.filter((item) => item.id !== pair.id)"
                 >
                   ×
@@ -948,7 +1055,7 @@ onBeforeUnmount(() => {
         }}
       </h2>
       <p v-if="dialogKind === 'rename'">
-        将生成原始尺寸的无损 WebP，已有 WebP 保留原内容。原图备份和恢复记录会保存在同目录的隐藏文件夹与文件中；全部校验通过后移除旧名称。请保留备份以便恢复，已有同名文件不会被覆盖。
+        将生成原始尺寸的{{ outputQuality === "lossless" ? "无损" : "高清" }} WebP，已有 WebP 保留原内容。原图备份和恢复记录会保存在同目录的隐藏文件夹与文件中；全部校验通过后移除旧名称。请保留备份以便恢复，已有同名文件不会被覆盖。
       </p>
       <p v-else-if="dialogKind === 'restore'">
         根据记录恢复原文件和原名称。若原图备份、图片内容已改变或原名称被占用，将停止相应操作以保留文件。

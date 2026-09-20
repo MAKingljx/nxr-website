@@ -28,6 +28,22 @@ try {
   { secure: true, picker: 'function', node: 'undefined', process: 'undefined' });
   const prefs = await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.getLastWebPreferences());
   assert.equal(prefs.sandbox, true); assert.equal(prefs.contextIsolation, true); assert.equal(prefs.nodeIntegration, false);
+  assert.equal(await desktop.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.getBackgroundThrottling()), false);
+  const device = await page.evaluate(() => window.nxrDesktop.capabilities);
+  assert.ok(device.hardwareConcurrency > 0 && device.deviceMemory > 0);
+  const performanceMetrics = await page.evaluate(() => window.nxrDesktop.getPerformanceMetrics());
+  assert.deepEqual(Object.keys(performanceMetrics).sort(), ['measuredAtMs', 'privateBytes', 'workingSetBytes']);
+  assert.ok(Object.values(performanceMetrics).every(value => Number.isFinite(value) && value >= 0));
+  assert.ok(performanceMetrics.workingSetBytes > 0);
+  await desktop.evaluate(({ powerSaveBlocker }) => {
+    const start = powerSaveBlocker.start.bind(powerSaveBlocker);
+    globalThis.nxrTestBlockerIds = [];
+    powerSaveBlocker.start = type => { const id = start(type); globalThis.nxrTestBlockerIds.push(id); return id; };
+  });
+  await page.evaluate(() => window.nxrDesktop.setProcessingBusy(true));
+  await expect.poll(() => desktop.evaluate(({ powerSaveBlocker }) => globalThis.nxrTestBlockerIds.some(id => powerSaveBlocker.isStarted(id)))).toBe(true);
+  await page.evaluate(() => window.nxrDesktop.setProcessingBusy(false));
+  await expect.poll(() => desktop.evaluate(({ powerSaveBlocker }) => globalThis.nxrTestBlockerIds.some(id => powerSaveBlocker.isStarted(id)))).toBe(false);
   if (nativeDirectory) {
     // Interactive native picker acceptance: NXR_TEST_NATIVE_DIRECTORY must be an
     // isolated copy. No file-system or permission method is replaced in this mode.
@@ -71,7 +87,7 @@ try {
   assert.equal(page.isClosed(), false);
   await desktop.evaluate(({ dialog }) => { dialog.showMessageBoxSync = () => 1; });
   const report = { platform: process.platform, arch: process.arch, packaged: !!executablePath, nativePicker: !!nativeDirectory,
-    photos: nativeDirectory ? 12 : 2, recognizedPairs: nativeDirectory ? 6 : 1, webpOutputs: nativeDirectory ? 12 : 2,
+    device, aggregateMemoryMetrics: true, backgroundThrottling: false, sleepProtection: true, photos: nativeDirectory ? 12 : 2, recognizedPairs: nativeDirectory ? 6 : 1, webpOutputs: nativeDirectory ? 12 : 2,
     restoredBytes: true, offline: true, sandbox: true, closeGuard: true };
   await mkdir(path.join(root, 'test-results'), { recursive: true });
   await page.screenshot({ path: path.join(root, 'test-results', 'desktop.png'), fullPage: true });

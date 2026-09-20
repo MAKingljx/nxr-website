@@ -8,6 +8,8 @@ import webpEncoderWasmUrl from '@jsquash/webp/codec/enc/webp_enc.wasm?url'
 interface ConversionRequest {
   id: number
   file: File
+  mode: 'quality' | 'lossless'
+  quality?: number
 }
 
 interface ConversionSuccess {
@@ -68,26 +70,32 @@ let encoderModulePromise: ReturnType<typeof initializeEncoder> | null = null
 let decoderModulePromise: ReturnType<typeof initializeDecoder> | null = null
 
 workerScope.onmessage = async (event) => {
-  const { id, file } = event.data
+  const { id, file, mode, quality } = event.data
   try {
-    const buffer = await convert(file)
+    const buffer = await convert(file, mode, quality)
     workerScope.postMessage({ id, ok: true, buffer }, [buffer])
   } catch (cause) {
     workerScope.postMessage({
       id,
       ok: false,
-      error: chineseMessage(cause, '无法在浏览器本地生成无损 WebP。'),
+      error: chineseMessage(cause, '无法在本机生成 WebP。'),
     })
   }
 }
 
-async function convert(file: File): Promise<ArrayBuffer> {
+async function convert(
+  file: File,
+  mode: 'quality' | 'lossless',
+  requestedQuality?: number,
+): Promise<ArrayBuffer> {
   if (!(file instanceof Blob) || file.size <= 0) {
     throw new Error('图片文件为空。')
   }
   if (file.size > MAX_FILE_BYTES) {
-    throw new Error('原图超过 24 MB 的本地无损转换上限。')
+    throw new Error('原图超过 24 MB 的本地转换上限。')
   }
+  if (mode !== 'quality' && mode !== 'lossless') throw new Error('WebP 转换模式无效。')
+  const quality = mode === 'quality' ? requireQuality(requestedQuality) : 1
 
   const sourceBuffer = await file.arrayBuffer()
   const sourceBytes = new Uint8Array(sourceBuffer)
@@ -99,15 +107,10 @@ async function convert(file: File): Promise<ArrayBuffer> {
       throw new Error('现有 WebP 文件结构无效，无法安全保留。')
     }
     validateDimensions(sourceWebp.width, sourceWebp.height)
-    const decoder = await decoderCodec()
-    const decoded = decoder.decode(sourceBuffer)
-    if (!decoded) throw new Error('现有 WebP 文件已损坏，无法安全保留。')
-    if (decoded.width !== sourceWebp.width || decoded.height !== sourceWebp.height) {
-      throw new Error('现有 WebP 的尺寸信息不一致，无法安全保留。')
-    }
     if (sourceBuffer.byteLength > MAX_OUTPUT_BYTES) {
       throw new Error('现有 WebP 超过 24 MB 的系统导入上限。')
     }
+    await verifyNativeDecode(sourceBuffer, sourceWebp.width, sourceWebp.height, '现有 WebP 文件已损坏，无法安全保留。')
     return sourceBuffer
   }
 
@@ -122,13 +125,18 @@ async function convert(file: File): Promise<ArrayBuffer> {
     const context = canvas.getContext('2d', {
       alpha: true,
       colorSpace: 'srgb',
-      willReadFrequently: true,
+      willReadFrequently: mode === 'lossless',
     })
-    if (!context) throw new Error('当前浏览器不支持离屏画布，无法进行无损转换。')
+    if (!context) throw new Error('当前环境不支持离屏画布，无法转换。')
 
-    // Use the browser's normal premultiplied-alpha rendering path. This is the
-    // same path used for previews and stabilizes the exact displayed RGBA bytes.
     context.drawImage(bitmap, 0, 0)
+    if (mode === 'quality') {
+      const output = await encodeQuality(canvas, context, bitmap.width, bitmap.height, quality)
+      await verifyEncodedWebp(output, bitmap.width, bitmap.height)
+      return output
+    }
+
+    // The compatibility path keeps the browser's displayed RGBA bytes exact.
     const sourcePixels = context.getImageData(0, 0, bitmap.width, bitmap.height)
     bitmap.close()
     canvas.width = 1
@@ -185,6 +193,77 @@ async function convert(file: File): Promise<ArrayBuffer> {
       canvas.width = 1
       canvas.height = 1
     }
+  }
+}
+
+function requireQuality(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0 || value > 1) {
+    throw new Error('WebP 质量必须大于 0 且不超过 1。')
+  }
+  return value
+}
+
+async function encodeQuality(
+  canvas: OffscreenCanvas,
+  context: OffscreenCanvasRenderingContext2D,
+  width: number,
+  height: number,
+  quality: number,
+): Promise<ArrayBuffer> {
+  if (typeof canvas.convertToBlob === 'function') {
+    try {
+      const blob = await canvas.convertToBlob({ type: 'image/webp', quality })
+      if (blob.size > 0 && blob.type.toLowerCase() === 'image/webp') {
+        return blob.arrayBuffer()
+      }
+      // Some implementations return another format instead of reporting that
+      // WebP encoding is unsupported. Treat that result as unsupported.
+    } catch (cause) {
+      if (!isUnsupportedNativeWebpError(cause)) throw cause
+    }
+  }
+
+  const pixels = context.getImageData(0, 0, width, height)
+  const encoder = await encoderCodec()
+  const encoded = encoder.encode(
+    pixels.data,
+    width,
+    height,
+    { ...LOSSLESS_OPTIONS, quality: quality * 100, lossless: 0, exact: 0 },
+  )
+  if (!encoded) throw new Error('libwebp 无法编码这张图片。')
+  return exactArrayBuffer(encoded)
+}
+
+function isUnsupportedNativeWebpError(cause: unknown): boolean {
+  return cause instanceof DOMException && cause.name === 'NotSupportedError'
+}
+
+async function verifyEncodedWebp(output: ArrayBuffer, width: number, height: number): Promise<void> {
+  if (output.byteLength <= 0 || output.byteLength > MAX_OUTPUT_BYTES) {
+    throw new Error('WebP 输出超过 24 MB 的系统导入上限，原图已保留。')
+  }
+  const info = inspectWebp(new Uint8Array(output))
+  if (!info.isWebp || !info.valid || info.animated || info.width !== width || info.height !== height) {
+    throw new Error('转换结果不是有效的原尺寸静态 WebP。')
+  }
+  await verifyNativeDecode(output, width, height, 'WebP 输出无法回读，原图已保留。')
+}
+
+async function verifyNativeDecode(
+  buffer: ArrayBuffer,
+  width: number,
+  height: number,
+  invalidMessage: string,
+): Promise<void> {
+  let decoded: ImageBitmap | null = null
+  try {
+    decoded = await createImageBitmap(new Blob([buffer], { type: 'image/webp' }))
+    if (decoded.width !== width || decoded.height !== height) throw new Error(invalidMessage)
+  } catch {
+    throw new Error(invalidMessage)
+  } finally {
+    decoded?.close()
   }
 }
 

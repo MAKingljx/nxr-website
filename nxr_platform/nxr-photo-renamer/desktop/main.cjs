@@ -1,4 +1,5 @@
-const { app, BrowserWindow, dialog, Menu, protocol, session } = require('electron');
+const { app, BrowserWindow, dialog, Menu, protocol, session, ipcMain, powerSaveBlocker } = require('electron');
+const os = require('node:os');
 const { readFile } = require('node:fs/promises');
 const path = require('node:path');
 const { APP_URL, CSP, CONTENT_TYPES, isAppUrl, assetPath } = require('./policy.cjs');
@@ -27,6 +28,19 @@ if (!app.requestSingleInstanceLock()) {
         message: '这个位置受系统保护，请选择存放照片的子文件夹。',
         buttons: ['重新选择', '取消'], defaultId: 0, cancelId: 1 });
       callback(response === 0 ? 'tryAgain' : 'deny');
+    });
+    ipcMain.handle('nxr:performance-metrics', event => {
+      const frame = event.senderFrame;
+      if (!frame || frame !== event.sender.mainFrame || !isAppUrl(frame.url)) {
+        throw new Error('Performance metrics are unavailable for this frame.');
+      }
+      const memory = app.getAppMetrics().reduce((total, metric) => ({
+        workingSetBytes: total.workingSetBytes
+          + Math.max(0, Number(metric.memory?.workingSetSize) || 0) * 1024,
+        privateBytes: total.privateBytes
+          + Math.max(0, Number(metric.memory?.privateBytes) || 0) * 1024,
+      }), { workingSetBytes: 0, privateBytes: 0 });
+      return { ...memory, measuredAtMs: Date.now() };
     });
     await protocol.handle('nxr', async request => {
       const relative = assetPath(request.url);
@@ -65,10 +79,29 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 async function createWindow() {
+  const device = { hardwareConcurrency: os.availableParallelism?.() || os.cpus().length, deviceMemory: os.totalmem() / 1024 ** 3 };
+  let sleepBlocker;
+  const releaseSleepBlocker = () => {
+    if (sleepBlocker !== undefined && powerSaveBlocker.isStarted(sleepBlocker)) powerSaveBlocker.stop(sleepBlocker);
+    sleepBlocker = undefined;
+  };
   const win = new BrowserWindow({ width: 1280, height: 860, minWidth: 900, minHeight: 640,
     show: false, backgroundColor: '#f7f8fa', title: 'NXR 卡片图片命名',
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false,
-      webSecurity: true, spellcheck: false, devTools: !app.isPackaged },
+      webSecurity: true, spellcheck: false, devTools: !app.isPackaged,
+      backgroundThrottling: false, preload: path.join(__dirname, 'preload.cjs'),
+      additionalArguments: [`--nxr-cpu=${device.hardwareConcurrency}`, `--nxr-memory=${device.deviceMemory}`] },
+  });
+  const processingChanged = (event, active) => {
+    if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame || !isAppUrl(event.senderFrame.url) || typeof active !== 'boolean') return;
+    if (active && sleepBlocker === undefined) sleepBlocker = powerSaveBlocker.start('prevent-app-suspension');
+    else if (!active) releaseSleepBlocker();
+  };
+  ipcMain.on('nxr:processing', processingChanged);
+  win.on('closed', () => { ipcMain.removeListener('nxr:processing', processingChanged); releaseSleepBlocker(); });
+  win.webContents.on('render-process-gone', releaseSleepBlocker);
+  win.webContents.on('did-start-navigation', (_event, _url, isInPlace, isMainFrame) => {
+    if (isMainFrame && !isInPlace) releaseSleepBlocker();
   });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (event, url) => { if (!isAppUrl(url)) event.preventDefault(); });
@@ -84,4 +117,5 @@ async function createWindow() {
   await win.loadURL(APP_URL);
 }
 
+app.on('before-quit', () => ipcMain.removeHandler('nxr:performance-metrics'));
 app.on('window-all-closed', () => app.quit());

@@ -1,3 +1,10 @@
+import {
+  createAdaptiveGovernor,
+  estimateTaskFootprint,
+  getProcessingConcurrency,
+  getScanSearchCeiling,
+  type AdaptiveConcurrencyGovernor,
+} from './performance-policy'
 import { SCAN_LIMITS, type ScanMode } from './scan-policy'
 
 export interface ScanResult {
@@ -38,16 +45,21 @@ const workerSlots: WorkerSlot[] = []
 let nextId = 1
 let poolGeneration = 0
 let pumping = false
+let governor: AdaptiveConcurrencyGovernor | undefined
 
-/** Keep scanning conservative on low-resource devices and use at most two workers elsewhere. */
-export function getScanConcurrency(
-  capabilities: ScanDeviceCapabilities = currentDeviceCapabilities(),
-): 1 | 2 {
-  const cores = positiveCapability(capabilities.hardwareConcurrency)
-  const memory = positiveCapability(capabilities.deviceMemory)
-  if (cores !== undefined && cores < 4) return 1
-  if (memory !== undefined && memory < 4) return 1
-  return 2
+/** Maximum QR search range; the live pool starts at the normal static budget. */
+export function getScanConcurrency(capabilities?: ScanDeviceCapabilities): number {
+  return getScanSearchCeiling(capabilities)
+}
+
+/** Current active-task limit after live resource and throughput observations. */
+export function getActualScanConcurrency(): number {
+  return getGovernor().getConcurrency()
+}
+
+/** Number of scan workers currently executing a task; queued work is excluded. */
+export function getActiveScanCount(): number {
+  return workerSlots.reduce((count, slot) => count + (slot.task ? 1 : 0), 0)
 }
 
 export function scanPhoto(file: File, mode: ScanMode = 'standard'): Promise<ScanResult> {
@@ -70,15 +82,22 @@ export function cancelScan(): void {
   const error = new DOMException('二维码识别已取消。', 'AbortError')
 
   const queued = queuedScans.splice(0)
-  for (const task of queued) settleTask(task, { ok: false, error }, false)
+  for (const task of queued) {
+    governor?.taskCancelled(task.id)
+    settleTask(task, { ok: false, error }, false)
+  }
 
   const slots = workerSlots.splice(0)
   for (const slot of slots) {
     const task = slot.task
     slot.task = null
     terminateWorker(slot.worker)
-    if (task) settleTask(task, { ok: false, error }, false)
+    if (task) {
+      governor?.taskCancelled(task.id)
+      settleTask(task, { ok: false, error }, false)
+    }
   }
+  governor = undefined
 }
 
 function pumpQueue(generation: number): void {
@@ -86,11 +105,15 @@ function pumpQueue(generation: number): void {
   pumping = true
 
   try {
-    const concurrency = getScanConcurrency()
+    const adaptive = getGovernor()
+    void adaptive.refreshRuntimeMetrics()
+    trimIdleSlots(adaptive.getConcurrency())
     while (generation === poolGeneration && queuedScans.length > 0) {
+      const concurrency = adaptive.getConcurrency()
+      const active = workerSlots.reduce((count, slot) => count + (slot.task ? 1 : 0), 0)
+      if (active >= concurrency) break
       let slot = workerSlots.find(candidate => candidate.generation === generation && !candidate.task)
       if (!slot) {
-        if (workerSlots.length >= concurrency) break
         try {
           slot = createWorkerSlot(generation)
           workerSlots.push(slot)
@@ -126,6 +149,7 @@ function createWorkerSlot(generation: number): WorkerSlot {
     if (!task || !response || response.id !== task.id) return
 
     slot.task = null
+    governor?.taskFinished(task.id)
     settleTask(task, {
       ok: true,
       result: {
@@ -140,6 +164,7 @@ function createWorkerSlot(generation: number): WorkerSlot {
     const task = slot.task
     recycleSlot(slot)
     if (task) {
+      governor?.taskCancelled(task.id)
       settleTask(task, {
         ok: false,
         error: new Error('本地二维码识别程序意外停止。'),
@@ -153,9 +178,11 @@ function startTask(slot: WorkerSlot, task: ScanTask): void {
   task.state = 'running'
   task.slot = slot
   slot.task = task
+  getGovernor().taskStarted(task.id, estimateTaskFootprint('scan', task.file.size))
   task.timer = setTimeout(() => {
     if (task.state !== 'running' || slot.task !== task) return
     recycleSlot(slot)
+    governor?.taskFinished(task.id)
     settleTask(task, {
       ok: false,
       error: new Error(task.mode === 'deep'
@@ -168,6 +195,7 @@ function startTask(slot: WorkerSlot, task: ScanTask): void {
     slot.worker.postMessage({ id: task.id, file: task.file, mode: task.mode })
   } catch (cause) {
     recycleSlot(slot)
+    governor?.taskCancelled(task.id)
     settleTask(task, {
       ok: false,
       error: new Error(chineseMessage(cause, '无法启动本地二维码识别。')),
@@ -206,27 +234,36 @@ function recycleSlot(slot: WorkerSlot): void {
   terminateWorker(slot.worker)
 }
 
+function trimIdleSlots(concurrency: number): void {
+  const active = workerSlots.reduce((count, slot) => count + (slot.task ? 1 : 0), 0)
+  let idleAllowance = Math.max(0, concurrency - active)
+  for (let index = workerSlots.length - 1; index >= 0; index -= 1) {
+    const slot = workerSlots[index]
+    if (!slot || slot.task) continue
+    if (idleAllowance > 0) {
+      idleAllowance -= 1
+      continue
+    }
+    recycleSlot(slot)
+  }
+}
+
+function getGovernor(): AdaptiveConcurrencyGovernor {
+  const maximum = getScanConcurrency()
+  if (!governor || governor.maxConcurrency !== maximum) {
+    governor = createAdaptiveGovernor('scan', maximum, {
+      initialConcurrency: getProcessingConcurrency('scan'),
+    })
+  }
+  return governor
+}
+
 function terminateWorker(worker: Worker): void {
   try {
     worker.terminate()
   } catch {
     // Pool state must still be released when host cleanup fails.
   }
-}
-
-function currentDeviceCapabilities(): ScanDeviceCapabilities {
-  if (typeof navigator === 'undefined') return {}
-  const browserNavigator = navigator as Navigator & { deviceMemory?: number }
-  return {
-    hardwareConcurrency: browserNavigator.hardwareConcurrency,
-    deviceMemory: browserNavigator.deviceMemory,
-  }
-}
-
-function positiveCapability(value: number | undefined): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0
-    ? value
-    : undefined
 }
 
 function chineseMessage(cause: unknown, fallback: string): string {

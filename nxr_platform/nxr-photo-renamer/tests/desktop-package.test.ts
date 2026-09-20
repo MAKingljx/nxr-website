@@ -34,6 +34,7 @@ async function createProjectFixture(context: TestContext) {
   }))
   await writeFile(path.join(root, 'desktop', 'main.cjs'), 'require("./policy.cjs")\n')
   await writeFile(path.join(root, 'desktop', 'policy.cjs'), 'module.exports = {}\n')
+  await writeFile(path.join(root, 'desktop', 'preload.cjs'), 'void 0\n')
   await writeFile(path.join(root, 'dist', 'index.html'), '<main>local app</main>\n')
   await writeFile(path.join(root, 'dist', 'assets', 'main.js'), 'console.log("local")\n')
   await writeFile(path.join(root, '.PhoenixBrain'), 'private routing marker\n')
@@ -71,6 +72,7 @@ test('desktop staging contains only runtime metadata, host files and built asset
   assert.deepEqual(Object.keys(inventory.files).sort(), [
     'desktop/main.cjs',
     'desktop/policy.cjs',
+    'desktop/preload.cjs',
     'dist/assets/main.js',
     'dist/index.html',
     'package.json',

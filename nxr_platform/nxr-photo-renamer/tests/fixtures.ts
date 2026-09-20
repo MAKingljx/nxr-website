@@ -47,7 +47,7 @@ function pngChunk(type: string, data: Buffer): Buffer {
   return Buffer.concat([length, typeBytes, data, checksum])
 }
 
-function makeBlankPng(width = 96, height = 96): Buffer {
+function makeBlankPng(width = 96, height = 96, identity = ''): Buffer {
   const header = Buffer.alloc(13)
   header.writeUInt32BE(width, 0)
   header.writeUInt32BE(height, 4)
@@ -71,6 +71,7 @@ function makeBlankPng(width = 96, height = 96): Buffer {
   return Buffer.concat([
     Buffer.from('89504e470d0a1a0a', 'hex'),
     pngChunk('IHDR', header),
+    pngChunk('tEXt', Buffer.from(`fixture\0${identity}`, 'utf8')),
     pngChunk('IDAT', deflateSync(pixels)),
     pngChunk('IEND', Buffer.alloc(0)),
   ])
@@ -100,7 +101,7 @@ export async function qrPhoto(
 }
 
 export function blankPhoto(name: string): TestPhoto {
-  return photo(name, makeBlankPng())
+  return photo(name, makeBlankPng(96, 96, name))
 }
 
 /**

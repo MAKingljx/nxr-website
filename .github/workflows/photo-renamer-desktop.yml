@@ -2,6 +2,11 @@ name: Photo Renamer Desktop
 
 on:
   push:
+    branches: [java-version/java-platform, 'codex/photo-renamer-*']
+    paths:
+      - nxr_platform/nxr-photo-renamer/**
+      - .github/workflows/photo-renamer-desktop.yml
+  pull_request:
     branches: [java-version/java-platform]
     paths:
       - nxr_platform/nxr-photo-renamer/**

@@ -7,6 +7,12 @@ import {
 } from './lib/scan-regions'
 import { applyPixelTreatment } from './lib/qr-image-processing'
 import { SCAN_LIMITS, type ScanMode } from './lib/scan-policy'
+import {
+  createRegionPixelProvider,
+  type RegionGeometry,
+  type RegionPixelProvider,
+  type RenderedRegionPixels,
+} from './lib/region-pixel-provider'
 
 interface ScanRequest {
   id: number
@@ -69,30 +75,42 @@ async function scan(file: File, mode: ScanMode): Promise<Omit<ScanResponse, 'id'
     const regions = buildScanRegions(bitmap.width, bitmap.height, mode)
     let timedOut = false
     let verifyRegionsRemaining: number | null = null
-    for (const region of regions) {
-      if (texts.size >= MAX_CODES) break
-      if (performance.now() >= deadline) {
-        timedOut = true
-        break
-      }
-      const outcome = scanRegion(bitmap, region, texts, deadline)
-      const currentCertIds = certificateIds(texts)
-      if (currentCertIds.length > 1) break
-      if (outcome === 'timed-out') {
-        timedOut = true
-        break
-      }
-      if (currentCertIds.length === 1 && outcome === 'scanned') {
-        verifyRegionsRemaining = verifyRegionsRemaining ?? (mode === 'deep'
-          ? DEEP_VERIFY_REGIONS_AFTER_FIRST_CERT
-          : VERIFY_REGIONS_AFTER_FIRST_CERT)
-        // Low-resolution candidates help find soft codes, but do not replace
-        // the existing full-resolution conflict checks after the first match.
-        if (countsTowardConflictVerification(region)) {
-          verifyRegionsRemaining -= 1
-          if (verifyRegionsRemaining <= 0) break
+    let matchedLabel: ScanRegion | undefined
+    const pixelProvider = createRegionPixelProvider(region => renderRegion(bitmap, region))
+    try {
+      for (const region of regions) {
+        // After a label match, finish its color planes to check for conflicting
+        // codes, then continue the original full-image verification coverage.
+        if (region.kind === 'label' && certificateIds(texts).length === 1
+          && (!matchedLabel || region.sx !== matchedLabel.sx || region.sy !== matchedLabel.sy
+            || region.maxEdge !== matchedLabel.maxEdge)) continue
+        if (texts.size >= MAX_CODES) break
+        if (performance.now() >= deadline) {
+          timedOut = true
+          break
+        }
+        const outcome = scanRegion(region, pixelProvider, texts, deadline)
+        const currentCertIds = certificateIds(texts)
+        if (region.kind === 'label' && currentCertIds.length === 1) matchedLabel ??= region
+        if (currentCertIds.length > 1) break
+        if (outcome === 'timed-out') {
+          timedOut = true
+          break
+        }
+        if (currentCertIds.length === 1 && outcome === 'scanned') {
+          verifyRegionsRemaining = verifyRegionsRemaining ?? (mode === 'deep'
+            ? DEEP_VERIFY_REGIONS_AFTER_FIRST_CERT
+            : VERIFY_REGIONS_AFTER_FIRST_CERT)
+          // Low-resolution candidates help find soft codes, but do not replace
+          // the existing full-resolution conflict checks after the first match.
+          if (countsTowardConflictVerification(region)) {
+            verifyRegionsRemaining -= 1
+            if (verifyRegionsRemaining <= 0) break
+          }
         }
       }
+    } finally {
+      pixelProvider.release()
     }
 
     const qrTexts = [...texts]
@@ -111,35 +129,12 @@ async function scan(file: File, mode: ScanMode): Promise<Omit<ScanResponse, 'id'
 }
 
 function scanRegion(
-  bitmap: ImageBitmap,
   region: ScanRegion,
+  pixelProvider: RegionPixelProvider,
   texts: Set<string>,
   deadline: number,
 ): 'scanned' | 'skipped' | 'timed-out' {
-  const scale = Math.min(1, region.maxEdge / Math.max(region.sw, region.sh))
-  const sourceWidth = Math.max(1, Math.round(region.sw * scale))
-  const sourceHeight = Math.max(1, Math.round(region.sh * scale))
-  const rotated = region.rotation === 90 || region.rotation === 270
-  const canvas = new OffscreenCanvas(rotated ? sourceHeight : sourceWidth, rotated ? sourceWidth : sourceHeight)
-  const context = canvas.getContext('2d', { willReadFrequently: true })
-  if (!context) throw new Error('当前浏览器不支持离屏画布，无法识别二维码。')
-
-  context.save()
-  applyRotation(context, region.rotation, canvas.width, canvas.height)
-  context.drawImage(
-    bitmap,
-    region.sx,
-    region.sy,
-    region.sw,
-    region.sh,
-    0,
-    0,
-    sourceWidth,
-    sourceHeight,
-  )
-  context.restore()
-
-  const source = context.getImageData(0, 0, canvas.width, canvas.height)
+  const source = pixelProvider.pixelsFor(region)
   let pixels: Uint8ClampedArray = source.data
   if (region.treatment !== 'original') {
     const enhanced = applyPixelTreatment(source.data, source.width, source.height, region.treatment)
@@ -156,6 +151,45 @@ function scanRegion(
     maskCode(pixels, source.width, source.height, code)
   }
   return 'scanned'
+}
+
+function renderRegion(bitmap: ImageBitmap, region: RegionGeometry): RenderedRegionPixels {
+  const scale = Math.min(1, region.maxEdge / Math.max(region.sw, region.sh))
+  const sourceWidth = Math.max(1, Math.round(region.sw * scale))
+  const sourceHeight = Math.max(1, Math.round(region.sh * scale))
+  const rotated = region.rotation === 90 || region.rotation === 270
+  const canvas = new OffscreenCanvas(rotated ? sourceHeight : sourceWidth, rotated ? sourceWidth : sourceHeight)
+  let released = false
+  const release = () => {
+    if (released) return
+    released = true
+    canvas.width = 1
+    canvas.height = 1
+  }
+  try {
+    const context = canvas.getContext('2d', { willReadFrequently: true })
+    if (!context) throw new Error('当前浏览器不支持离屏画布，无法识别二维码。')
+    context.save()
+    applyRotation(context, region.rotation, canvas.width, canvas.height)
+    context.drawImage(
+      bitmap,
+      region.sx,
+      region.sy,
+      region.sw,
+      region.sh,
+      0,
+      0,
+      sourceWidth,
+      sourceHeight,
+    )
+    context.restore()
+
+    const source = context.getImageData(0, 0, canvas.width, canvas.height)
+    return { data: source.data, width: source.width, height: source.height, release }
+  } catch (cause) {
+    release()
+    throw cause
+  }
 }
 
 function applyRotation(

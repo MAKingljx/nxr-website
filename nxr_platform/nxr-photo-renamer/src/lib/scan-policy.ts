@@ -16,6 +16,22 @@ export function deepScanCandidates(photos: Photo[], pairs: Pair[]): Photo[] {
     && photo.scanState !== 'found' && photo.scanState !== 'ambiguous')
 }
 
+export function nextDeepScanBatch(photos: Photo[], pairs: Pair[], attempted: Set<string>, concurrency: number): Photo[] {
+  const positions = new Map(photos.map((photo, index) => [photo.id, index]))
+  const deferredFronts = new Set<string>()
+  const batch: Photo[] = []
+  for (const photo of deepScanCandidates(photos, pairs).reverse()) {
+    if (attempted.has(photo.id) || deferredFronts.has(photo.id)) continue
+    batch.push(photo)
+    // A recovered back will pair with the preceding photo. Defer that possible
+    // front until this wave finishes; retry it later if the back was not found.
+    const previous = photos[(positions.get(photo.id) ?? 0) - 1]
+    if (previous) deferredFronts.add(previous.id)
+    if (batch.length >= concurrency) break
+  }
+  return batch
+}
+
 export function mergeScanEvidence(previous: ScanResult, retry: ScanResult): ScanResult {
   const certIds = [...new Set([...previous.certIds, ...retry.certIds])]
   const qrTexts = [...new Set([...previous.qrTexts, ...retry.qrTexts])]

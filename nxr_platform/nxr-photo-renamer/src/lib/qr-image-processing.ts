@@ -18,7 +18,34 @@ export function applyPixelTreatment(
 ): Uint8ClampedArray | null {
   assertRgbaDimensions(source, width, height)
   if (treatment === 'local-threshold') return localThreshold(source, width, height)
+  if (['gold', 'gold-strong', 'blue-channel', 'red-channel', 'gray-range'].includes(treatment)) {
+    return stretchColorPlane(source, treatment)
+  }
   return stretchContrast(source, treatment === 'contrast-if-low')
+}
+
+function stretchColorPlane(source: Uint8ClampedArray, treatment: string): Uint8ClampedArray | null {
+  const values = new Float32Array(source.length / 4)
+  let low = 255, high = 0
+  for (let index = 0; index < values.length; index++) {
+    const offset = index * 4, red = source[offset]!, green = source[offset + 1]!, blue = source[offset + 2]!
+    // Gold foil keeps a red/blue difference even when glare destroys luminance.
+    // The stronger plane suppresses dark speckles inside metallic QR modules.
+    const value = treatment === 'gold' || treatment === 'gold-strong'
+      ? Math.min(255, Math.max(0, red - blue) * (treatment === 'gold-strong' ? 4 : 1))
+      : treatment === 'blue-channel' ? blue : treatment === 'red-channel' ? red
+        : 0.299 * red + 0.587 * green + 0.114 * blue
+    values[index] = value
+    low = Math.min(low, value); high = Math.max(high, value)
+  }
+  if (high - low < MIN_USABLE_SPAN) return null
+  const pixels = new Uint8ClampedArray(source.length)
+  for (let index = 0; index < values.length; index++) {
+    const value = (values[index]! - low) * 255 / (high - low)
+    pixels[index * 4] = pixels[index * 4 + 1] = pixels[index * 4 + 2] = value
+    pixels[index * 4 + 3] = 255
+  }
+  return pixels
 }
 
 function stretchContrast(source: Uint8ClampedArray, conditional: boolean): Uint8ClampedArray | null {

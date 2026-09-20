@@ -38,6 +38,7 @@ class MemoryFileHandle {
   ) {}
 
   async getFile(): Promise<File> {
+    await this.directory.delayReads.get(this.name)
     const entry = this.directory.files.get(this.name)
     if (!entry) throw new DOMException('missing', 'NotFoundError')
     return memoryFile(this.name, entry)
@@ -64,6 +65,7 @@ class MemoryFileHandle {
         throw new Error('unsupported test write')
       },
       close: async () => {
+        await this.directory.delayWrites.get(this.name)
         if (this.directory.failWrites.has(this.name)) {
           throw new Error(`injected write failure: ${this.name}`)
         }
@@ -73,6 +75,10 @@ class MemoryFileHandle {
           lastModified: this.directory.clock++,
           type: this.directory.files.get(this.name)?.type ?? 'application/octet-stream',
         })
+        this.directory.writeCounts.set(
+          this.name,
+          (this.directory.writeCounts.get(this.name) ?? 0) + 1,
+        )
       },
       abort: async () => {
         aborted = true
@@ -107,7 +113,14 @@ class MemoryDirectory {
   readonly files = new Map<string, MemoryEntry>()
   readonly directories = new Map<string, MemoryDirectory>()
   readonly failWrites = new Set<string>()
+  readonly delayReads = new Map<string, Promise<void>>()
+  readonly delayWrites = new Map<string, Promise<void>>()
   readonly failRemove = new Set<string>()
+  readonly lookupErrors = new Map<string, Error>()
+  readonly writeCounts = new Map<string, number>()
+  readonly fileHandleLookups: string[] = []
+  entryWalks = 0
+  entryYields = 0
   clock = 10_000
 
   constructor(readonly name = 'photos') {}
@@ -130,6 +143,9 @@ class MemoryDirectory {
   }
 
   async getFileHandle(name: string, options?: { create?: boolean }): Promise<FileSystemFileHandle> {
+    this.fileHandleLookups.push(name)
+    const lookupError = this.lookupErrors.get(name)
+    if (lookupError) throw lookupError
     if (this.directories.has(name)) throw new DOMException('directory exists', 'TypeMismatchError')
     if (!this.files.has(name)) {
       if (!options?.create) throw new DOMException('missing', 'NotFoundError')
@@ -169,10 +185,13 @@ class MemoryDirectory {
   }
 
   async *entries(): AsyncIterableIterator<[string, FileSystemHandle]> {
+    this.entryWalks++
     for (const name of [...this.files.keys()]) {
+      this.entryYields++
       yield [name, new MemoryFileHandle(name, this) as unknown as FileSystemHandle]
     }
     for (const [name, directory] of [...this.directories.entries()]) {
+      this.entryYields++
       yield [name, directory.handle()]
     }
   }
@@ -201,10 +220,11 @@ function conversionRequest(
   directory: MemoryDirectory,
   sourceName: string,
   targetName: string,
+  outputFormat: 'webp-lossless' | 'webp-quality' = 'webp-lossless',
 ) {
   return {
     ...request(directory, sourceName, targetName),
-    outputFormat: 'webp-lossless' as const,
+    outputFormat,
   }
 }
 
@@ -221,16 +241,33 @@ function parallelFixture() {
   return { directory, requests }
 }
 
+function largeDirectoryFixture() {
+  const directory = new MemoryDirectory().add('source.jpg', 'source bytes')
+  for (let index = 0; index < 255; index++) {
+    directory.add(`existing-${index}.jpg`, `existing ${index}`)
+  }
+  return directory
+}
+
 test('parallel encoding is bounded and every original survives until all outputs are verified', async () => {
   const { directory, requests } = parallelFixture()
   let active = 0, maximum = 0
+  let releaseFirstBatch!: () => void
+  const firstBatchReady = new Promise<void>(resolve => { releaseFirstBatch = resolve })
+  let firstBatchReleased = false
   const journal = await renameFiles(directory.handle(), requests, undefined, async file => {
     active++; maximum = Math.max(maximum, active)
     for (const item of requests) assert(directory.files.has(item.sourceName))
     const persisted = JSON.parse(directory.text(journalName(directory)))
     const entry = persisted.entries.find((item: { sourceName: string }) => item.sourceName === file.name)
     assert.equal(directory.directory(persisted.backupDirectory).text(entry.backupName), await file.text())
-    await new Promise<void>(resolve => setImmediate(resolve))
+    if (!firstBatchReleased) {
+      if (active === 2) {
+        firstBatchReleased = true
+        releaseFirstBatch()
+      }
+      await firstBatchReady
+    }
     const output = await fakeLosslessWebp(file)
     active--
     return output
@@ -242,16 +279,77 @@ test('parallel encoding is bounded and every original survives until all outputs
   requests.forEach((item, index) => assert.equal(directory.text(item.sourceName), `original ${index}`))
 })
 
+test('adaptive conversion uses 16 and 24 lanes while rejecting unsafe caller limits', async () => {
+  const runtime = globalThis as typeof globalThis & {
+    nxrDesktop?: { capabilities?: { hardwareConcurrency?: number; deviceMemory?: number } }
+  }
+  const previous = runtime.nxrDesktop
+  const run = async (cores: number, requested?: number) => {
+    runtime.nxrDesktop = { capabilities: { hardwareConcurrency: cores, deviceMemory: 64 } }
+    const expectedConcurrency = typeof requested === 'number' && Number.isFinite(requested) && requested > 0
+      ? Math.min(cores, Math.max(1, Math.floor(requested)))
+      : cores
+    const directory = new MemoryDirectory()
+    const count = cores + 4
+    const requests = Array.from({ length: count }, (_, index) => {
+      const sourceName = `photo-${index}.jpg`
+      directory.add(sourceName, `original ${index}`)
+      return conversionRequest(directory, sourceName, `FAST${index}_A.webp`, 'webp-quality')
+    })
+    let active = 0
+    let maximum = 0
+    let releaseFirstBatch!: () => void
+    const firstBatchReady = new Promise<void>(resolve => { releaseFirstBatch = resolve })
+    let firstBatchReleased = false
+    const journal = await renameFiles(directory.handle(), requests, undefined, async file => {
+      active++
+      maximum = Math.max(maximum, active)
+      if (!firstBatchReleased) {
+        if (active === expectedConcurrency) {
+          firstBatchReleased = true
+          releaseFirstBatch()
+        }
+        await firstBatchReady
+      }
+      const output = await fakeLosslessWebp(file)
+      active--
+      return output
+    }, requested === undefined ? {} : { conversionConcurrency: requested })
+    return { directory, journal, maximum }
+  }
+
+  try {
+    assert.equal((await run(16)).maximum, 16)
+    assert.equal((await run(24, 1_000)).maximum, 24)
+    assert.equal((await run(16, Number.POSITIVE_INFINITY)).maximum, 16)
+    assert.equal((await run(16, Number.NaN)).maximum, 16)
+
+    const batched = await run(24, 12)
+    assert.equal(batched.maximum, 12)
+    assert.equal(batched.directory.writeCounts.get(batched.journal.name), 12)
+    assert(batched.journal.entries.every(entry => entry.state === 'deleted'))
+  } finally {
+    if (previous === undefined) delete runtime.nxrDesktop
+    else runtime.nxrDesktop = previous
+  }
+})
+
 test('parallel failure aborts its sibling and waits for cleanup before returning a recoverable journal', async () => {
   const { directory, requests } = parallelFixture()
   let calls = 0, siblingStopped = false
+  let releasePrimary!: () => void
+  const siblingStarted = new Promise<void>(resolve => { releasePrimary = resolve })
   await assert.rejects(renameFiles(directory.handle(), requests, undefined, async (_file, options) => {
     calls++
     if (calls === 1) {
-      await new Promise<void>(resolve => setImmediate(resolve))
+      await siblingStarted
       throw new Error('primary encoding failure')
     }
-    await new Promise<void>(resolve => options!.signal!.addEventListener('abort', () => setImmediate(resolve), { once: true }))
+    const aborted = new Promise<void>(resolve => {
+      options!.signal!.addEventListener('abort', () => setImmediate(resolve), { once: true })
+    })
+    releasePrimary()
+    await aborted
     siblingStopped = true
     throw new DOMException('sibling stopped', 'AbortError')
   }, { conversionConcurrency: 2 }), /primary encoding failure/)
@@ -262,6 +360,166 @@ test('parallel failure aborts its sibling and waits for cleanup before returning
   assert.equal(JSON.parse(directory.text(name)).state, 'failed')
   await restoreJournal(directory.handle(), name)
   assert.equal(directory.directories.size, 0)
+})
+
+test('backup failure aborts an active encoder and drains every write before reporting failure', async () => {
+  const { directory, requests } = parallelFixture()
+  let releaseFailedBackup!: () => void
+  const failedBackupGate = new Promise<void>(resolve => { releaseFailedBackup = resolve })
+  const originalGetDirectory = directory.getDirectoryHandle.bind(directory)
+  directory.getDirectoryHandle = async (name, options) => {
+    const handle = await originalGetDirectory(name, options)
+    if (name.startsWith('.nxr-originals-')) {
+      const backup = directory.directory(name)
+      backup.delayWrites.set('0.nxr-source', failedBackupGate)
+      backup.failWrites.add('0.nxr-source')
+    }
+    return handle
+  }
+
+  let encoderSettled = false
+  await assert.rejects(renameFiles(
+    directory.handle(), requests, undefined,
+    async (file, options) => {
+      if (file.name !== 'two.jpg') return fakeLosslessWebp(file)
+      return new Promise<Blob>((_resolve, reject) => {
+        options!.signal!.addEventListener('abort', () => {
+          setImmediate(() => {
+            encoderSettled = true
+            reject(new DOMException('sibling encoder stopped', 'AbortError'))
+          })
+        }, { once: true })
+        releaseFailedBackup()
+      })
+    },
+    { conversionConcurrency: 2 },
+  ), /injected write failure: 0\.nxr-source/)
+
+  assert(encoderSettled, 'renameFiles must wait for the active encoder to settle')
+  const writesAtFailure = [...directory.writeCounts.values()].reduce((sum, count) => sum + count, 0)
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.equal([...directory.writeCounts.values()].reduce((sum, count) => sum + count, 0), writesAtFailure)
+  requests.forEach(item => {
+    assert(directory.files.has(item.sourceName))
+    assert.equal(directory.files.has(item.targetName), false)
+  })
+  const name = journalName(directory)
+  assert.equal(JSON.parse(directory.text(name)).state, 'failed')
+  await restoreJournal(directory.handle(), name)
+  assert.equal(directory.directories.size, 0)
+})
+
+test('a case-variant target created during conversion is still rejected immediately before writing', async () => {
+  const directory = new MemoryDirectory().add('front.jpg', 'source')
+  const targetName = '7123456789_A.webp'
+  await assert.rejects(renameFiles(
+    directory.handle(),
+    [conversionRequest(directory, 'front.jpg', targetName, 'webp-quality')],
+    undefined,
+    async file => {
+      directory.add('7123456789_A.WEBP', 'external target')
+      return fakeLosslessWebp(file)
+    },
+  ), /写入前发现目标文件已存在/)
+
+  assert.equal(directory.text('front.jpg'), 'source')
+  assert.equal(directory.text('7123456789_A.WEBP'), 'external target')
+  assert.equal(directory.files.has(targetName), false)
+  const name = journalName(directory)
+  assert.equal(JSON.parse(directory.text(name)).state, 'failed')
+  directory.files.delete('7123456789_A.WEBP')
+  await restoreJournal(directory.handle(), name)
+  assert.equal(directory.directories.size, 0)
+})
+
+test('large numeric directories probe fresh ASCII case variants without another full walk', async () => {
+  const directory = largeDirectoryFixture()
+  const targetName = '7123456789_A.webp'
+  const journal = await renameFiles(
+    directory.handle(),
+    [conversionRequest(directory, 'source.jpg', targetName, 'webp-quality')],
+    undefined,
+    fakeLosslessWebp,
+  )
+
+  assert.equal(journal.state, 'complete')
+  assert.equal(directory.entryWalks, 3)
+  assert.equal(directory.entryYields, 769)
+  const targetLookups = directory.fileHandleLookups.filter(
+    name => name.toLowerCase() === targetName.toLowerCase(),
+  )
+  assert(targetLookups.length >= 32 && targetLookups.length <= 36)
+  assert.equal(new Set(targetLookups.map(name => name)).size, 32)
+})
+
+test('large numeric directory catches a case-variant file created during conversion', async () => {
+  const directory = largeDirectoryFixture()
+  const targetName = '7123456789_A.webp'
+  await assert.rejects(renameFiles(
+    directory.handle(),
+    [conversionRequest(directory, 'source.jpg', targetName, 'webp-quality')],
+    undefined,
+    async file => {
+      directory.add('7123456789_a.WEBP', 'external target')
+      return fakeLosslessWebp(file)
+    },
+  ), /写入前发现目标文件已存在/)
+
+  assert.equal(directory.text('source.jpg'), 'source bytes')
+  assert.equal(directory.text('7123456789_a.WEBP'), 'external target')
+  assert.equal(directory.files.has(targetName), false)
+  assert.equal(directory.entryWalks, 3)
+})
+
+test('large numeric directory treats a case-variant directory as an occupied target', async () => {
+  const directory = largeDirectoryFixture()
+  const targetName = '7123456789_A.webp'
+  await assert.rejects(renameFiles(
+    directory.handle(),
+    [conversionRequest(directory, 'source.jpg', targetName, 'webp-quality')],
+    undefined,
+    async file => {
+      directory.directories.set('7123456789_A.WEBP', new MemoryDirectory('7123456789_A.WEBP'))
+      return fakeLosslessWebp(file)
+    },
+  ), /写入前发现目标文件已存在/)
+
+  assert.equal(directory.text('source.jpg'), 'source bytes')
+  assert.equal(directory.files.has(targetName), false)
+  assert.equal(directory.entryWalks, 3)
+})
+
+test('large numeric directory fails closed on an unexpected variant lookup error', async () => {
+  const directory = largeDirectoryFixture()
+  const targetName = '7123456789_A.webp'
+  await assert.rejects(renameFiles(
+    directory.handle(),
+    [conversionRequest(directory, 'source.jpg', targetName, 'webp-quality')],
+    undefined,
+    async file => {
+      directory.lookupErrors.set(targetName, new DOMException('lookup blocked', 'SecurityError'))
+      return fakeLosslessWebp(file)
+    },
+  ), /lookup blocked/)
+
+  assert.equal(directory.text('source.jpg'), 'source bytes')
+  assert.equal(directory.files.has(targetName), false)
+  assert.equal(directory.entryWalks, 3)
+})
+
+test('large directory keeps full snapshot protection for alphabetic certificate targets', async () => {
+  const directory = largeDirectoryFixture()
+  const targetName = 'ABC123_A.webp'
+  const journal = await renameFiles(
+    directory.handle(),
+    [conversionRequest(directory, 'source.jpg', targetName, 'webp-quality')],
+    undefined,
+    fakeLosslessWebp,
+  )
+
+  assert.equal(journal.state, 'complete')
+  assert.equal(directory.entryWalks, 4)
+  assert(directory.entryYields > 1_000)
 })
 
 test('cancelling a later batch stops both encoders and restores previously written outputs', async () => {
@@ -284,6 +542,35 @@ test('cancelling a later batch stops both encoders and restores previously writt
     assert.equal(directory.text(item.sourceName), `original ${index}`)
     assert(!directory.files.has(item.targetName))
   })
+})
+
+test('cancellation during a source recheck does not start a new backup write', async () => {
+  const directory = new MemoryDirectory().add('source.jpg', 'source bytes')
+  const controller = new AbortController()
+  let releaseRead!: () => void
+  const readGate = new Promise<void>(resolve => { releaseRead = resolve })
+  let delayed = false
+
+  await assert.rejects(renameFiles(
+    directory.handle(),
+    [conversionRequest(directory, 'source.jpg', '7123456789_A.webp', 'webp-quality')],
+    message => {
+      if (delayed || !message.includes('正在安全复制：source.jpg')) return
+      delayed = true
+      directory.delayReads.set('source.jpg', readGate)
+      queueMicrotask(() => {
+        controller.abort()
+        releaseRead()
+      })
+    },
+    fakeLosslessWebp,
+    { signal: controller.signal },
+  ), /已取消本次改名/)
+
+  assert.equal(directory.text('source.jpg'), 'source bytes')
+  const persisted = JSON.parse(directory.text(journalName(directory)))
+  assert.equal(directory.directory(persisted.backupDirectory).files.size, 0)
+  assert.equal(directory.files.has('7123456789_A.webp'), false)
 })
 
 test('an already cancelled operation creates no files or backup directory', async () => {
@@ -332,6 +619,26 @@ test('lossless WebP conversion keeps an exact hidden backup and journals encoded
   assert.equal(persisted.entries[0].targetHash, journal.entries[0].targetHash)
   assert.equal(persisted.entries[0].targetSize, journal.entries[0].targetSize)
   assert.equal(persisted.entries[0].backupName, '0.nxr-source')
+})
+
+test('quality WebP journals remain fully recoverable while legacy lossless stays valid', async () => {
+  const directory = new MemoryDirectory().add('quality.jpg', 'quality original', 202)
+  const journal = await renameFiles(
+    directory.handle(),
+    [conversionRequest(directory, 'quality.jpg', 'QUALITY1_A.webp', 'webp-quality')],
+    undefined,
+    async file => new Blob(['quality:', await file.arrayBuffer()], { type: 'image/webp' }),
+  )
+
+  const persisted = JSON.parse(directory.text(journal.name))
+  assert.equal(persisted.schemaVersion, 2)
+  assert.equal(persisted.entries[0].outputFormat, 'webp-quality')
+  assert.equal(directory.directory(journal.backupDirectory!).text('0.nxr-source'), 'quality original')
+
+  await restoreJournal(directory.handle(), journal.name)
+  assert.equal(directory.text('quality.jpg'), 'quality original')
+  assert.equal(directory.files.has('QUALITY1_A.webp'), false)
+  assert.equal(directory.directories.has(journal.backupDirectory!), false)
 })
 
 test('conversion preflight rejects an occupied WebP target before creating recovery artifacts', async () => {
@@ -445,6 +752,9 @@ test('conversion recovery restores every original after deletion is interrupted'
   const failed = JSON.parse(directory.text(failedJournal))
   assert.equal(directory.files.has('front.jpg'), false)
   assert.equal(directory.text('back.png'), 'back original')
+  // The deletion chunk had not reached its normal checkpoint, so this proves
+  // the failure path immediately persisted the actual partial state.
+  assert.deepEqual(failed.entries.map((entry: { state: string }) => entry.state), ['deleted', 'copied'])
   assert.equal(directory.text('7123456789_A.webp'), 'webp:front original')
   assert.equal(directory.text('7123456789_B.webp'), 'webp:back original')
   assert.equal(directory.directory(failed.backupDirectory).text('0.nxr-source'), 'front original')
@@ -642,6 +952,26 @@ test('restores safely after deletion is interrupted', async () => {
   // Recovery is resumable when the originals already exist with identical bytes.
   const restoredAgain = await restoreJournal(directory.handle(), failedJournal)
   assert.equal(restoredAgain.state, 'restored')
+})
+
+test('large recovery checkpoints journal state in fixed chunks', async () => {
+  const directory = new MemoryDirectory()
+  const requests = Array.from({ length: 20 }, (_, index) => {
+    const sourceName = `restore-${index}.jpg`
+    directory.add(sourceName, `source ${index}`)
+    return request(directory, sourceName, `RESTORE${index}_A.jpg`)
+  })
+  const journal = await renameFiles(directory.handle(), requests)
+  directory.writeCounts.delete(journal.name)
+
+  await restoreJournal(directory.handle(), journal.name)
+
+  // restoring, checkpoints at 16 and 20, then restored.
+  assert.equal(directory.writeCounts.get(journal.name), 4)
+  requests.forEach((item, index) => {
+    assert.equal(directory.text(item.sourceName), `source ${index}`)
+    assert.equal(directory.files.has(item.targetName), false)
+  })
 })
 
 test('recovery never overwrites a changed original or deletes a changed target', async () => {
