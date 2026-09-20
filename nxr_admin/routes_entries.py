@@ -819,39 +819,15 @@ def batch_approve_entries():
     finally:
         conn.close()
 
-# ========== Export to Main Database ==========
+# ========== Legacy Export Redirect ==========
 @app.route('/admin/export/approved')
 @login_required
 def export_approved():
-    conn_temp = get_temp_db_connection()
-    conn_main = get_main_db_connection()
-
-    try:
-        approved_entries = conn_temp.execute(
-            f"SELECT * FROM temp_cards WHERE status = 'approved' ORDER BY {build_approved_order_clause()}"
-        ).fetchall()
-
-        inserted = 0
-        updated = 0
-        for entry in approved_entries:
-            result = upsert_main_card(entry, conn_main, require_complete=False)
-            if result['action'] == 'updated':
-                updated += 1
-            else:
-                inserted += 1
-
-        conn_main.commit()
-        flash(f'Export completed. Inserted {inserted} and updated {updated} entries in main database', 'success')
-
-    except Exception as e:
-        conn_main.rollback()
-        flash(f'Error exporting: {str(e)}', 'error')
-
-    finally:
-        conn_temp.close()
-        conn_main.close()
-
-    return redirect(url_for('entry_list'))
+    # This legacy GET route used to replay every approved row and republish its
+    # images. Keep old bookmarks safe while directing operators to the guarded
+    # upload workflow, which handles one selected entry at a time.
+    flash('Select approved entries in Upload to Server before publishing.', 'warning')
+    return redirect(url_for('upload_manager'))
 
 # ========== API: Generate Cert ID ==========
 @app.route('/admin/api/generate-cert-id')
