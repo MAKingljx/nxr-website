@@ -203,23 +203,45 @@ public class MerchantBatchService {
     }
 
     public BatchPage listMerchantBatches(long merchantCustomerId, int page, int pageSize) {
+        return listMerchantBatches(merchantCustomerId, page, pageSize, null, null);
+    }
+
+    public BatchPage listMerchantBatches(long merchantCustomerId, int page, int pageSize, String query) {
+        return listMerchantBatches(merchantCustomerId, page, pageSize, query, null);
+    }
+
+    public BatchPage listMerchantBatches(long merchantCustomerId, int page, int pageSize, String query, String status) {
         orderFulfillmentService.requireMerchant(merchantCustomerId);
         int safePage = Math.max(1, page);
         int safeSize = Math.min(100, Math.max(1, pageSize));
-        int total = jdbcClient.sql("SELECT COUNT(*) FROM merchant_order_batch WHERE merchant_customer_id = :customerId")
-            .param("customerId", merchantCustomerId)
+        String normalizedQuery = blankToNull(clean(query, 191));
+        String normalizedStatus = blankToNull(clean(status, 32));
+        if (normalizedStatus != null && !BATCH_STATUSES.contains(normalizedStatus.toLowerCase(Locale.ROOT))) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported batch status");
+        }
+        if (normalizedStatus != null) normalizedStatus = normalizedStatus.toLowerCase(Locale.ROOT);
+        String where = " WHERE merchant_customer_id = :customerId";
+        if (normalizedQuery != null) {
+            where += " AND (batch_no LIKE :query OR batch_name LIKE :query OR source_name LIKE :query)";
+        }
+        if (normalizedStatus != null) where += " AND status_code = :statusCode";
+        var countQuery = jdbcClient.sql("SELECT COUNT(*) FROM merchant_order_batch" + where)
+            .param("customerId", merchantCustomerId);
+        if (normalizedQuery != null) countQuery = countQuery.param("query", "%" + normalizedQuery + "%");
+        if (normalizedStatus != null) countQuery = countQuery.param("statusCode", normalizedStatus);
+        int total = countQuery
             .query(Integer.class)
             .single();
-        List<BatchSummary> items = jdbcClient.sql(
+        var itemsQuery = jdbcClient.sql(
                 """
                 SELECT id, batch_no, batch_name, source_name, status_code, total_rows, accepted_rows, rejected_rows,
                        created_at, updated_at
                 FROM merchant_order_batch
-                WHERE merchant_customer_id = :customerId
-                ORDER BY created_at DESC, id DESC LIMIT :limit OFFSET :offset
-                """
-            )
-            .param("customerId", merchantCustomerId)
+                """ + where + " ORDER BY created_at DESC, id DESC LIMIT :limit OFFSET :offset")
+            .param("customerId", merchantCustomerId);
+        if (normalizedQuery != null) itemsQuery = itemsQuery.param("query", "%" + normalizedQuery + "%");
+        if (normalizedStatus != null) itemsQuery = itemsQuery.param("statusCode", normalizedStatus);
+        List<BatchSummary> items = itemsQuery
             .param("limit", safeSize)
             .param("offset", (safePage - 1) * safeSize)
             .query((rs, rowNum) -> mapSummary(rs))

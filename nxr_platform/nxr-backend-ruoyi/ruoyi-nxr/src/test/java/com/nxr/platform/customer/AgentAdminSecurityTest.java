@@ -102,11 +102,13 @@ class AgentAdminSecurityTest {
         assertThatThrownBy(()->workbenchController.intake(202L,99)).hasMessageContaining("403");
         verifyNoInteractions(photos,portal,fulfillment,workbench);
     }
-    @Test void enterpriseEndpointsDelegateOnlyResolvedMerchantAndNeverExposeRechargeApproval() {
+    @Test void enterpriseEndpointsDelegateOnlyResolvedMerchantAndB端CannotPayOrApproveRecharge() {
         login(10,Set.of("nxr:agent:workbench"));
         var payment=new CustomerPortalService.WalletPaymentRequest("wallet-key");
-        commerceController.pay(null,"NXR-OWN",payment);
-        verify(portal).payOrderFromWallet(101,"NXR-OWN",payment);
+        assertThatThrownBy(()->commerceController.pay(null,"NXR-OWN",payment))
+            .isInstanceOf(org.springframework.web.server.ResponseStatusException.class)
+            .hasMessageContaining("B端不支持订单付款");
+        verifyNoInteractions(portal);
         commerceController.batch(null,"MB-OWN");verify(batches).requireMerchantBatch(101,"MB-OWN");
         commerceController.addresses(null);verify(fulfillment).listAddresses(101);
         var recharge=new MerchantWalletService.RechargeRequest("USD",BigDecimal.TEN,"manual_transfer","payer","proof");

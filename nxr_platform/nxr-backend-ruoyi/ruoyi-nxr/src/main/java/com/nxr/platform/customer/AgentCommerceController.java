@@ -37,8 +37,9 @@ public class AgentCommerceController {
     private long owner(Long company) { return scope.currentMerchant(company); }
     @GetMapping("/merchant/batches")
     public MerchantBatchService.BatchPage batches(@RequestHeader(name=COMPANY,required=false) Long company,
-        @RequestParam(defaultValue="1") int page,@RequestParam(defaultValue="20") int pageSize) {
-        return batches.listMerchantBatches(owner(company),page,pageSize);
+        @RequestParam(defaultValue="1") int page,@RequestParam(defaultValue="20") int pageSize,
+        @RequestParam(required=false) String query,@RequestParam(required=false) String statusCode) {
+        return batches.listMerchantBatches(owner(company),page,pageSize,query,statusCode);
     }
     @GetMapping("/merchant/batches/{batchNo}")
     public MerchantBatchService.BatchDetail batch(@RequestHeader(name=COMPANY,required=false) Long company,@PathVariable String batchNo) {
@@ -71,7 +72,10 @@ public class AgentCommerceController {
         @RequestBody OrderAdmissionService.ResubmitRequest request) { return admission.resubmit(owner(company),orderNo,request); }
     @PostMapping("/orders/{orderNo}/wallet-payment")
     public CustomerPortalService.OrderDetailResponse pay(@RequestHeader(name=COMPANY,required=false) Long company,@PathVariable String orderNo,
-        @RequestBody CustomerPortalService.WalletPaymentRequest request) { return portal.payOrderFromWallet(owner(company),orderNo,request); }
+        @RequestBody CustomerPortalService.WalletPaymentRequest request) {
+        // B 端只负责送评及业务跟踪，付款由平台总控处理；保留路由以便旧客户端得到明确拒绝。
+        throw new ResponseStatusException(HttpStatus.FORBIDDEN,"B端不支持订单付款，请由平台总控处理");
+    }
     @GetMapping("/orders/{orderNo}/packing-slip")
     public OrderFulfillmentService.PackingSlip packingSlip(@RequestHeader(name=COMPANY,required=false) Long company,@PathVariable String orderNo) {
         return fulfillment.requirePackingSlip(owner(company),orderNo);

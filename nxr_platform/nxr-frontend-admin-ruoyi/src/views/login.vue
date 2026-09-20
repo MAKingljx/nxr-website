@@ -207,38 +207,30 @@ getCookie()
 
 <style lang="scss" scoped>
 .login-page {
-  --auth-panel: rgba(249, 250, 252, 0.96);
-  --auth-panel-border: rgba(255, 255, 255, 0.52);
-  --auth-text: #171b22;
-  --auth-muted: #68707d;
-  --auth-border: #d9dee6;
-  --auth-field: #ffffff;
-  --auth-field-hover: #c3cad5;
+  --auth-panel: rgba(255, 255, 255, 0.48);
+  --auth-panel-border: rgba(255, 255, 255, 0.72);
+  --auth-text: #17233d;
+  --auth-muted: #53627c;
+  --auth-border: rgba(255, 255, 255, 0.68);
+  --auth-field: rgba(255, 255, 255, 0.46);
+  --auth-field-hover: rgba(255, 255, 255, 0.92);
   position: relative;
   min-height: 100dvh;
   overflow: hidden;
-  background-color: #0b0e14;
-  background-image: url("../assets/images/login-background-nxr.webp");
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: cover;
-  color: #ffffff;
-}
-
-.login-page::before {
-  position: absolute;
-  inset: 0;
-  background: rgba(5, 8, 13, 0.14);
-  content: "";
+  background:
+    radial-gradient(circle at 8% 8%, rgba(255, 255, 255, 0.82) 0, rgba(255, 255, 255, 0) 31%),
+    radial-gradient(circle at 88% 16%, rgba(255, 179, 218, 0.72) 0, rgba(255, 179, 218, 0) 35%),
+    radial-gradient(circle at 78% 88%, rgba(173, 208, 255, 0.78) 0, rgba(173, 208, 255, 0) 42%),
+    linear-gradient(135deg, #8fd8ff 0%, #bcb9ff 47%, #ffd1e5 100%);
+  color: #17233d;
 }
 
 .login-shell {
   position: relative;
   z-index: 1;
-  display: grid;
-  grid-template-columns: minmax(300px, 1fr) minmax(360px, 424px);
+  display: flex;
   align-items: center;
-  gap: clamp(48px, 8vw, 128px);
+  justify-content: center;
   width: min(1320px, calc(100% - 96px));
   min-height: calc(100dvh - 76px);
   margin: 0 auto;
@@ -246,7 +238,9 @@ getCookie()
 }
 
 .brand-stage {
-  align-self: stretch;
+  position: absolute;
+  top: 44px;
+  left: 0;
   min-width: 0;
   padding: 10px 0;
 }
@@ -272,6 +266,7 @@ getCookie()
 }
 
 .brand-lockup strong {
+  color: #17233d;
   font-size: 17px;
   font-weight: 700;
   line-height: 1.2;
@@ -280,13 +275,15 @@ getCookie()
 
 .login-panel {
   width: 100%;
+  max-width: 424px;
   padding: 38px 38px 28px;
   border: 1px solid var(--auth-panel-border);
-  border-radius: 8px;
-  background: var(--auth-panel);
-  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.34);
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.66), rgba(255, 255, 255, 0.32));
+  box-shadow: 0 24px 72px rgba(72, 58, 119, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.78);
   color: var(--auth-text);
-  backdrop-filter: blur(18px);
+  backdrop-filter: blur(24px) saturate(145%);
+  -webkit-backdrop-filter: blur(24px) saturate(145%);
 }
 
 .login-heading {
@@ -428,7 +425,7 @@ getCookie()
   width: 100%;
   min-height: 46px;
   border-radius: 6px;
-  background: #2f6f9f;
+  background: linear-gradient(135deg, #4e83d7, #7968d7);
   font-weight: 650;
   letter-spacing: 0;
   box-shadow: 0 10px 22px rgba(47, 111, 159, 0.23);
@@ -436,7 +433,7 @@ getCookie()
 
 .login-button:hover,
 .login-button:focus {
-  background: #275f89;
+  background: linear-gradient(135deg, #416fb9, #6857bf);
 }
 
 .login-button :deep(.el-icon) {
@@ -450,25 +447,11 @@ getCookie()
   bottom: 20px;
   left: 0;
   padding: 0 24px;
-  color: rgba(255, 255, 255, 0.52);
+  color: rgba(34, 48, 82, 0.64);
   font-size: 11px;
   line-height: 1.5;
   text-align: center;
   letter-spacing: 0;
-}
-
-html.dark .login-page {
-  --auth-panel: rgba(23, 25, 30, 0.96);
-  --auth-panel-border: rgba(255, 255, 255, 0.11);
-  --auth-text: #f3f5f8;
-  --auth-muted: #a3a9b3;
-  --auth-border: #3b4049;
-  --auth-field: #1c1f25;
-  --auth-field-hover: #515864;
-}
-
-html.dark .field-group :deep(.el-input__inner::placeholder) {
-  color: #767e8a;
 }
 
 html.dark .captcha-button {
@@ -478,15 +461,10 @@ html.dark .captcha-button {
 @media (max-width: 900px) {
   .login-page {
     overflow-y: auto;
-    background-position: 35% center;
-  }
-
-  .login-page::before {
-    background: rgba(5, 8, 13, 0.5);
   }
 
   .login-shell {
-    grid-template-columns: 1fr;
+    flex-direction: column;
     gap: 32px;
     width: min(520px, calc(100% - 32px));
     min-height: auto;
@@ -494,6 +472,8 @@ html.dark .captcha-button {
   }
 
   .brand-stage {
+    position: static;
+    width: 100%;
     padding: 0;
   }
 
@@ -503,14 +483,6 @@ html.dark .captcha-button {
 }
 
 @media (max-width: 520px) {
-  .login-page {
-    background-position: 28% center;
-  }
-
-  .login-page::before {
-    background: rgba(5, 8, 13, 0.66);
-  }
-
   .login-shell {
     gap: 24px;
     width: calc(100% - 24px);

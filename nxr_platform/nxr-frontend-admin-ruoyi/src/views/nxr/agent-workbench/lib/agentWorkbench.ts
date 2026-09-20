@@ -53,7 +53,7 @@ export type AgentWallet = { currencyCode: string; balance: number | string; upda
 export type AgentRecharge = { id: number; rechargeNo: string; currencyCode: string; amount: number | string; statusCode: string; payerReference: string; proofReference: string; reviewNote?: string; createdAt: string; creditQuote?: CreditQuote | null }
 export type AgentTransaction = { id: number; transactionTypeCode: string; directionCode: string; amount: number | string; balanceAfter: number | string; currencyCode: string; sourceCurrency?: string | null; sourceAmount?: number | string | null; points?: number | string | null; settingsVersion?: number | null; note?: string; createdAt: string }
 export type AgentOrderCreditQuote = { quote: CreditQuote; balance: number | string; sufficient: boolean }
-export type AgentBatch = { id?: number; batchId?: number; batchNo: string; batchName: string; statusCode: string; createdAt: string; orders?: Array<{ orderNo: string; clientReference: string; clientDisplayName?: string; admissionStatus?: string; statusCode: string; totalCardCount?: number; cardCount?: number }>; shipments?: Array<{ id: number; directionCode: string; carrierName: string; trackingNumber: string; statusCode: string; deliveredAt?: string }> }
+export type AgentBatch = { id?: number; batchId?: number; batchNo: string; batchName: string; sourceName?: string | null; statusCode: string; totalRows?: number; acceptedRows?: number; rejectedRows?: number; createdAt: string; updatedAt?: string; orders?: Array<{ orderNo: string; clientReference: string; clientDisplayName?: string; admissionStatus?: string; statusCode: string; totalCardCount?: number; cardCount?: number }>; shipments?: Array<{ id: number; directionCode: string; carrierName: string; trackingNumber: string; statusCode: string; deliveredAt?: string }> }
 export type AgentOrder = { orderNo: string; statusCode: string; totalCardCount: number; totalAmount: number; currencyCode: string; items: Array<{ id: number; cardName: string; languageCode: string; gradingCertId?: string; frontPhotoId?: number; backPhotoId?: number; statusCode: string }>; timeline: Array<{ id: number; title: string; detail?: string; createdAt: string }> }
 export type AgentAdmission = { admissionStatus: string; termsVersion: string; termsText: string; quoteAmount: number; quoteCurrency: string; canAcceptTerms: boolean; canPay: boolean; canResubmit: boolean; canResubmit: boolean; decisionNote?: string; paymentDueAtIso?: string; supplementalPhotoIds?: number[]; events: Array<{ id: number; title: string; detail?: string; createdAt: string }> }
 type Query = Record<string, string | number | boolean | undefined>
@@ -172,7 +172,7 @@ const uploadAgentCardPhoto = (id: number, side: 'front' | 'back', file: File) =>
   const fetchTransactions = (currencyCode: string, page = 1) => send<AgentPage<AgentTransaction>>(`${base}/merchant/wallet-transactions?${queryString({currencyCode,page,pageSize:20})}`)
   const fetchRecharges = (page = 1) => send<AgentPage<AgentRecharge>>(`${base}/merchant/wallet-recharges?page=${page}&pageSize=20`)
   const requestRecharge = (data: object, requestKey: string) => send<AgentRecharge>(`${base}/merchant/wallet-recharges`, { method: 'post', data: {...data,requestKey} })
-  const fetchBatches = (page = 1) => send<AgentPage<AgentBatch>>(`${base}/merchant/batches?page=${page}&pageSize=20`)
+  const fetchBatches = (page = 1, query = '', statusCode = '') => send<AgentPage<AgentBatch>>(`${base}/merchant/batches?${queryString({ page, pageSize: 20, query, statusCode })}`)
   const fetchBatch = (batchNo: string) => send<AgentBatch>(`${base}/merchant/batches/${encodeURIComponent(batchNo)}`)
   const rotateTrackingLink = (batchNo: string, orderNo: string) => send<{trackingToken:string;trackingUrl:string}>(`${base}/merchant/batches/${encodeURIComponent(batchNo)}/orders/${encodeURIComponent(orderNo)}/tracking-token/rotate`,{method:'post'})
   const revokeTrackingLink = (batchNo: string, orderNo: string) => send(`${base}/merchant/batches/${encodeURIComponent(batchNo)}/orders/${encodeURIComponent(orderNo)}/tracking-token`,{method:'delete'})
@@ -232,6 +232,11 @@ const statusLabels: Record<string, string> = {
   in_transit: 'In transit', processing: 'Processing', expired: 'Expired',
 }
 export const agentStatusLabel = (code: string) => tx(statusLabels[code] || code)
+const batchStatusLabels: Record<string, string> = {
+  open: 'Batch in preparation', inbound_shipped: 'In transit to NXR', received: 'Received by NXR',
+  return_shipped: 'Returned to sub-agent', delivered: 'Customer received batch', cancelled: 'Cancelled',
+}
+export const agentBatchStatusLabel = (code: string) => tx(batchStatusLabels[code] || code)
 const eventLabels: Record<string, string> = {
   client_created: 'Customer record created', client_updated: 'Customer record updated', client_archived: 'Archive customer', client_reactivated: 'Restore customer',
   intake_created: 'Intake registered', intake_received: 'Intake received', card_checked_in: 'Card checked into inventory', card_exception: 'Card exception recorded',
