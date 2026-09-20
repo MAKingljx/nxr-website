@@ -73,3 +73,13 @@ Important override:
 - Preserve rule-based routing and existing unrelated rules. Do not switch all traffic to a global VPN/proxy or globally disable the user's network setup for a single task.
 - Keep localhost, private networks, and this project's production server on direct routes. When a TUN interface intercepts traffic, removing proxy environment variables alone is not proof of direct routing; verify the actual route or connection.
 - The photo-renamer deployment helper supports macOS `--direct-interface` for SSH/SCP. Determine the current physical interface before using it; do not assume an interface name from an earlier session.
+
+
+## Branch Governance
+
+- Fixed branches: `main` integrates verified source; `Phoenix/java` maintains Java releases; `Phoenix/python` maintains the existing Flask releases. A branch tip is not proof of deployment.
+- All task branches use `Phoenix/<business-purpose>` with lowercase words and hyphens after the prefix. Do not use AI tool/model names such as codex, claude, chatgpt, copilot, or gemini in any branch name. This user requirement overrides tool-generated branch defaults.
+- Reuse a task branch for the same ongoing goal. Use separate worktrees for concurrent tasks. After verification, merge to its maintenance line and reconcile the verified result into `main`; transfer only applicable fixes between runtime lines.
+- Before deleting a completed branch, verify its unique changes are merged or retained by a recoverable archive tag, and check remote refs, open PRs, CI filters, and worktree ownership. Never discard uncommitted files or rewrite published history during cleanup.
+- Build and deploy Flask, Java, and Photo Renamer independently. Photo Renamer tasks start from `main` and publish component tags. Record the deployed commit and component release tag separately from branches. Branch cleanup does not authorize deployment, traffic switching, or database changes.
+- Authoritative Feishu rules: `GIT-BRANCH-NAMING-001` and `RULE-NXR-BRANCH-LIFECYCLE-001` for `PROJ-NXR-LIVE`.
