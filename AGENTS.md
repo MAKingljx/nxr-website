@@ -58,3 +58,13 @@ Important override:
 - Public site is served through Nginx and proxied to `127.0.0.1:8080`
 - Public admin path is served through Nginx rewrite/proxy to `127.0.0.1:8081`
 - Preferred remote restart helper: `/Users/phoenix/Documents/Phoenxi/nxr_website/scripts/restart_remote_apps.sh`
+
+
+## Branch Governance
+
+- Fixed branches: `main` integrates verified source; `Phoenix/java` maintains Java releases; `Phoenix/python` maintains the existing Flask releases. A branch tip is not proof of deployment.
+- All task branches use `Phoenix/<business-purpose>` with lowercase words and hyphens after the prefix. Do not use AI tool/model names such as codex, claude, chatgpt, copilot, or gemini in any branch name. This user requirement overrides tool-generated branch defaults.
+- Reuse a task branch for the same ongoing goal. Use separate worktrees for concurrent tasks. After verification, merge to its maintenance line and reconcile the verified result into `main`; transfer only applicable fixes between runtime lines.
+- Before deleting a completed branch, verify its unique changes are merged or retained by a recoverable archive tag, and check remote refs, open PRs, CI filters, and worktree ownership. Never discard uncommitted files or rewrite published history during cleanup.
+- Build and deploy Flask, Java, and Photo Renamer independently. Photo Renamer tasks start from `main` and publish component tags. Record the deployed commit and component release tag separately from branches. Branch cleanup does not authorize deployment, traffic switching, or database changes.
+- Authoritative Feishu rules: `GIT-BRANCH-NAMING-001` and `RULE-NXR-BRANCH-LIFECYCLE-001` for `PROJ-NXR-LIVE`.
