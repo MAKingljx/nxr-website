@@ -99,6 +99,13 @@ class CustomerOrderPhotoServiceTest {
         }
     }
 
+    @Test void unknownPrivateStorageDriverFailsInsteadOfSilentlySavingLocally() {
+        assertThatThrownBy(() -> new CustomerOrderPhotoService(JdbcClient.create(jdbc), jdbc,
+            new MediaCapacityService(0), directory.toString(), "r22", new FakePrivateStorage()))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Unsupported private photo storage driver");
+    }
+
     @Test void rejectedFormatsAndRollbackLeaveNoOrphanedFiles() throws Exception {
         assertThatThrownBy(() -> service.upload(1, new MockMultipartFile("file", "fake.png", "image/png", "<svg onload='alert(1)'/>".getBytes())))
             .isInstanceOf(ResponseStatusException.class).hasMessageContaining("JPEG");

@@ -61,7 +61,11 @@ public class CustomerOrderPhotoService {
         this.capacity = capacity;
         this.root = Path.of(root).toAbsolutePath().normalize().resolve("customer-uploads");
         this.privateObjects = privateObjects;
-        this.useR2 = "r2".equalsIgnoreCase(storageDriver);
+        String driver = storageDriver == null ? "local" : storageDriver.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!"local".equals(driver) && !"r2".equals(driver)) {
+            throw new IllegalArgumentException("Unsupported private photo storage driver");
+        }
+        this.useR2 = "r2".equals(driver);
         if (useR2) privateObjects.requireConfigured();
         this.insert = new SimpleJdbcInsert(template).withTableName("customer_order_photo")
             .usingColumns("customer_id", "storage_key", "original_filename", "mime_type", "byte_size",
