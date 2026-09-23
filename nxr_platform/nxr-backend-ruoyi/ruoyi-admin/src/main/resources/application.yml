@@ -19,6 +19,7 @@ nxr:
     allowed-origins: ${NXR_CORS_ALLOWED_ORIGINS:http://127.0.0.1:3000,http://localhost:3000,http://127.0.0.1:3001,http://localhost:3001,https://nxrgrading.com}
   media:
     storage-driver: ${NXR_STORAGE_DRIVER:local}
+    private-photo-driver: ${NXR_PRIVATE_PHOTO_DRIVER:local}
     storage-root: ${NXR_MEDIA_STORAGE_ROOT:./.local-data/media}
     public-base-url: ${NXR_MEDIA_PUBLIC_BASE_URL:http://127.0.0.1:8088}
     local-bucket: ${NXR_MEDIA_LOCAL_BUCKET:local-media}
@@ -29,11 +30,15 @@ nxr:
       endpoint: ${R2_ENDPOINT:}
       region: ${R2_REGION:auto}
       bucket: ${R2_BUCKET:}
+      # Must have no public custom domain or r2.dev access.
+      private-bucket: ${R2_PRIVATE_BUCKET:}
       access-key-id: ${R2_ACCESS_KEY_ID:}
       secret-access-key: ${R2_SECRET_ACCESS_KEY:}
       public-base-url: ${R2_PUBLIC_BASE_URL:}
       object-prefix: ${R2_OBJECT_PREFIX:cards}
       staging-prefix: ${R2_STAGING_PREFIX:staging}
+      # Authenticated customer/sub-agent originals and previews stay private.
+      private-photo-prefix: ${R2_PRIVATE_PHOTO_PREFIX:private/customer-uploads}
     import:
       max-files: ${NXR_MEDIA_IMPORT_MAX_FILES:12}
       max-file-size-bytes: ${NXR_MEDIA_IMPORT_MAX_FILE_SIZE_BYTES:25165824}

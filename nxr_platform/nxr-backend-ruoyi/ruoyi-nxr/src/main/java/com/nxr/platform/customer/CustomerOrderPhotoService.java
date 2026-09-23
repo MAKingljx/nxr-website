@@ -22,7 +22,11 @@ import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.Resource;
 import org.springframework.core.io.FileSystemResource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -37,21 +41,40 @@ import org.springframework.web.server.ResponseStatusException;
 /** Private application photos are served only after an owner or staff scope check. */
 @Service
 public class CustomerOrderPhotoService {
+    private static final Logger LOG = LoggerFactory.getLogger(CustomerOrderPhotoService.class);
+    private static final String R2_KEY_PREFIX = "r2:";
     private static final long MAX_BYTES = 15L * 1024 * 1024;
     private static final long MAX_PIXELS = 40_000_000;
     private final JdbcClient jdbc;
     private final SimpleJdbcInsert insert;
     private final Path root;
     private final MediaCapacityService capacity;
+    private final PrivatePhotoObjectStorage privateObjects;
+    private final boolean useR2;
 
+    @Autowired
     public CustomerOrderPhotoService(JdbcClient jdbc, JdbcTemplate template, MediaCapacityService capacity,
-        @Value("${nxr.media.storage-root:./.local-data/media}") String root) {
+        @Value("${nxr.media.storage-root:./.local-data/media}") String root,
+        @Value("${nxr.media.private-photo-driver:local}") String storageDriver,
+        PrivatePhotoObjectStorage privateObjects) {
         this.jdbc = jdbc;
         this.capacity = capacity;
         this.root = Path.of(root).toAbsolutePath().normalize().resolve("customer-uploads");
+        this.privateObjects = privateObjects;
+        String driver = storageDriver == null ? "local" : storageDriver.trim().toLowerCase(java.util.Locale.ROOT);
+        if (!"local".equals(driver) && !"r2".equals(driver)) {
+            throw new IllegalArgumentException("Unsupported private photo storage driver");
+        }
+        this.useR2 = "r2".equals(driver);
+        if (useR2) privateObjects.requireConfigured();
         this.insert = new SimpleJdbcInsert(template).withTableName("customer_order_photo")
             .usingColumns("customer_id", "storage_key", "original_filename", "mime_type", "byte_size",
                 "width_px", "height_px", "checksum_sha256").usingGeneratedKeyColumns("id");
+    }
+
+    /** Local-only constructor retained for isolated service tests. */
+    CustomerOrderPhotoService(JdbcClient jdbc, JdbcTemplate template, MediaCapacityService capacity, String root) {
+        this(jdbc, template, capacity, root, "local", null);
     }
 
     @Transactional
@@ -68,35 +91,44 @@ public class CustomerOrderPhotoService {
         String key = UUID.randomUUID().toString();
         Path original = path(key, false);
         Path thumbnail = path(key, true);
-        try (MediaCapacityService.Reservation ignored = capacity.reserve(root, file.getSize() + 2 * 1024 * 1024)) {
+        boolean storageAttempted = false;
+        try (MediaCapacityService.Reservation ignored = useR2 ? null
+            : capacity.reserve(root, file.getSize() + 2 * 1024 * 1024)) {
             byte[] bytes = file.getBytes();
             if (bytes.length > MAX_BYTES) throw bad("Image exceeds 15 MB");
             Decoded decoded = decode(bytes);
             byte[] preview = thumbnail(decoded.image());
-            Files.createDirectories(root);
-            writeAtomic(original, bytes);
-            writeAtomic(thumbnail, preview);
+            String checksum = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+            storageAttempted = true;
+            if (useR2) privateObjects.store(key, bytes, preview, decoded.mime(), checksum);
+            else {
+                Files.createDirectories(root);
+                writeAtomic(original, bytes);
+                writeAtomic(thumbnail, preview);
+            }
             String filename = file.getOriginalFilename() == null ? "card-image" : Path.of(file.getOriginalFilename().replace('\\', '/')).getFileName().toString();
             filename = filename.replaceAll("[\\p{Cntrl}]", "");
             if (filename.length() > 255) filename = filename.substring(filename.length() - 255);
             Map<String, Object> row = new LinkedHashMap<>();
-            row.put("customer_id", customerId); row.put("storage_key", key); row.put("original_filename", filename);
+            row.put("customer_id", customerId); row.put("storage_key", useR2 ? R2_KEY_PREFIX + key : key);
+            row.put("original_filename", filename);
             row.put("mime_type", decoded.mime()); row.put("byte_size", bytes.length);
             row.put("width_px", decoded.width()); row.put("height_px", decoded.height());
-            row.put("checksum_sha256", HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)));
+            row.put("checksum_sha256", checksum);
             long id = insert.executeAndReturnKey(row).longValue();
             if (TransactionSynchronizationManager.isSynchronizationActive()) {
                 TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                     @Override public void afterCompletion(int status) {
-                        if (status != STATUS_COMMITTED) { deleteQuietly(original); deleteQuietly(thumbnail); }
+                        if (status != STATUS_COMMITTED) cleanupUpload(key);
                     }
                 });
             }
             return new Photo(id, filename, decoded.mime(), bytes.length, decoded.width(), decoded.height());
         } catch (ResponseStatusException e) {
-            deleteQuietly(original); deleteQuietly(thumbnail); throw e;
+            if (storageAttempted) cleanupUpload(key);
+            throw e;
         } catch (Exception e) {
-            deleteQuietly(original); deleteQuietly(thumbnail);
+            if (storageAttempted) cleanupUpload(key);
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "The image could not be saved. Please try again.", e);
         }
     }
@@ -159,7 +191,7 @@ public class CustomerOrderPhotoService {
         return value instanceof Number number ? number.intValue() != 0 : Boolean.TRUE.equals(value);
     }
 
-    public FileSystemResource readOwned(long customerId, long photoId, boolean original) {
+    public Resource readOwned(long customerId, long photoId, boolean original) {
         return resource(owned(customerId, photoId, false), original);
     }
 
@@ -169,7 +201,7 @@ public class CustomerOrderPhotoService {
         return photo.get("order_id") == null ? null : ((Number) photo.get("order_id")).longValue();
     }
 
-    public FileSystemResource readAttached(long orderId, long photoId) {
+    public Resource readAttached(long orderId, long photoId) {
         Map<String, Object> photo = jdbc.sql("SELECT * FROM customer_order_photo WHERE id = :id AND order_id = :orderId")
             .param("id", photoId).param("orderId", orderId).query().listOfRows().stream().findFirst().orElseThrow(CustomerOrderPhotoService::missing);
         return resource(photo, false);
@@ -180,7 +212,7 @@ public class CustomerOrderPhotoService {
         Map<String, Object> photo = owned(customerId, photoId, true);
         if (photo.get("order_id") != null || preserved(photo)) throw new ResponseStatusException(HttpStatus.CONFLICT, "Submitted images must be preserved");
         jdbc.sql("DELETE FROM customer_order_photo WHERE id = :id AND order_id IS NULL AND preserved_for_agent = 0").param("id", photoId).update();
-        Runnable cleanup = () -> { deleteQuietly(path((String) photo.get("storage_key"), false)); deleteQuietly(path((String) photo.get("storage_key"), true)); };
+        Runnable cleanup = () -> cleanupStored((String) photo.get("storage_key"));
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override public void afterCommit() { cleanup.run(); }
@@ -193,17 +225,41 @@ public class CustomerOrderPhotoService {
             .param("id", customerId).query().listOfRows();
     }
 
-    public Map<String, Object> capacityStatus() { return capacity.status(root); }
+    public Map<String, Object> capacityStatus() {
+        if (useR2) return Map.of("storageDriver", "r2", "configured", privateObjects.configured(),
+            "checkedAt", java.time.Instant.now().toString());
+        return capacity.status(root);
+    }
 
     private Map<String, Object> owned(long customerId, long photoId, boolean lock) {
         return jdbc.sql("SELECT * FROM customer_order_photo WHERE id = :id AND customer_id = :customerId" + (lock ? " FOR UPDATE" : ""))
             .param("id", photoId).param("customerId", customerId).query().listOfRows().stream().findFirst().orElseThrow(CustomerOrderPhotoService::missing);
     }
 
-    private FileSystemResource resource(Map<String, Object> photo, boolean original) {
-        Path file = path((String) photo.get("storage_key"), !original);
+    private Resource resource(Map<String, Object> photo, boolean original) {
+        String storageKey = (String) photo.get("storage_key");
+        if (storageKey != null && storageKey.startsWith(R2_KEY_PREFIX)) {
+            return privateObjects.read(storageKey.substring(R2_KEY_PREFIX.length()), original);
+        }
+        Path file = path(storageKey, !original);
         if (!Files.isRegularFile(file)) throw missing();
         return new FileSystemResource(file);
+    }
+
+    private void cleanupUpload(String id) {
+        if (useR2) cleanupStored(R2_KEY_PREFIX + id);
+        else cleanupStored(id);
+    }
+
+    private void cleanupStored(String storageKey) {
+        if (storageKey == null) return;
+        if (storageKey.startsWith(R2_KEY_PREFIX)) {
+            try { privateObjects.delete(storageKey.substring(R2_KEY_PREFIX.length())); }
+            catch (Exception failure) { LOG.warn("Unable to remove an unused private R2 photo", failure); }
+        } else {
+            deleteQuietly(path(storageKey, false));
+            deleteQuietly(path(storageKey, true));
+        }
     }
 
     private Path path(String key, boolean thumbnail) {

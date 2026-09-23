@@ -6,7 +6,9 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import javax.imageio.ImageIO;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
@@ -16,6 +18,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.io.Resource;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -49,6 +53,57 @@ class CustomerOrderPhotoServiceTest {
         assertThat(service.attachedOrderId(photo.id())).isEqualTo(10L);
         assertThatThrownBy(() -> transaction.executeWithoutResult(status -> service.attachToOrder(1, 11, List.of(photo.id())))).isInstanceOf(ResponseStatusException.class);
         assertThatThrownBy(() -> service.removeUnused(1, photo.id())).isInstanceOf(ResponseStatusException.class).hasMessageContaining("preserved");
+    }
+
+    @Test void r2PhotosRemainPrivateAndOlderLocalPhotosStayReadable() throws Exception {
+        byte[] image = png();
+        var localPhoto = transaction.execute(status ->
+            service.upload(1, new MockMultipartFile("file", "local.png", "image/png", image)));
+        var objectStore = new FakePrivateStorage();
+        var r2Service = new CustomerOrderPhotoService(JdbcClient.create(jdbc), jdbc,
+            new MediaCapacityService(0), directory.toString(), "r2", objectStore);
+        var remotePhoto = transaction.execute(status ->
+            r2Service.upload(1, new MockMultipartFile("file", "remote.png", "image/png", image)));
+        String key = jdbc.queryForObject("SELECT storage_key FROM customer_order_photo WHERE id=?",
+            String.class, remotePhoto.id());
+        assertThat(key).startsWith("r2:");
+        assertThat(r2Service.readOwned(1, remotePhoto.id(), true).getContentAsByteArray()).isEqualTo(image);
+        assertThat(r2Service.readOwned(1, remotePhoto.id(), false).getContentAsByteArray())
+            .startsWith((byte) 0xff, (byte) 0xd8);
+        assertThat(r2Service.readOwned(1, localPhoto.id(), true).getContentAsByteArray()).isEqualTo(image);
+        assertThatThrownBy(() -> r2Service.readOwned(2, remotePhoto.id(), true))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("404");
+        transaction.executeWithoutResult(status -> {
+            r2Service.upload(1, new MockMultipartFile("file", "rolled-back.png", "image/png", image));
+            status.setRollbackOnly();
+        });
+        assertThat(objectStore.objects).hasSize(2);
+        transaction.executeWithoutResult(status -> r2Service.removeUnused(1, remotePhoto.id()));
+        assertThat(objectStore.objects).isEmpty();
+    }
+
+    private static final class FakePrivateStorage implements PrivatePhotoObjectStorage {
+        private final Map<String, byte[]> objects = new HashMap<>();
+        @Override public boolean configured() { return true; }
+        @Override public void requireConfigured() { }
+        @Override public void store(String id, byte[] original, byte[] preview, String type, String checksum) {
+            objects.put(id + ".original", original);
+            objects.put(id + ".preview", preview);
+        }
+        @Override public Resource read(String id, boolean original) {
+            return new ByteArrayResource(objects.get(id + (original ? ".original" : ".preview")));
+        }
+        @Override public void delete(String id) {
+            objects.remove(id + ".original");
+            objects.remove(id + ".preview");
+        }
+    }
+
+    @Test void unknownPrivateStorageDriverFailsInsteadOfSilentlySavingLocally() {
+        assertThatThrownBy(() -> new CustomerOrderPhotoService(JdbcClient.create(jdbc), jdbc,
+            new MediaCapacityService(0), directory.toString(), "r22", new FakePrivateStorage()))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Unsupported private photo storage driver");
     }
 
     @Test void rejectedFormatsAndRollbackLeaveNoOrphanedFiles() throws Exception {
