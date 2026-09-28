@@ -156,36 +156,25 @@ orders. Payment providers remain disabled until merchant configuration and
 channel acceptance are complete; email delivery remains disabled until its
 separate configuration and acceptance are complete.
 
-## Private customer and sub-agent photos on R2
+## Published grading media on the existing R2 bucket
 
-Customer order photos and sub-agent intake photos use the same private upload
-service. Its driver is independent of the public grading-media driver:
-NXR_PRIVATE_PHOTO_DRIVER remains local until R2 is ready. To use R2, create a
-dedicated bucket with no public custom domain or r2.dev access, grant a scoped
-token object read/write/delete permissions on that bucket, and set
-R2_ENDPOINT, R2_REGION, R2_PRIVATE_BUCKET, R2_ACCESS_KEY_ID,
-R2_SECRET_ACCESS_KEY, and R2_PRIVATE_PHOTO_PREFIX in the protected
-/etc/nxr-java/stage.env file. Then set NXR_PRIVATE_PHOTO_DRIVER=r2 in the
-same file. Never put those values in a release or Git.
+Python keeps unpublished entry photos in its local queue and sends only
+approved, explicitly published images to the existing public R2 bucket. Java
+can follow the same boundary without changing Python's bucket or objects:
+leave NXR_MEDIA_STAGING_DRIVER=local, then set
+NXR_MEDIA_PUBLISHED_DRIVER=r2 with R2_ENDPOINT, R2_BUCKET,
+R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_REGION and R2_PUBLIC_BASE_URL in
+the protected Java environment file. Never copy the Python secret file into a
+release or Git.
 
-New uploads store the exact original and a JPEG preview under the private
-prefix. The service reads both objects back and checks the original SHA-256
-before committing the photo row. All reads continue through the existing
-authenticated endpoints; no public object URL is returned. Existing local
-photos keep their original storage keys and remain readable from
-NXR_MEDIA_STORAGE_ROOT, so retain that directory and its backup during the
-transition. Switching the driver does not move historical objects.
-Before enabling R2, both blue/green rollback slots must contain a release
-that understands R2 photo keys. An older release cannot read photos created
-after the switch. Keep the R2 credentials available during any later rollback.
-
-Validate with a new disposable QA account: upload front and back photos,
-inspect both private R2 objects and their checksums, read the previews as the
-owner and authorized administrator, confirm another account is denied, and
-verify a pre-existing local photo still opens. On a failed upload, the card
-must not acquire a photo ID. Return NXR_PRIVATE_PHOTO_DRIVER to local to stop
-new R2 uploads; keep the private bucket and credentials available for photos
-already stored there. The R2 bucket must stay private throughout the release.
+The Java media-import step stores staged grading images locally. Only the
+separate, authorized publish action copies them to R2 and records public
+URLs. Customer and sub-agent intake photos remain private local evidence and
+are not automatically published as graded images. Keep the local media root
+and its backup for older and unfinished work. Verify a disposable Java
+submission's staged images on local disk, then publish it and compare the R2
+objects, hashes, public URLs and original database state before enabling this
+setting for normal use.
 
 ## Python data synchronization
 

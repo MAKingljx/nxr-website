@@ -710,7 +710,7 @@ public class AdminMediaService {
     }
 
     private MediaStorageProvider.StoredMediaObject storeUploadedMedia(MediaCandidate candidate, String stage) {
-        return mediaStorageRegistry.active().store(
+        return mediaStorageRegistry.forStage(stage).store(
             stage,
             candidate.certId(),
             candidate.sideCode(),
@@ -968,7 +968,7 @@ public class AdminMediaService {
         }
 
         MediaStorageProvider sourceProvider = mediaStorageRegistry.providerFor(sourceMedia.storageProviderCode());
-        MediaStorageProvider targetProvider = mediaStorageRegistry.active();
+        MediaStorageProvider targetProvider = mediaStorageRegistry.forStage(stage);
         MediaStorageProvider.StoredMediaSource source = new MediaStorageProvider.StoredMediaSource(
             sourceMedia.mediaStageCode(),
             sourceMedia.storageBucket(),
