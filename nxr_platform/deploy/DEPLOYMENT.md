@@ -49,9 +49,10 @@ replace or proxy the existing Python services.
 
 Runtime files live under `/var/lib/nxr-java`; bounded application logs live
 under `/var/log/nxr-java/<slot>`. Deployment state and its two most recent
-configuration backups live under `/var/lib/nxr-java-deploy`. Each Java slot is
-capped at 640 MB, Redis at 96 MB, and the accompanying MySQL drop-in at 768 MB.
-The inactive Java slot is normally stopped.
+configuration backups live under `/var/lib/nxr-java-deploy`. Java has no
+project-imposed memory ceiling or fixed JVM heap/metaspace maximum. Redis remains
+capped at 96 MB and the accompanying MySQL drop-in at 768 MB. The inactive Java
+slot is normally stopped.
 
 ## Hot-deploy contract
 
