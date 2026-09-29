@@ -2,8 +2,11 @@ package com.nxr.platform.commerce;
 
 import com.ruoyi.common.utils.SecurityUtils;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.function.LongPredicate;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -47,6 +50,19 @@ public class OrderAccessScopeService {
     /** The menu permission grants global card access without changing order scope. */
     public AccessScope cardScopeForUser(long userId) {
         return hasGlobalCardPermission(userId) ? new AccessScope(true, List.of(), List.of()) : scopeForUser(userId);
+    }
+
+    /** Resolve scoped card ids before a streaming queue scan, avoiding queries on its open cursor. */
+    public LongPredicate cardSubmissionAccess(long userId) {
+        AccessScope scope = cardScopeForUser(userId);
+        if (scope.unrestricted()) return ignored -> true;
+        if (scope.denied()) return ignored -> false;
+        Set<Long> allowed = new HashSet<>(jdbcClient.sql("SELECT s.id FROM grading_submission s WHERE 1=1 "
+                + submissionSqlPredicate("s"))
+            .param("scopeLineIds", scope.safeBusinessLineIds())
+            .param("scopeCenterIds", scope.safeWorkCenterIds())
+            .query(Long.class).list());
+        return allowed::contains;
     }
 
     private boolean hasGlobalCardPermission(long userId) {

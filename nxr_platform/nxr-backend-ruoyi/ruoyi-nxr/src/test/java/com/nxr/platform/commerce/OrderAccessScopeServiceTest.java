@@ -97,6 +97,7 @@ class OrderAccessScopeServiceTest {
         assertTrue(service.cardScopeForUser(9).unrestricted());
         assertTrue(service.canAccessCardSubmission(9, 200));
         assertTrue(service.canAccessCardSubmission(9, 201));
+        assertTrue(service.cardSubmissionAccess(9).test(201));
         assertFalse(service.canAccessCardSubmission(9, 999));
         assertFalse(service.scopeForUser(9).unrestricted());
         assertFalse(service.canAccessOrder(9, 100));
@@ -106,6 +107,7 @@ class OrderAccessScopeServiceTest {
         jdbc.sql("DELETE FROM sys_role_menu WHERE role_id=109 AND menu_id=2160").update();
         assertFalse(service.cardScopeForUser(9).unrestricted());
         assertFalse(service.canAccessCardSubmission(9, 200));
+        assertFalse(service.cardSubmissionAccess(9).test(200));
         assertThrows(ResponseStatusException.class, () -> service.requireUnrestrictedCardAccess(9, "Card operation"));
 
         jdbc.sql("INSERT INTO sys_role_menu(role_id,menu_id) VALUES(109,2160)").update();

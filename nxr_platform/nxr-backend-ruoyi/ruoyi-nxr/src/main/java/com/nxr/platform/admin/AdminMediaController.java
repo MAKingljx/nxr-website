@@ -56,7 +56,7 @@ public class AdminMediaController {
             adminMediaService.loadQueue(
                 query, certId, cardName, cardCategory, productType, brand, language, finalGrade,
                 uploadStatus, imageStatus, showClientPushed, page, pageSize,
-                submissionId -> accessScopeService.canAccessCardSubmission(SecurityUtils.getUserId(), submissionId)
+                accessScopeService.cardSubmissionAccess(SecurityUtils.getUserId())
             )
         );
     }
