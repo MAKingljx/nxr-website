@@ -44,19 +44,22 @@ public class OrderAccessScopeService {
         return new AccessScope(false, List.copyOf(lineIds), List.copyOf(centerIds));
     }
 
-    /** Card managers may work across card submissions without gaining unrestricted order access. */
+    /** The menu permission grants global card access without changing order scope. */
     public AccessScope cardScopeForUser(long userId) {
-        return hasCardManagerRole(userId) ? new AccessScope(true, List.of(), List.of()) : scopeForUser(userId);
+        return hasGlobalCardPermission(userId) ? new AccessScope(true, List.of(), List.of()) : scopeForUser(userId);
     }
 
-    private boolean hasCardManagerRole(long userId) {
+    private boolean hasGlobalCardPermission(long userId) {
         if (userId <= 0) return false;
         return jdbcClient.sql("""
             SELECT COUNT(*) FROM sys_user u
             JOIN sys_user_role ur ON ur.user_id=u.user_id
             JOIN sys_role r ON r.role_id=ur.role_id
+            JOIN sys_role_menu rm ON rm.role_id=r.role_id
+            JOIN sys_menu m ON m.menu_id=rm.menu_id
             WHERE u.user_id=:userId AND u.status='0' AND u.del_flag='0'
-              AND r.role_key='nxr_card_manager' AND r.status='0' AND r.del_flag='0'
+              AND r.status='0' AND r.del_flag='0'
+              AND m.status='0' AND m.perms='nxr:card:global'
             """).param("userId", userId).query(Integer.class).single() > 0;
     }
 
@@ -133,7 +136,7 @@ public class OrderAccessScopeService {
 
     public boolean canAccessCardSubmission(long userId, long submissionId) {
         if (submissionId <= 0) return false;
-        if (!hasCardManagerRole(userId)) return canAccessSubmission(userId, submissionId);
+        if (!hasGlobalCardPermission(userId)) return canAccessSubmission(userId, submissionId);
         return jdbcClient.sql("SELECT COUNT(*) FROM grading_submission WHERE id=:id")
             .param("id", submissionId).query(Integer.class).single() == 1;
     }

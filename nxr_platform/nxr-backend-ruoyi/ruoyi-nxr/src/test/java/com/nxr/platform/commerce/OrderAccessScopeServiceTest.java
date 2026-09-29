@@ -26,6 +26,8 @@ class OrderAccessScopeServiceTest {
         template.execute("CREATE TABLE sys_user(user_id BIGINT PRIMARY KEY,user_name VARCHAR(64),nick_name VARCHAR(64),status CHAR(1),del_flag CHAR(1))");
         template.execute("CREATE TABLE sys_role(role_id BIGINT PRIMARY KEY,role_key VARCHAR(64),status CHAR(1),del_flag CHAR(1))");
         template.execute("CREATE TABLE sys_user_role(user_id BIGINT,role_id BIGINT)");
+        template.execute("CREATE TABLE sys_menu(menu_id BIGINT PRIMARY KEY,perms VARCHAR(100),status CHAR(1))");
+        template.execute("CREATE TABLE sys_role_menu(role_id BIGINT,menu_id BIGINT)");
         template.execute("CREATE TABLE commerce_business_line(id BIGINT PRIMARY KEY,line_code VARCHAR(48),display_name VARCHAR(128),order_origin_code VARCHAR(32),is_default TINYINT,is_active TINYINT)");
         template.execute("CREATE TABLE commerce_work_center(id BIGINT PRIMARY KEY,center_code VARCHAR(48),display_name VARCHAR(128),is_default TINYINT,is_active TINYINT)");
         template.execute("CREATE TABLE commerce_staff_business_line(user_id BIGINT,business_line_id BIGINT)");
@@ -89,6 +91,8 @@ class OrderAccessScopeServiceTest {
         jdbc.sql("INSERT INTO sys_user(user_id,user_name,nick_name,status,del_flag) VALUES(9,'card_manager','Card Manager','0','0')").update();
         jdbc.sql("INSERT INTO sys_role(role_id,role_key,status,del_flag) VALUES(109,'nxr_card_manager','0','0')").update();
         jdbc.sql("INSERT INTO sys_user_role(user_id,role_id) VALUES(9,109)").update();
+        jdbc.sql("INSERT INTO sys_menu(menu_id,perms,status) VALUES(2160,'nxr:card:global','0')").update();
+        jdbc.sql("INSERT INTO sys_role_menu(role_id,menu_id) VALUES(109,2160)").update();
 
         assertTrue(service.cardScopeForUser(9).unrestricted());
         assertTrue(service.canAccessCardSubmission(9, 200));
@@ -99,10 +103,14 @@ class OrderAccessScopeServiceTest {
         assertThrows(ResponseStatusException.class, () -> service.requireUnrestricted(9, "Order operation"));
         service.requireUnrestrictedCardAccess(9, "Card operation");
 
-        jdbc.sql("UPDATE sys_role SET status='1' WHERE role_id=109").update();
+        jdbc.sql("DELETE FROM sys_role_menu WHERE role_id=109 AND menu_id=2160").update();
         assertFalse(service.cardScopeForUser(9).unrestricted());
         assertFalse(service.canAccessCardSubmission(9, 200));
         assertThrows(ResponseStatusException.class, () -> service.requireUnrestrictedCardAccess(9, "Card operation"));
+
+        jdbc.sql("INSERT INTO sys_role_menu(role_id,menu_id) VALUES(109,2160)").update();
+        jdbc.sql("UPDATE sys_role SET status='1' WHERE role_id=109").update();
+        assertFalse(service.cardScopeForUser(9).unrestricted());
     }
 
     @Test
