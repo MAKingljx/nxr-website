@@ -85,6 +85,27 @@ class OrderAccessScopeServiceTest {
     }
 
     @Test
+    void cardManagerCanManageAllCardsWithoutGainingOrderAccess() {
+        jdbc.sql("INSERT INTO sys_user(user_id,user_name,nick_name,status,del_flag) VALUES(9,'card_manager','Card Manager','0','0')").update();
+        jdbc.sql("INSERT INTO sys_role(role_id,role_key,status,del_flag) VALUES(109,'nxr_card_manager','0','0')").update();
+        jdbc.sql("INSERT INTO sys_user_role(user_id,role_id) VALUES(9,109)").update();
+
+        assertTrue(service.cardScopeForUser(9).unrestricted());
+        assertTrue(service.canAccessCardSubmission(9, 200));
+        assertTrue(service.canAccessCardSubmission(9, 201));
+        assertFalse(service.canAccessCardSubmission(9, 999));
+        assertFalse(service.scopeForUser(9).unrestricted());
+        assertFalse(service.canAccessOrder(9, 100));
+        assertThrows(ResponseStatusException.class, () -> service.requireUnrestricted(9, "Order operation"));
+        service.requireUnrestrictedCardAccess(9, "Card operation");
+
+        jdbc.sql("UPDATE sys_role SET status='1' WHERE role_id=109").update();
+        assertFalse(service.cardScopeForUser(9).unrestricted());
+        assertFalse(service.canAccessCardSubmission(9, 200));
+        assertThrows(ResponseStatusException.class, () -> service.requireUnrestrictedCardAccess(9, "Card operation"));
+    }
+
+    @Test
     void explicitOwnedInventoryAssignmentCannotOverrideOrderLinkedSubmission() {
         service.assignOwnedInventorySubmission(new OrderAccessScopeService.SubmissionRoutingRequest(202L, 11L, 21L));
         service.saveStaffScope(new OrderAccessScopeService.StaffScopeRequest(7L, List.of(11L), List.of(21L)));

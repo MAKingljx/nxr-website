@@ -44,6 +44,22 @@ public class OrderAccessScopeService {
         return new AccessScope(false, List.copyOf(lineIds), List.copyOf(centerIds));
     }
 
+    /** Card managers may work across card submissions without gaining unrestricted order access. */
+    public AccessScope cardScopeForUser(long userId) {
+        return hasCardManagerRole(userId) ? new AccessScope(true, List.of(), List.of()) : scopeForUser(userId);
+    }
+
+    private boolean hasCardManagerRole(long userId) {
+        if (userId <= 0) return false;
+        return jdbcClient.sql("""
+            SELECT COUNT(*) FROM sys_user u
+            JOIN sys_user_role ur ON ur.user_id=u.user_id
+            JOIN sys_role r ON r.role_id=ur.role_id
+            WHERE u.user_id=:userId AND u.status='0' AND u.del_flag='0'
+              AND r.role_key='nxr_card_manager' AND r.status='0' AND r.del_flag='0'
+            """).param("userId", userId).query(Integer.class).single() > 0;
+    }
+
     public boolean canAccessOrder(long userId, long orderId) {
         if (orderId <= 0) return false;
         AccessScope scope = scopeForUser(userId);
@@ -113,6 +129,35 @@ public class OrderAccessScopeService {
             )
             """).param("submissionId", submissionId).param("userId", userId)
             .query(Integer.class).single() == 1;
+    }
+
+    public boolean canAccessCardSubmission(long userId, long submissionId) {
+        if (submissionId <= 0) return false;
+        if (!hasCardManagerRole(userId)) return canAccessSubmission(userId, submissionId);
+        return jdbcClient.sql("SELECT COUNT(*) FROM grading_submission WHERE id=:id")
+            .param("id", submissionId).query(Integer.class).single() == 1;
+    }
+
+    public void requireAccessibleCardSubmission(long submissionId) {
+        if (!canAccessCardSubmission(SecurityUtils.getUserId(), submissionId)) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Submission not found");
+        }
+    }
+
+    public void requireAccessibleCardSubmissions(long userId, List<Long> submissionIds) {
+        if (submissionIds == null || submissionIds.isEmpty() || submissionIds.size() > 500)
+            throw badRequest("Submission ids are required");
+        for (Long id : new LinkedHashSet<>(submissionIds)) {
+            if (id == null || !canAccessCardSubmission(userId, id)) {
+                throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Submission not found");
+            }
+        }
+    }
+
+    public void requireUnrestrictedCardAccess(long userId, String operation) {
+        if (!cardScopeForUser(userId).unrestricted()) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, operation + " requires unrestricted card access");
+        }
     }
 
     public void requireAccessibleSubmission(long userId, long submissionId) {
