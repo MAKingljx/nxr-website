@@ -166,6 +166,32 @@ class AdminMediaPublishWorkflowTest {
         assertThat(storageProvider.objects).contains("published-CERT001-front", "published-CERT001-back");
     }
 
+    @Test
+    void locallyStagedImagesArePublishedToR2WithoutLeavingStagedRows() {
+        jdbcTemplate.update("""
+            UPDATE submission_media SET storage_provider_code='local',storage_bucket='local-media',
+                public_url='/media/staged/CERT001.webp'
+            WHERE submission_id=1 AND media_stage_code='staged'
+            """);
+        FakeLocalStorageProvider localProvider = new FakeLocalStorageProvider();
+        JdbcClient client = JdbcClient.create(jdbcTemplate);
+        mediaService = new AdminMediaService(
+            client, jdbcTemplate, persistenceService,
+            new MediaStorageRegistry(java.util.List.of(localProvider, storageProvider), "local", "local", "r2"),
+            12, 24L * 1024 * 1024, 24L * 1024 * 1024, 100_000_000L
+        );
+
+        AdminMediaService.MediaPublishResponse response = mediaService.publishSubmission(1L, 7L);
+
+        assertThat(response.statusCode()).isEqualTo("published");
+        assertThat(storageProvider.storeCount).isEqualTo(2);
+        assertThat(storageProvider.copyCount).isZero();
+        assertThat(localProvider.resolveCount).isEqualTo(2);
+        assertThat(localProvider.deleteCount).isEqualTo(2);
+        assertThat(countWhere("submission_media", "media_stage_code='staged'")).isZero();
+        assertThat(countWhere("submission_media", "media_stage_code='published' AND storage_provider_code='r2'")).isEqualTo(2);
+    }
+
     private void createSchema() {
         jdbcTemplate.execute(
             """
@@ -410,5 +436,25 @@ class AdminMediaPublishWorkflowTest {
         public void deleteIfPresent(StoredMediaLocation location) {
             // Python owns this source.
         }
+    }
+
+    private static final class FakeLocalStorageProvider implements MediaStorageProvider {
+        private int resolveCount;
+        private int deleteCount;
+
+        @Override public String providerCode() { return "local"; }
+        @Override public boolean manages(String code) { return "local".equals(code); }
+        @Override public StoredMediaObject store(String stage, String certId, String sideCode,
+            String extension, MediaUpload upload) { throw new UnsupportedOperationException(); }
+        @Override public StoredMediaObject copy(String stage, String certId, String sideCode,
+            StoredMediaSource source) { throw new UnsupportedOperationException(); }
+        @Override public ResolvedMediaAsset resolve(StoredMediaLocation location) {
+            resolveCount++;
+            return new ResolvedMediaAsset(
+                new ByteArrayResource(new byte[] {'R','I','F','F',1,2,3,4,5,6}),
+                "image/webp", location.storageKey()
+            );
+        }
+        @Override public void deleteIfPresent(StoredMediaLocation location) { deleteCount++; }
     }
 }
