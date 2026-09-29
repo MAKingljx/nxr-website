@@ -54,6 +54,7 @@ class NonGradedReadPathTest {
 
         AdminMediaService.MediaQueueResponse mediaQueue = new AdminMediaService(
             jdbcClient,
+            jdbcTemplate,
             null,
             null,
             100,

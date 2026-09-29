@@ -45,6 +45,7 @@ class AdminMediaPublishWorkflowTest {
         storageProvider.objects.add("staged-back");
         mediaService = new AdminMediaService(
             jdbcClient,
+            jdbcTemplate,
             persistenceService,
             new MediaStorageRegistry(java.util.List.of(storageProvider), "r2"),
             12,
@@ -146,6 +147,7 @@ class AdminMediaPublishWorkflowTest {
         JdbcClient jdbcClient = JdbcClient.create(jdbcTemplate);
         mediaService = new AdminMediaService(
             jdbcClient,
+            jdbcTemplate,
             persistenceService,
             new MediaStorageRegistry(java.util.List.of(storageProvider, legacyProvider), "r2"),
             12,

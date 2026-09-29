@@ -39,6 +39,7 @@ class AdminMediaQueueParityTest {
         );
         mediaService = new AdminMediaService(
             JdbcClient.create(jdbcTemplate),
+            jdbcTemplate,
             null,
             new MediaStorageRegistry(java.util.List.of(localProvider), "local"),
             12,
@@ -92,6 +93,23 @@ class AdminMediaQueueParityTest {
             null, null, null, null, null, null, null, null,
             uploadStatus, imageStatus, true, 1, 20
         ).total();
+    }
+
+    @Test
+    void streamedQueueKeepsPagingAndClampsRequestsPastTheLastPage() {
+        var first = mediaService.loadQueue(null, null, null, null, null, null, null, null,
+            null, null, true, 1, 2);
+        var second = mediaService.loadQueue(null, null, null, null, null, null, null, null,
+            null, null, true, 2, 2);
+        var beyond = mediaService.loadQueue(null, null, null, null, null, null, null, null,
+            null, null, true, 99, 2);
+
+        assertThat(first.total()).isEqualTo(4);
+        assertThat(first.items()).hasSize(2);
+        assertThat(second.items()).hasSize(2);
+        assertThat(beyond.page()).isEqualTo(2);
+        assertThat(beyond.items()).isEqualTo(second.items());
+        assertThat(first.summary()).isEqualTo(second.summary());
     }
 
     @Test

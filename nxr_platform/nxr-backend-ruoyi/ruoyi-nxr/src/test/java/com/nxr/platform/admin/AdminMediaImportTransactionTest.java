@@ -108,7 +108,7 @@ class AdminMediaImportTransactionTest {
         factory.addAdvice(new TransactionInterceptor(new DataSourceTransactionManager(dataSource), new AnnotationTransactionAttributeSource()));
         AdminMediaPersistenceService persistence = (AdminMediaPersistenceService) factory.getProxy();
         storage = new ImportStorage(root);
-        service = new AdminMediaService(client, persistence, new MediaStorageRegistry(List.of(storage), "local"),
+        service = new AdminMediaService(client, jdbc, persistence, new MediaStorageRegistry(List.of(storage), "local"),
             12, 24 * 1024 * 1024, 24 * 1024 * 1024, 100_000_000);
     }
 

@@ -80,7 +80,7 @@ public class AdminSubmissionController {
                 enteredBy,
                 sortBy,
                 sortOrder
-            ), accessScopeService.scopeForUser(SecurityUtils.getUserId())
+            ), accessScopeService.cardScopeForUser(SecurityUtils.getUserId())
         ));
     }
 
@@ -104,7 +104,7 @@ public class AdminSubmissionController {
     @PreAuthorize("@ss.hasAnyPermi('nxr:entry:list,nxr:entry:add')")
     @PostMapping("/calculate-pop")
     public AjaxResult calculatePopulation(@RequestBody PopulationPayload payload) {
-        if (payload != null && payload.currentSubmissionId() != null) accessScopeService.requireAccessibleSubmission(payload.currentSubmissionId());
+        if (payload != null && payload.currentSubmissionId() != null) accessScopeService.requireAccessibleCardSubmission(payload.currentSubmissionId());
         return AjaxResult.success(adminSubmissionService.calculatePopulation(new AdminSubmissionService.PopulationCalculationRequest(
             payload.productType(),
             payload.cardCategory(),
@@ -131,7 +131,7 @@ public class AdminSubmissionController {
     @PreAuthorize("@ss.hasAnyPermi('nxr:entry:list,nxr:entry:add')")
     @PostMapping("/match-card")
     public AjaxResult matchCard(@RequestBody MatchCardPayload payload) {
-        accessScopeService.requireUnrestricted(SecurityUtils.getUserId(), "Global card matching");
+        accessScopeService.requireUnrestrictedCardAccess(SecurityUtils.getUserId(), "Global card matching");
         return AjaxResult.success(adminSubmissionService.matchCard(new AdminSubmissionService.MatchCardRequest(
             payload.productType(),
             payload.cardCategory(),
@@ -144,14 +144,14 @@ public class AdminSubmissionController {
     @Log(title = "卡牌审批", businessType = BusinessType.UPDATE)
     @PostMapping("/batch-approve")
     public AjaxResult batchApproveSubmissions(@RequestBody BatchApprovePayload payload) {
-        accessScopeService.requireAccessibleSubmissions(SecurityUtils.getUserId(), payload == null ? null : payload.submissionIds());
+        accessScopeService.requireAccessibleCardSubmissions(SecurityUtils.getUserId(), payload == null ? null : payload.submissionIds());
         return AjaxResult.success(adminSubmissionService.approveSubmissions(payload.submissionIds(), SecurityUtils.getUserId()));
     }
 
     @PreAuthorize("@ss.hasPermi('nxr:entry:list')")
     @GetMapping("/{submissionId}")
     public AjaxResult submissionDetail(@PathVariable long submissionId) {
-        accessScopeService.requireAccessibleSubmission(submissionId);
+        accessScopeService.requireAccessibleCardSubmission(submissionId);
         return AjaxResult.success(adminSubmissionService.loadSubmission(submissionId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Submission not found")));
     }
@@ -160,7 +160,7 @@ public class AdminSubmissionController {
     @Log(title = "卡牌录入", businessType = BusinessType.INSERT)
     @PostMapping
     public AjaxResult createSubmission(@Valid @RequestBody MutateSubmissionPayload payload) {
-        accessScopeService.requireUnrestricted(SecurityUtils.getUserId(), "Unassigned submission creation");
+        accessScopeService.requireUnrestrictedCardAccess(SecurityUtils.getUserId(), "Unassigned submission creation");
         return AjaxResult.success(adminSubmissionService.createSubmission(toMutationRequest(payload, SecurityUtils.getUserId())));
     }
 
@@ -171,7 +171,7 @@ public class AdminSubmissionController {
         @PathVariable long submissionId,
         @Valid @RequestBody MutateSubmissionPayload payload
     ) {
-        accessScopeService.requireAccessibleSubmission(submissionId);
+        accessScopeService.requireAccessibleCardSubmission(submissionId);
         return AjaxResult.success(adminSubmissionService.updateSubmission(submissionId, toMutationRequest(payload, SecurityUtils.getUserId())));
     }
 
@@ -179,7 +179,7 @@ public class AdminSubmissionController {
     @Log(title = "卡牌审批", businessType = BusinessType.UPDATE)
     @PostMapping("/{submissionId}/approve")
     public AjaxResult approveSubmission(@PathVariable long submissionId) {
-        accessScopeService.requireAccessibleSubmission(submissionId);
+        accessScopeService.requireAccessibleCardSubmission(submissionId);
         return AjaxResult.success(adminSubmissionService.approveSubmission(submissionId, SecurityUtils.getUserId()));
     }
 

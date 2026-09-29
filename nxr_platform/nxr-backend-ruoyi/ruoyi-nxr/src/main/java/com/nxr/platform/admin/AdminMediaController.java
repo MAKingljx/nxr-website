@@ -56,7 +56,7 @@ public class AdminMediaController {
             adminMediaService.loadQueue(
                 query, certId, cardName, cardCategory, productType, brand, language, finalGrade,
                 uploadStatus, imageStatus, showClientPushed, page, pageSize,
-                submissionId -> accessScopeService.canAccessSubmission(SecurityUtils.getUserId(), submissionId)
+                accessScopeService.cardSubmissionAccess(SecurityUtils.getUserId())
             )
         );
     }
@@ -67,7 +67,7 @@ public class AdminMediaController {
     public AjaxResult importFolder(
         @RequestPart(name = "image_files", required = false) List<MultipartFile> imageFiles
     ) {
-        accessScopeService.requireUnrestricted(SecurityUtils.getUserId(), "Folder-wide media import");
+        accessScopeService.requireUnrestrictedCardAccess(SecurityUtils.getUserId(), "Folder-wide media import");
         return AjaxResult.success(adminMediaService.importFolder(imageFiles));
     }
 
@@ -78,7 +78,7 @@ public class AdminMediaController {
         @PathVariable long submissionId,
         @RequestPart(name = "image_files", required = false) List<MultipartFile> imageFiles
     ) {
-        accessScopeService.requireAccessibleSubmission(submissionId);
+        accessScopeService.requireAccessibleCardSubmission(submissionId);
         return AjaxResult.success(adminMediaService.importSubmissionMedia(submissionId, imageFiles));
     }
 
@@ -86,7 +86,7 @@ public class AdminMediaController {
     @Log(title = "媒体发布", businessType = BusinessType.UPDATE)
     @PostMapping("/submissions/{submissionId}/publish")
     public AjaxResult publishSubmission(@PathVariable long submissionId) {
-        accessScopeService.requireAccessibleSubmission(submissionId);
+        accessScopeService.requireAccessibleCardSubmission(submissionId);
         return AjaxResult.success(adminMediaService.publishSubmission(submissionId, SecurityUtils.getUserId()));
     }
 
@@ -94,7 +94,7 @@ public class AdminMediaController {
     @Log(title = "标记客户端已推送", businessType = BusinessType.UPDATE)
     @PostMapping("/submissions/{submissionId}/client-pushed")
     public AjaxResult markClientPushed(@PathVariable long submissionId) {
-        accessScopeService.requireAccessibleSubmission(submissionId);
+        accessScopeService.requireAccessibleCardSubmission(submissionId);
         return AjaxResult.success(adminMediaService.markClientPushed(submissionId, SecurityUtils.getUserId()));
     }
 
@@ -102,7 +102,7 @@ public class AdminMediaController {
     @Log(title = "媒体批量发布", businessType = BusinessType.UPDATE)
     @PostMapping("/batch-publish")
     public AjaxResult publishSubmissions(@RequestBody AdminMediaService.MediaBatchPublishRequest request) {
-        accessScopeService.requireAccessibleSubmissions(SecurityUtils.getUserId(), request == null ? null : request.submissionIds());
+        accessScopeService.requireAccessibleCardSubmissions(SecurityUtils.getUserId(), request == null ? null : request.submissionIds());
         return AjaxResult.success(
             adminMediaService.publishSubmissions(
                 request == null ? null : request.submissionIds(),

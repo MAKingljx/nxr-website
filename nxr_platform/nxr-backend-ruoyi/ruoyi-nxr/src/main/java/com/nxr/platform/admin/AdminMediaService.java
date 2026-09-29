@@ -7,16 +7,20 @@ import java.io.IOException;
 import java.io.DataInputStream;
 import java.io.InputStream;
 import java.math.BigDecimal;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Consumer;
 import java.util.function.LongPredicate;
 import java.util.UUID;
 import java.util.regex.Matcher;
@@ -26,6 +30,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,6 +50,7 @@ public class AdminMediaService {
     );
 
     private final JdbcClient jdbcClient;
+    private final JdbcTemplate jdbcTemplate;
     private final AdminMediaPersistenceService adminMediaPersistenceService;
     private final MediaStorageRegistry mediaStorageRegistry;
     private final int maxImportFiles;
@@ -53,6 +60,7 @@ public class AdminMediaService {
 
     public AdminMediaService(
         JdbcClient jdbcClient,
+        JdbcTemplate jdbcTemplate,
         AdminMediaPersistenceService adminMediaPersistenceService,
         MediaStorageRegistry mediaStorageRegistry,
         @Value("${nxr.media.import.max-files:12}") int maxImportFiles,
@@ -61,6 +69,7 @@ public class AdminMediaService {
         @Value("${nxr.media.import.max-image-pixels:100000000}") long maxImagePixels
     ) {
         this.jdbcClient = jdbcClient;
+        this.jdbcTemplate = jdbcTemplate;
         this.adminMediaPersistenceService = adminMediaPersistenceService;
         this.mediaStorageRegistry = mediaStorageRegistry;
         this.maxImportFiles = Math.max(maxImportFiles, 1);
@@ -126,25 +135,44 @@ public class AdminMediaService {
             normalizeImageStatus(imageStatus),
             showClientPushed
         );
-        List<MediaQueueItem> allItems = loadQueueItems().stream()
-            .filter(item -> submissionAccess.test(item.submissionId())).toList();
-        MediaQueueSummary summary = summarizeQueue(allItems);
-        List<MediaQueueItem> filteredItems = allItems.stream()
-            .filter(item -> matchesFilters(item, filters))
-            .toList();
-
         int normalizedPageSize = Math.min(Math.max(pageSize, 1), 200);
-        int total = filteredItems.size();
-        int totalPages = Math.max(1, (int) Math.ceil((double) total / normalizedPageSize));
-        int normalizedPage = Math.min(Math.max(page, 1), totalPages);
-        int offset = (normalizedPage - 1) * normalizedPageSize;
-        List<MediaQueueItem> items = filteredItems.subList(offset, Math.min(offset + normalizedPageSize, total));
+        int requestedPage = Math.max(page, 1);
+        long requestedOffset = (long) (requestedPage - 1) * normalizedPageSize;
+        QueueSummaryAccumulator summary = new QueueSummaryAccumulator();
+        List<MediaQueueItem> requestedItems = new ArrayList<>(normalizedPageSize);
+        Deque<MediaQueueItem> lastItems = new ArrayDeque<>(normalizedPageSize);
+        int[] filteredCount = {0};
+        scanQueueItems(item -> {
+            if (!submissionAccess.test(item.submissionId())) return;
+            summary.add(item);
+            if (!matchesFilters(item, filters)) return;
+            int index = filteredCount[0]++;
+            if (index >= requestedOffset && index < requestedOffset + normalizedPageSize) {
+                requestedItems.add(item);
+            }
+            lastItems.addLast(item);
+            if (lastItems.size() > normalizedPageSize) lastItems.removeFirst();
+        });
 
-        return new MediaQueueResponse(items, summary, normalizedPage, normalizedPageSize, total);
+        int total = filteredCount[0];
+        int totalPages = Math.max(1, (int) Math.ceil((double) total / normalizedPageSize));
+        int normalizedPage = Math.min(requestedPage, totalPages);
+        List<MediaQueueItem> items;
+        if (requestedPage <= totalPages) {
+            items = requestedItems;
+        } else {
+            int lastPageSize = total % normalizedPageSize == 0 ? normalizedPageSize : total % normalizedPageSize;
+            List<MediaQueueItem> tail = new ArrayList<>(lastItems);
+            items = tail.subList(Math.max(0, tail.size() - lastPageSize), tail.size());
+        }
+
+        return new MediaQueueResponse(items, summary.result(), normalizedPage, normalizedPageSize, total);
     }
 
-    private List<MediaQueueItem> loadQueueItems() {
-        return jdbcClient.sql(
+    private void scanQueueItems(Consumer<MediaQueueItem> visitor) {
+        RowCallbackHandler consumeRow = rs -> visitor.accept(mapQueueItem(rs));
+        jdbcTemplate.query(connection -> {
+            PreparedStatement statement = connection.prepareStatement(
                 """
                 SELECT
                     s.id,
@@ -187,9 +215,20 @@ public class AdminMediaService {
                     AND pb.media_side_code='back' AND pb.sort_order=1 AND pb.is_active=1
                 WHERE s.status_code IN ('approved', 'published')
                 ORDER BY COALESCE(s.approved_at, s.published_at, s.updated_at) DESC, s.id DESC
-                """
-            )
-            .query((rs, rowNum) -> {
+                """,
+                ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY
+            );
+            // MySQL streams rows one by one with MIN_VALUE; H2 uses a regular bounded fetch size.
+            if (connection.getMetaData().getDatabaseProductName().toLowerCase(Locale.ROOT).contains("mysql")) {
+                statement.setFetchSize(Integer.MIN_VALUE);
+            } else {
+                statement.setFetchSize(1000);
+            }
+            return statement;
+        }, consumeRow);
+    }
+
+    private MediaQueueItem mapQueueItem(ResultSet rs) throws SQLException {
                 MediaReference stagedFront = inspectReference(rs, "sf", "staged");
                 MediaReference stagedBack = inspectReference(rs, "sb", "staged");
                 MediaReference publishedFront = inspectReference(rs, "pf", "published");
@@ -231,8 +270,6 @@ public class AdminMediaService {
                         && !"uploading".equals(uploadState)
                         && !"client_pushed".equals(uploadState)
                 );
-            })
-            .list();
     }
 
     private MediaReference inspectReference(ResultSet rs, String prefix, String stage) throws SQLException {
@@ -262,17 +299,20 @@ public class AdminMediaService {
         return value != null && (value.startsWith("https://") || value.startsWith("http://"));
     }
 
-    private MediaQueueSummary summarizeQueue(List<MediaQueueItem> items) {
-        Map<String, Integer> statusCounts = new LinkedHashMap<>();
-        int ready = 0;
-        int live = 0;
-        int missing = 0;
-        int clientPushed = 0;
-        int hasFront = 0;
-        int hasBack = 0;
-        int waiting = 0;
-        int uploaded = 0;
-        for (MediaQueueItem item : items) {
+    private static final class QueueSummaryAccumulator {
+        private final Map<String, Integer> statusCounts = new LinkedHashMap<>();
+        private int count;
+        private int ready;
+        private int live;
+        private int missing;
+        private int clientPushed;
+        private int hasFront;
+        private int hasBack;
+        private int waiting;
+        private int uploaded;
+
+        void add(MediaQueueItem item) {
+            count++;
             statusCounts.merge(item.uploadStatus(), 1, Integer::sum);
             boolean stagedComplete = item.hasStagedFront() && item.hasStagedBack();
             boolean publishedComplete = item.hasPublishedFront() && item.hasPublishedBack();
@@ -288,10 +328,13 @@ public class AdminMediaService {
             waiting += !stagedComplete && !publishedComplete ? 1 : 0;
             uploaded += uploadedToServer ? 1 : 0;
         }
-        return new MediaQueueSummary(
-            items.size(), ready, live, missing, items.size(), clientPushed,
-            hasFront, hasBack, waiting, uploaded, Math.max(items.size() - uploaded, 0), statusCounts
-        );
+
+        MediaQueueSummary result() {
+            return new MediaQueueSummary(
+                count, ready, live, missing, count, clientPushed,
+                hasFront, hasBack, waiting, uploaded, Math.max(count - uploaded, 0), statusCounts
+            );
+        }
     }
 
     private boolean matchesFilters(MediaQueueItem item, QueueFilters filters) {
