@@ -58,6 +58,9 @@ slot is normally stopped.
 
 - A release is accepted only when every file is covered by a valid
   `SHA256SUMS` manifest and no release path is writable by group or other users.
+- Java SPA `index.html` responses use `Cache-Control: no-store` so a new
+  release cannot load an older HTML shell; hashed JS and CSS asset responses
+  keep their normal cache behavior.
 - `BACKEND_SOURCE_TREE` records the Git tree for the Java backend. When it is
   unchanged, the release builder may produce a different JAR, but deployment
   updates only the four static roots with one graceful Nginx reload; Java is

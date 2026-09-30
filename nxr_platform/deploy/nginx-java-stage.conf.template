@@ -18,6 +18,11 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
+    location = /index.html {
+        add_header Cache-Control "no-store, max-age=0" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+    }
+
     location /api/ {
         proxy_pass http://nxr_java_stage_backend;
         proxy_set_header Host $host;
@@ -46,6 +51,11 @@ server {
 
     location / {
         try_files $uri $uri/ /index.html;
+    }
+
+    location = /index.html {
+        add_header Cache-Control "no-store, max-age=0" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
     }
 
     location /api/ {
@@ -79,6 +89,11 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
+    location = /index.html {
+        add_header Cache-Control "no-store, max-age=0" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+    }
+
     location /prod-api/ {
         proxy_pass http://nxr_java_stage_backend/;
         proxy_set_header Host $host;
@@ -102,6 +117,11 @@ server {
 
     location / {
         try_files $uri $uri/ /index.html;
+    }
+
+    location = /index.html {
+        add_header Cache-Control "no-store, max-age=0" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
     }
 
     location /prod-api/ {
