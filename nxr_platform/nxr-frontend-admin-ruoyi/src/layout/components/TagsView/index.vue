@@ -73,6 +73,8 @@ import { getNormalPath } from '@/utils/ruoyi'
 import useTagsViewStore from '@/store/modules/tagsView'
 import useSettingsStore from '@/store/modules/settings'
 import usePermissionStore from '@/store/modules/permission'
+import useUserStore from '@/store/modules/user'
+import { canViewDashboard } from '@/utils/dashboardAccess'
 
 const visible = ref(false)
 const top = ref(0)
@@ -195,6 +197,9 @@ function filterAffixTags(routes, basePath = '') {
 function initTags() {
   if (tagsViewPersist.value) {
     useTagsViewStore().loadPersistedViews()
+  }
+  if (!canViewDashboard(useUserStore().permissions)) {
+    useTagsViewStore().delVisitedView({ path: '/index' })
   }
   const res = filterAffixTags(routes.value)
   affixTags.value = res

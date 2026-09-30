@@ -5,6 +5,8 @@ import Layout from '@/layout/index'
 import ParentView from '@/components/ParentView'
 import InnerLink from '@/layout/components/InnerLink'
 import { prepareNxrBusinessRoutes } from '@/utils/nxrNavigation'
+import { canViewDashboard, firstAccessibleBusinessPath } from '@/utils/dashboardAccess'
+import useUserStore from '@/store/modules/user'
 
 // 匹配views里面所有的.vue文件
 const modules = import.meta.glob('./../../views/**/*.vue')
@@ -17,15 +19,16 @@ const usePermissionStore = defineStore(
       addRoutes: [],
       defaultRoutes: [],
       topbarRouters: [],
-      sidebarRouters: []
+      sidebarRouters: [],
+      landingPath: null
     }),
     actions: {
       setRoutes(routes) {
         this.addRoutes = routes
-        this.routes = constantRoutes.concat(routes)
+        this.routes = visibleConstantRoutes().concat(routes)
       },
       setDefaultRoutes(routes) {
-        this.defaultRoutes = constantRoutes.concat(routes)
+        this.defaultRoutes = visibleConstantRoutes().concat(routes)
       },
       setTopbarRoutes(routes) {
         this.topbarRouters = routes
@@ -47,7 +50,8 @@ const usePermissionStore = defineStore(
             const asyncRoutes = filterDynamicRoutes(dynamicRoutes)
             asyncRoutes.forEach(route => { router.addRoute(route) })
             this.setRoutes(rewriteRoutes)
-            this.setSidebarRouters(constantRoutes.concat(sidebarRoutes))
+            this.landingPath = firstAccessibleBusinessPath(sidebarRoutes)
+            this.setSidebarRouters(visibleConstantRoutes().concat(sidebarRoutes))
             this.setDefaultRoutes(sidebarRoutes)
             this.setTopbarRoutes(defaultRoutes)
             resolve(rewriteRoutes)
@@ -129,3 +133,9 @@ export const loadView = (view) => {
 }
 
 export default usePermissionStore
+
+function visibleConstantRoutes() {
+  return canViewDashboard(useUserStore().permissions)
+    ? constantRoutes
+    : constantRoutes.filter((route) => route.path !== '')
+}

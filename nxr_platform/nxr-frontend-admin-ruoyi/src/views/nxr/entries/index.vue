@@ -175,7 +175,7 @@
           <el-descriptions-item :label="t('entries.updatedAt')">{{ formatDateTime(detail.updatedAt) }}</el-descriptions-item>
         </el-descriptions>
         <div v-if="detail.media && detail.media.length" class="media-grid">
-          <figure v-for="m in detail.media" :key="m.mediaStageCode + '-' + m.mediaSideCode">
+          <figure v-for="m in orderedDetailMedia" :key="m.mediaStageCode + '-' + m.mediaSideCode">
             <img :src="m.publicUrl" :alt="m.mediaSideCode" loading="lazy" />
             <figcaption>{{ m.mediaSideCode }} · {{ m.mediaStageCode }}</figcaption>
           </figure>
@@ -194,7 +194,7 @@
     </el-dialog>
 
     <el-dialog :title="formTitle" v-model="formOpen" width="860px" append-to-body @close="resetForm">
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="150px">
+      <el-form ref="formRef" :model="form" :rules="rules" label-width="150px" :disabled="Boolean(pendingMediaRetry)">
         <el-row :gutter="16">
           <el-col :span="12">
             <el-form-item :label="t('entries.productType')" prop="productType">
@@ -332,6 +332,8 @@
         </el-alert>
 
         <el-divider content-position="left">{{ t('entries.imageUploads') }}</el-divider>
+        <el-alert v-if="canImportMedia" type="info" :closable="false" :title="t('entries.imageStagingHint')" class="mb8" />
+        <el-alert v-if="pendingMediaRetry" type="warning" :closable="false" :title="t('entries.mediaUploadRetryHint', { certId: pendingMediaRetry.certId })" class="mb8" />
         <el-row v-if="canImportMedia" :gutter="16">
           <el-col :span="12">
             <el-form-item :label="t('entries.frontImage')">
@@ -357,12 +359,13 @@
         <el-alert v-else type="info" :closable="false" :title="t('entries.mediaPermissionMissing')" />
       </el-form>
       <template #footer>
-        <el-button :loading="calculating" @click="calculateFormPreview">
+        <el-button :disabled="Boolean(pendingMediaRetry)" :loading="calculating" @click="calculateFormPreview">
           {{ isGradedForm ? t('entries.calculateGradePop') : t('entries.calculatePop') }}
         </el-button>
-        <el-button v-if="!isMovieForm" :disabled="!canMatchCard" :loading="matching" @click="applyCardMatch">{{ t('entries.matchCard') }}</el-button>
-        <el-button type="primary" :loading="submitting" @click="submitForm">{{ t('common.save') }}</el-button>
-        <el-button @click="formOpen = false">{{ t('common.cancel') }}</el-button>
+        <el-button v-if="!isMovieForm" :disabled="!canMatchCard || Boolean(pendingMediaRetry)" :loading="matching" @click="applyCardMatch">{{ t('entries.matchCard') }}</el-button>
+        <el-button v-if="pendingMediaRetry" type="primary" :loading="submitting" @click="retryMediaUpload">{{ t('entries.retryImageUpload') }}</el-button>
+        <el-button v-else type="primary" :loading="submitting" @click="submitForm">{{ t('common.save') }}</el-button>
+        <el-button @click="formOpen = false">{{ t(pendingMediaRetry ? 'common.close' : 'common.cancel') }}</el-button>
       </template>
     </el-dialog>
   </main>
@@ -405,6 +408,10 @@ const loading = ref(true)
 const selectedIds = ref([])
 const detailOpen = ref(false)
 const detail = ref(null)
+const orderedDetailMedia = computed(() => [...(detail.value?.media || [])].sort((a, b) => {
+  const sideOrder = { front: 0, back: 1 }
+  return (sideOrder[a.mediaSideCode] ?? 2) - (sideOrder[b.mediaSideCode] ?? 2)
+}))
 const formOpen = ref(false)
 const formMode = ref('create')
 const editingId = ref(null)
@@ -423,6 +430,7 @@ const backImageFile = ref(null)
 const frontImageInput = ref(null)
 const backImageInput = ref(null)
 const existingMedia = ref([])
+const pendingMediaRetry = ref(null)
 let calculationTimer = null
 
 function validateCertId(_rule, value, callback) {
@@ -718,6 +726,7 @@ function handleDetail(row) {
 }
 
 function handleAdd() {
+  pendingMediaRetry.value = null
   formMode.value = 'create'
   editingId.value = null
   Object.assign(form.value, createDefaultForm())
@@ -731,6 +740,7 @@ function handleAdd() {
 }
 
 function handleEdit(row) {
+  pendingMediaRetry.value = null
   getSubmission(row.id).then((res) => {
     const d = res.data
     formMode.value = 'edit'
@@ -818,6 +828,7 @@ function clearSelectedImages() {
 }
 
 function resetForm() {
+  pendingMediaRetry.value = null
   window.clearTimeout(calculationTimer)
   calculationTimer = null
   proxy.resetForm('formRef')
@@ -933,13 +944,16 @@ function submitForm() {
             mediaUploadFailed = true
           }
         }
+        if (mediaUploadFailed) {
+          pendingMediaRetry.value = { submissionId: res.data.id, certId: res.data.certId }
+          proxy.$modal.msgWarning(t('entries.mediaUploadRetryHint', { certId: res.data.certId }))
+          getList()
+          return
+        }
         proxy.$modal.msgSuccess(t(
           formMode.value === 'create' ? 'entries.entryCreated' : 'entries.entrySaved',
           { certId: res.data.certId }
         ))
-        if (mediaUploadFailed) {
-          proxy.$modal.msgWarning(t('entries.mediaUploadFailed'))
-        }
         formOpen.value = false
         getList()
       })
@@ -947,6 +961,32 @@ function submitForm() {
         submitting.value = false
       })
   })
+}
+
+async function retryMediaUpload() {
+  const retry = pendingMediaRetry.value
+  if (!retry) return
+  const files = prepareSelectedImages(retry.certId)
+  if (!files.length) {
+    proxy.$modal.msgWarning(t('entries.selectImageToRetry'))
+    return
+  }
+  submitting.value = true
+  try {
+    const response = await importSubmissionMedia(retry.submissionId, files)
+    if (response.data.savedFiles !== files.length) {
+      proxy.$modal.msgWarning(t('entries.mediaUploadRetryHint', { certId: retry.certId }))
+      return
+    }
+    pendingMediaRetry.value = null
+    proxy.$modal.msgSuccess(t('entries.imagesStaged', { certId: retry.certId }))
+    formOpen.value = false
+    getList()
+  } catch {
+    proxy.$modal.msgWarning(t('entries.mediaUploadRetryHint', { certId: retry.certId }))
+  } finally {
+    submitting.value = false
+  }
 }
 
 function submissionPayload() {

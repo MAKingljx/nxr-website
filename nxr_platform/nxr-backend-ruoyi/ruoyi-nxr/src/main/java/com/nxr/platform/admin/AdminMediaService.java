@@ -169,7 +169,77 @@ public class AdminMediaService {
         return new MediaQueueResponse(items, summary.result(), normalizedPage, normalizedPageSize, total);
     }
 
+    /** Returns the page independently of the expensive, exact filesystem-backed global summary. */
+    @Transactional(readOnly = true)
+    public MediaQueuePage loadQueuePage(
+        String query, String certId, String cardName, String cardCategory, String productType,
+        String brand, String language, String finalGrade, String uploadStatus, String imageStatus,
+        boolean showClientPushed, int page, int pageSize, boolean unrestricted,
+        LongPredicate submissionAccess
+    ) {
+        QueueFilters filters = new QueueFilters(
+            normalizeFilter(query), normalizeFilter(certId), normalizeFilter(cardName),
+            normalizeCode(cardCategory), normalizeCode(productType), normalizeFilter(brand),
+            normalizeFilter(language), normalizeFilter(finalGrade),
+            normalizeUploadStatus(uploadStatus), normalizeImageStatus(imageStatus), showClientPushed
+        );
+        // The common unfiltered/certificate lookup can be counted and paged in SQL.
+        // Media-dependent filters and scoped reads retain the original exact scan.
+        if (!unrestricted || filters.query() != null || filters.cardName() != null
+            || filters.cardCategory() != null || filters.productType() != null
+            || filters.brand() != null || filters.language() != null
+            || filters.finalGrade() != null || filters.uploadStatus() != null
+            || filters.imageStatus() != null
+            || (filters.certId() != null && !filters.certId().matches("[A-Za-z0-9_-]+"))) {
+            MediaQueueResponse response = loadQueue(
+                query, certId, cardName, cardCategory, productType, brand, language, finalGrade,
+                uploadStatus, imageStatus, showClientPushed, page, pageSize, submissionAccess
+            );
+            return new MediaQueuePage(response.items(), response.page(), response.pageSize(), response.total());
+        }
+
+        int normalizedPageSize = Math.min(Math.max(pageSize, 1), 200);
+        String where = " WHERE s.status_code IN ('approved', 'published')"
+            + (showClientPushed ? "" : " AND COALESCE(us.status_code, 'not_started') <> 'client_pushed'")
+            + (filters.certId() == null ? "" : " AND UPPER(s.cert_id) LIKE :certPattern ESCAPE '!'");
+        String from = " FROM grading_submission s LEFT JOIN submission_upload_state us ON us.submission_id=s.id";
+        String certPattern = filters.certId() == null ? null
+            : "%" + filters.certId().toUpperCase(Locale.ROOT).replace("!", "!!")
+                .replace("%", "!%").replace("_", "!_") + "%";
+        var countQuery = jdbcClient.sql("SELECT COUNT(*)" + from + where);
+        if (certPattern != null) countQuery = countQuery.param("certPattern", certPattern);
+        int total = countQuery.query(Integer.class).single();
+        int totalPages = Math.max(1, (int) Math.ceil((double) total / normalizedPageSize));
+        int normalizedPage = Math.min(Math.max(page, 1), totalPages);
+        long offset = (long) (normalizedPage - 1) * normalizedPageSize;
+        var idsQuery = jdbcClient.sql("SELECT s.id" + from + where
+            + " ORDER BY COALESCE(s.approved_at, s.published_at, s.updated_at) DESC, s.id DESC"
+            + " LIMIT :limit OFFSET :offset")
+            .param("limit", normalizedPageSize).param("offset", offset);
+        if (certPattern != null) idsQuery = idsQuery.param("certPattern", certPattern);
+        List<Long> ids = idsQuery.query(Long.class).list();
+        if (ids.isEmpty()) return new MediaQueuePage(List.of(), normalizedPage, normalizedPageSize, total);
+
+        List<MediaQueueItem> items = new ArrayList<>(ids.size());
+        String idList = ids.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+        scanQueueItems(items::add, " AND s.id IN (" + idList + ")");
+        return new MediaQueuePage(items, normalizedPage, normalizedPageSize, total);
+    }
+
+    @Transactional(readOnly = true)
+    public MediaQueueSummary loadQueueSummary(LongPredicate submissionAccess) {
+        QueueSummaryAccumulator summary = new QueueSummaryAccumulator();
+        scanQueueItems(item -> {
+            if (submissionAccess.test(item.submissionId())) summary.add(item);
+        });
+        return summary.result();
+    }
+
     private void scanQueueItems(Consumer<MediaQueueItem> visitor) {
+        scanQueueItems(visitor, "");
+    }
+
+    private void scanQueueItems(Consumer<MediaQueueItem> visitor, String additionalWhere) {
         RowCallbackHandler consumeRow = rs -> visitor.accept(mapQueueItem(rs));
         jdbcTemplate.query(connection -> {
             PreparedStatement statement = connection.prepareStatement(
@@ -214,8 +284,7 @@ public class AdminMediaService {
                 LEFT JOIN submission_media pb ON pb.submission_id=s.id AND pb.media_stage_code='published'
                     AND pb.media_side_code='back' AND pb.sort_order=1 AND pb.is_active=1
                 WHERE s.status_code IN ('approved', 'published')
-                ORDER BY COALESCE(s.approved_at, s.published_at, s.updated_at) DESC, s.id DESC
-                """,
+                """ + additionalWhere + " ORDER BY COALESCE(s.approved_at, s.published_at, s.updated_at) DESC, s.id DESC",
                 ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY
             );
             // MySQL streams rows one by one with MIN_VALUE; H2 uses a regular bounded fetch size.
@@ -1225,6 +1294,9 @@ public class AdminMediaService {
         int pageSize,
         int total
     ) {
+    }
+
+    public record MediaQueuePage(List<MediaQueueItem> items, int page, int pageSize, int total) {
     }
 
     public record MediaQueueSummary(

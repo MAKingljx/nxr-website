@@ -48,6 +48,25 @@ class LegacyPythonMediaStorageProviderTest {
                 .isEqualTo(HttpStatus.METHOD_NOT_ALLOWED));
     }
 
+    @Test
+    void fastExistenceCheckRejectsSymlinkAndInvalidReference() throws Exception {
+        Path image = uploadRoot.resolve("front.webp");
+        Files.writeString(image, "image");
+        Files.createSymbolicLink(uploadRoot.resolve("linked.webp"), image);
+        LegacyPythonMediaStorageProvider provider = new LegacyPythonMediaStorageProvider(uploadRoot.toString());
+
+        assertThat(provider.referenceExists(location("front.webp"))).isTrue();
+        assertThat(provider.referenceExists(location("linked.webp"))).isFalse();
+        assertThat(provider.referenceExists(location("../front.webp"))).isFalse();
+        assertThat(provider.referenceExists(location("missing.webp"))).isFalse();
+        assertThat(provider.referenceExists(new MediaStorageProvider.StoredMediaLocation(
+            "published", "python-admin-uploads", "front.webp", null))).isFalse();
+    }
+
+    private MediaStorageProvider.StoredMediaLocation location(String key) {
+        return new MediaStorageProvider.StoredMediaLocation("staged", "python-admin-uploads", key, null);
+    }
+
     private void assertNotFound(
         LegacyPythonMediaStorageProvider provider,
         String stage,

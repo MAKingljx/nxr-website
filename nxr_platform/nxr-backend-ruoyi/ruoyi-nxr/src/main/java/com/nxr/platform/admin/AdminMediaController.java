@@ -1,11 +1,13 @@
 package com.nxr.platform.admin;
 
 import com.nxr.platform.commerce.OrderAccessScopeService;
+import com.nxr.platform.commerce.OrderAccessScopeService.AccessScope;
 import com.ruoyi.common.annotation.Log;
 import com.ruoyi.common.core.domain.AjaxResult;
 import com.ruoyi.common.enums.BusinessType;
 import com.ruoyi.common.utils.SecurityUtils;
 import java.util.List;
+import java.util.function.LongPredicate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -59,6 +61,41 @@ public class AdminMediaController {
                 accessScopeService.cardSubmissionAccess(SecurityUtils.getUserId())
             )
         );
+    }
+
+    @PreAuthorize("@ss.hasPermi('nxr:media:list')")
+    @GetMapping("/queue/items")
+    public AjaxResult mediaQueueItems(
+        @RequestParam(required = false) String query,
+        @RequestParam(required = false) String certId,
+        @RequestParam(required = false) String cardName,
+        @RequestParam(required = false) String cardCategory,
+        @RequestParam(required = false) String productType,
+        @RequestParam(required = false) String brand,
+        @RequestParam(required = false) String language,
+        @RequestParam(required = false) String finalGrade,
+        @RequestParam(required = false) String uploadStatus,
+        @RequestParam(required = false) String imageStatus,
+        @RequestParam(defaultValue = "false") boolean showClientPushed,
+        @RequestParam(defaultValue = "1") int page,
+        @RequestParam(defaultValue = "12") int pageSize
+    ) {
+        long userId = SecurityUtils.getUserId();
+        AccessScope scope = accessScopeService.cardScopeForUser(userId);
+        LongPredicate access = scope.unrestricted()
+            ? ignored -> true : accessScopeService.cardSubmissionAccess(userId);
+        return AjaxResult.success(adminMediaService.loadQueuePage(
+            query, certId, cardName, cardCategory, productType, brand, language, finalGrade,
+            uploadStatus, imageStatus, showClientPushed, page, pageSize, scope.unrestricted(), access
+        ));
+    }
+
+    @PreAuthorize("@ss.hasPermi('nxr:media:list')")
+    @GetMapping("/queue/summary")
+    public AjaxResult mediaQueueSummary() {
+        return AjaxResult.success(adminMediaService.loadQueueSummary(
+            accessScopeService.cardSubmissionAccess(SecurityUtils.getUserId())
+        ));
     }
 
     @PreAuthorize("@ss.hasPermi('nxr:media:import')")

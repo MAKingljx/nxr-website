@@ -11,8 +11,13 @@
       </template>
     </nxr-page-header>
 
-    <el-table v-loading="loading" :data="brands">
-      <el-table-column :label="$tx('Order')" prop="sortOrder" width="80" align="center" />
+    <div class="brand-search mb8">
+      <el-input v-model="searchText" :placeholder="$tx('Search brand or alias')" clearable prefix-icon="Search" />
+    </div>
+    <el-table v-loading="loading" :data="filteredBrands">
+      <el-table-column :label="$tx('Order')" width="100" align="center">
+        <template #default="scope">{{ Number(scope.row.sortOrder) > 0 ? scope.row.sortOrder : $tx('Not specified') }}</template>
+      </el-table-column>
       <el-table-column :label="$tx('Brand Name')" prop="name" min-width="160" />
       <el-table-column :label="$tx('Aliases (comma-separated)')" prop="aliases" min-width="280" show-overflow-tooltip />
       <el-table-column :label="$tx('Status')" width="100" align="center">
@@ -20,7 +25,9 @@
           <nxr-status-tag :code="scope.row.isActive ? 'active' : 'inactive'" />
         </template>
       </el-table-column>
-      <el-table-column :label="$tx('Updated At')" prop="updatedAt" width="180" show-overflow-tooltip />
+      <el-table-column :label="$tx('Updated At')" width="190" show-overflow-tooltip>
+        <template #default="scope">{{ formatUpdatedAt(scope.row.updatedAt) }}</template>
+      </el-table-column>
       <el-table-column :label="$tx('Actions')" width="110" align="center">
         <template #default="scope">
           <el-button link type="primary" icon="Edit" v-hasPermi="['nxr:brand:edit']" @click="handleEdit(scope.row)">{{ $tx('Edit') }}</el-button>
@@ -55,10 +62,22 @@
 import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
 import NxrStatusTag from '@/components/NxrWorkspace/StatusTag.vue'
 import { fetchBrandSettings, createBrandSetting, updateBrandSetting } from '@/api/nxr/brands'
+import { activeLocale } from '@/i18n'
 
 const { proxy } = getCurrentInstance()
 
 const brands = ref([])
+const searchText = ref('')
+const filteredBrands = computed(() => {
+  const keyword = searchText.value.trim().toLocaleLowerCase()
+  return brands.value
+    .filter((brand) => !keyword || `${brand.name || ''} ${brand.aliases || ''}`.toLocaleLowerCase().includes(keyword))
+    .sort((a, b) => {
+      const first = Number(a.sortOrder) > 0 ? Number(a.sortOrder) : Number.POSITIVE_INFINITY
+      const second = Number(b.sortOrder) > 0 ? Number(b.sortOrder) : Number.POSITIVE_INFINITY
+      return first - second || String(a.name || '').localeCompare(String(b.name || ''), activeLocale())
+    })
+})
 const loading = ref(false)
 const open = ref(false)
 const submitting = ref(false)
@@ -70,6 +89,16 @@ const rules = {
 }
 
 const formTitle = computed(() => (editingId.value ? tx('Edit Brand') : tx('New Brand')))
+
+function formatUpdatedAt(value) {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '-'
+  return new Intl.DateTimeFormat(activeLocale(), {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit'
+  }).format(date)
+}
 
 function getList() {
   loading.value = true
@@ -84,7 +113,11 @@ function getList() {
 
 function handleAdd() {
   editingId.value = null
-  Object.assign(form, { name: '', aliases: '', sortOrder: brands.value.length + 1, isActive: true })
+  Object.assign(form, {
+    name: '', aliases: '',
+    sortOrder: Math.max(0, ...brands.value.map((brand) => Number(brand.sortOrder) || 0)) + 1,
+    isActive: true
+  })
   open.value = true
 }
 
@@ -120,3 +153,9 @@ function submitForm() {
 
 getList()
 </script>
+
+<style scoped>
+.brand-search {
+  max-width: 360px;
+}
+</style>

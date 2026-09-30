@@ -84,12 +84,16 @@ public class LegacyPythonMediaStorageProvider implements MediaStorageProvider {
 
     @Override
     public boolean referenceExists(StoredMediaLocation location) {
-        try {
-            Path assetPath = resolveAssetPath(location);
-            return Files.isRegularFile(assetPath, LinkOption.NOFOLLOW_LINKS) && !Files.isSymbolicLink(assetPath);
-        } catch (ResponseStatusException ignored) {
+        if (location == null
+            || !"staged".equals(normalize(location.stage()))
+            || !STORAGE_BUCKET.equals(normalize(location.storageBucket()))
+            || !isSafeFilename(location.storageKey())) {
             return false;
         }
+        // The validated name is one path segment. NOFOLLOW_LINKS rejects a symlink
+        // at that segment, so canonicalizing both the root and every asset adds
+        // two filesystem operations per image without changing this check.
+        return Files.isRegularFile(storageRoot.resolve(location.storageKey()), LinkOption.NOFOLLOW_LINKS);
     }
 
     @Override

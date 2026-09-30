@@ -7,12 +7,23 @@ import {
   mergeUniqueMediaImportValues
 } from './mediaImportRetry'
 
-// 媒体队列
-export function fetchMediaQueue(query) {
+// 卡图列表与全局统计分别加载，避免慢统计阻塞检索。
+export function fetchMediaQueueItems(query) {
   return request({
-    url: '/api/admin/media/queue',
+    url: '/api/admin/media/queue/items',
     method: 'get',
-    params: query
+    params: query,
+    timeout: 30000,
+    suppressErrorMessage: true
+  })
+}
+
+export function fetchMediaQueueSummary() {
+  return request({
+    url: '/api/admin/media/queue/summary',
+    method: 'get',
+    timeout: 120000,
+    suppressErrorMessage: true
   })
 }
 
@@ -102,6 +113,7 @@ export function importSubmissionMedia(submissionId, files) {
     method: 'post',
     data: formData,
     headers: { 'Content-Type': 'multipart/form-data', repeatSubmit: false },
+    suppressErrorMessage: true,
     timeout: 1000 * 60 * 10
   })
 }

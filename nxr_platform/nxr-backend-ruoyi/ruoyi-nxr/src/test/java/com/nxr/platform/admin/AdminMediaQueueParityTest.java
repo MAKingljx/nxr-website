@@ -3,9 +3,11 @@ package com.nxr.platform.admin;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.nxr.platform.admin.storage.LocalMediaStorageProvider;
+import com.nxr.platform.admin.storage.MediaStorageProvider;
 import com.nxr.platform.admin.storage.MediaStorageRegistry;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -129,6 +131,74 @@ class AdminMediaQueueParityTest {
         assertThat(missingRecordedFile.stagedBackMissing()).isTrue();
         assertThat(missingRecordedFile.hasStagedBack()).isFalse();
         assertThat(response.summary().missingMedia()).isEqualTo(2);
+    }
+
+    @Test
+    void quickPageKeepsLegacyOrderCountCertificateSubstringAndPageClamp() {
+        var unfiltered = mediaService.loadQueue(null, null, null, null, null, null, null, null,
+            null, null, false, 1, 2);
+        var quick = quickPage(null, 1, 2, true, ignored -> true);
+        assertThat(quick.total()).isEqualTo(unfiltered.total());
+        assertThat(quick.items()).isEqualTo(unfiltered.items());
+
+        var cert = quickPage("ERT00", 1, 20, true, ignored -> true);
+        var legacyCert = mediaService.loadQueue(null, "ERT00", null, null, null, null, null, null,
+            null, null, false, 1, 20);
+        assertThat(cert.total()).isEqualTo(legacyCert.total());
+        assertThat(cert.items()).isEqualTo(legacyCert.items());
+
+        var beyond = quickPage(null, 99, 2, true, ignored -> true);
+        var legacyBeyond = mediaService.loadQueue(null, null, null, null, null, null, null, null,
+            null, null, false, 99, 2);
+        assertThat(beyond.page()).isEqualTo(legacyBeyond.page());
+        assertThat(beyond.items()).isEqualTo(legacyBeyond.items());
+    }
+
+    @Test
+    void quickPageFallsBackToScopedAndFilesystemSensitiveResults() {
+        var scoped = quickPage(null, 1, 20, false, id -> id == 1 || id == 4);
+        assertThat(scoped.total()).isEqualTo(2);
+        assertThat(scoped.items()).extracting(AdminMediaService.MediaQueueItem::certId)
+            .containsExactlyInAnyOrder("CERT001", "CERT004");
+
+        var mediaFilter = mediaService.loadQueuePage(null, null, null, null, null, null, null, null,
+            null, "missing_back", true, 1, 20, true, ignored -> true);
+        assertThat(mediaFilter.items()).extracting(AdminMediaService.MediaQueueItem::certId)
+            .containsExactlyInAnyOrder("CERT001", "ABC003");
+        assertThat(mediaService.loadQueueSummary(ignored -> true))
+            .isEqualTo(mediaService.loadQueue(null, 1, 20).summary());
+    }
+
+    @Test
+    void quickPageChecksOnlyFilesOnTheRequestedPage() {
+        AtomicInteger fileChecks = new AtomicInteger();
+        LocalMediaStorageProvider countingProvider = new LocalMediaStorageProvider(
+            storageRoot.toString(), "http://127.0.0.1:8088", "local-media"
+        ) {
+            @Override
+            public boolean referenceExists(MediaStorageProvider.StoredMediaLocation location) {
+                fileChecks.incrementAndGet();
+                return super.referenceExists(location);
+            }
+        };
+        AdminMediaService quickService = new AdminMediaService(
+            JdbcClient.create(jdbcTemplate), jdbcTemplate, null,
+            new MediaStorageRegistry(java.util.List.of(countingProvider), "local"),
+            12, 24L * 1024 * 1024, 24L * 1024 * 1024, 100_000_000L
+        );
+
+        var page = quickService.loadQueuePage(null, null, null, null, null, null, null, null,
+            null, null, true, 1, 1, true, ignored -> true);
+        assertThat(page.items()).hasSize(1);
+        assertThat(fileChecks.get()).isLessThanOrEqualTo(2);
+    }
+
+    private AdminMediaService.MediaQueuePage quickPage(
+        String certId, int page, int pageSize, boolean unrestricted,
+        java.util.function.LongPredicate access
+    ) {
+        return mediaService.loadQueuePage(null, certId, null, null, null, null, null, null,
+            null, null, false, page, pageSize, unrestricted, access);
     }
 
     private void createSchema() {

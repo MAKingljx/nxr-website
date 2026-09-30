@@ -6,7 +6,14 @@
       :summary="$tx('Import front/back images for approved cards and review publication status')"
     />
 
-    <el-row :gutter="16" class="mb8">
+    <el-skeleton v-if="summaryLoading && !summaryLoaded" :rows="2" animated class="mb8" />
+    <el-alert v-if="summaryError" type="warning" :closable="false" class="mb8">
+      <div class="queue-error">
+        <span>{{ $tx('Could not load image totals. The card list is still available.') }}</span>
+        <el-button plain :loading="summaryLoading" @click="loadSummary">{{ $tx('Retry') }}</el-button>
+      </div>
+    </el-alert>
+    <el-row v-if="summaryLoaded" :gutter="16" class="mb8">
       <el-col :span="6">
         <el-card shadow="hover" class="stat-card" @click="applyStatFilter('total')"><el-statistic :title="$tx('Total Approved')" :value="summary.totalApproved" /></el-card>
       </el-col>
@@ -20,7 +27,7 @@
         <el-card shadow="hover" class="stat-card" @click="applyStatFilter('uploaded')"><el-statistic :title="$tx('Uploaded to Server')" :value="summary.uploadedToServer" /></el-card>
       </el-col>
     </el-row>
-    <div class="summary-strip mb8">
+    <div v-if="summaryLoaded" class="summary-strip mb8">
       <el-tag type="warning" effect="plain" class="summary-action" @click="applyStatFilter('remaining')">
         {{ $tx('Remaining Uploads') }}: {{ summary.remainingUploadCount }}
       </el-tag>
@@ -168,7 +175,14 @@
       </el-form-item>
     </el-form>
 
-    <el-table v-loading="loading" :data="queue" @selection-change="handleSelectionChange">
+    <el-alert v-if="queueError" type="error" :closable="false" class="mb8">
+      <div class="queue-error">
+        <span>{{ $tx('Could not load the card image queue. Please try again.') }}</span>
+        <el-button type="primary" plain :loading="loading" @click="loadQueue()">{{ $tx('Retry') }}</el-button>
+      </div>
+    </el-alert>
+    <el-skeleton v-if="loading && !queueLoaded" :rows="4" animated class="mb8" />
+    <el-table v-if="queueLoaded" v-loading="loading" :data="queue" @selection-change="handleSelectionChange">
       <el-table-column type="selection" width="48" :selectable="isReadyToSelect" />
       <el-table-column :label="$tx('Cert ID')" prop="certId" width="140" />
       <el-table-column :label="$tx('Card Name')" prop="cardName" min-width="160" show-overflow-tooltip />
@@ -234,7 +248,7 @@
     </el-table>
 
     <pagination
-      v-show="queueTotal > 0"
+      v-if="queueLoaded && queueTotal > 0"
       :total="queueTotal"
       v-model:page="queuePage"
       v-model:limit="queuePageSize"
@@ -245,7 +259,7 @@
 
 <script setup name="NxrUpload">
 import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
-import { fetchMediaQueue, importMediaFolder, publishSubmissionMedia, publishSubmissionMediaBatch, markSubmissionClientPushed } from '@/api/nxr/media'
+import { fetchMediaQueueItems, fetchMediaQueueSummary, importMediaFolder, publishSubmissionMedia, publishSubmissionMediaBatch, markSubmissionClientPushed } from '@/api/nxr/media'
 
 const { proxy } = getCurrentInstance()
 const allowedImagePattern = /\.(webp|png|jpe?g)$/i
@@ -277,6 +291,13 @@ const imageStatusFilter = ref('')
 const showClientPushed = ref(false)
 const languageOptions = ['EN', 'JP', 'CT', 'CS', 'IN', 'KO', 'TH', 'Other']
 const loading = ref(false)
+const queueLoaded = ref(false)
+const queueError = ref(false)
+let queueRequestId = 0
+const summaryLoading = ref(false)
+const summaryLoaded = ref(false)
+const summaryError = ref(false)
+let summaryRequestId = 0
 const importing = ref(false)
 const publishLoadingId = ref(null)
 const clientPushLoadingId = ref(null)
@@ -300,8 +321,11 @@ function mediaDisplayUrl(value) {
 
 function loadQueue(resetPage = false) {
   if (resetPage) queuePage.value = 1
+  const requestId = ++queueRequestId
   loading.value = true
-  return fetchMediaQueue({
+  queueError.value = false
+  queueLoaded.value = false
+  return fetchMediaQueueItems({
     query: searchQuery.value.trim() || undefined,
     certId: certIdFilter.value.trim() || undefined,
     cardName: cardNameFilter.value.trim() || undefined,
@@ -317,15 +341,43 @@ function loadQueue(resetPage = false) {
     pageSize: queuePageSize.value
   })
     .then((res) => {
+      if (requestId !== queueRequestId) return
       queue.value = res.data.items
       selectedReadyIds.value = []
-      summary.value = res.data.summary
       queueTotal.value = res.data.total
       queuePage.value = res.data.page
       queuePageSize.value = res.data.pageSize
+      queueLoaded.value = true
+    })
+    .catch(() => {
+      if (requestId !== queueRequestId) return
+      queue.value = []
+      queueTotal.value = 0
+      selectedReadyIds.value = []
+      queueError.value = true
     })
     .finally(() => {
-      loading.value = false
+      if (requestId === queueRequestId) loading.value = false
+    })
+}
+
+function loadSummary() {
+  const requestId = ++summaryRequestId
+  summaryLoading.value = true
+  summaryError.value = false
+  return fetchMediaQueueSummary()
+    .then((res) => {
+      if (requestId !== summaryRequestId) return
+      summary.value = res.data
+      summaryLoaded.value = true
+    })
+    .catch(() => {
+      if (requestId !== summaryRequestId) return
+      summaryLoaded.value = false
+      summaryError.value = true
+    })
+    .finally(() => {
+      if (requestId === summaryRequestId) summaryLoading.value = false
     })
 }
 
@@ -430,9 +482,14 @@ async function submitImport() {
     clearSelectedFiles()
     proxy.$modal.msgSuccess(`Saved ${response.savedFiles} files and matched ${response.updatedSubmissionIds.length} entries`)
     loadQueue()
+    loadSummary()
   } catch (error) {
     uploadStatus.value = 'failed'
     if (error?.importSummary) lastImport.value = error.importSummary
+    if (error?.importSummary?.savedFiles) {
+      loadQueue()
+      loadSummary()
+    }
     uploadLabel.value = error?.failedBatch
       ? `Batch ${error.failedBatch}/${error.totalBatches} failed after ${error.failedAttempt}/${error.maxAttempts}; ${error.completedBatches} completed`
       : tx('Upload stopped at ') + uploadPercent.value + '%'
@@ -448,6 +505,7 @@ function publishEntry(submissionId) {
     .then((res) => {
       proxy.$modal.msgSuccess(tx('Published ') + res.data.certId)
       loadQueue()
+      loadSummary()
     })
     .finally(() => {
       publishLoadingId.value = null
@@ -474,6 +532,7 @@ async function publishSelected() {
       proxy.$modal.msgSuccess(`${result.publishedCount} cards published`)
     }
     await loadQueue()
+    loadSummary()
   } catch (error) {
     proxy.$modal.msgError(error?.message || tx('Batch publication failed'))
   } finally {
@@ -519,6 +578,7 @@ async function markClientPushed(row) {
     await markSubmissionClientPushed(row.submissionId)
     proxy.$modal.msgSuccess(tx('Marked as Client Pushed'))
     await loadQueue()
+    loadSummary()
   } finally {
     clientPushLoadingId.value = null
   }
@@ -544,6 +604,7 @@ function mediaStateTag(item) {
 }
 
 loadQueue()
+loadSummary()
 </script>
 
 <style scoped>
@@ -555,6 +616,13 @@ loadQueue()
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.queue-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
 }
 
 .picker-row {

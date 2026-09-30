@@ -10,18 +10,21 @@ import useLockStore from '@/store/modules/lock'
 import useSettingsStore from '@/store/modules/settings'
 import usePermissionStore from '@/store/modules/permission'
 import { legacyWorkspaceLocation, workspacePath } from '@/utils/submissionWorkspace'
+import { canViewDashboard } from '@/utils/dashboardAccess'
 
 NProgress.configure({ showSpinner: false })
 
 const whiteList = ['/login', '/register']
 
-function agentLandingPath(target) {
+function businessLandingPath(target) {
   if (!['/', '/index'].includes(target.path)) return null
   const user = useUserStore()
   const permissions = user.permissions || []
-  if (user.roles.includes('admin') || permissions.includes('*:*:*') || permissions.includes('nxr:dashboard:view')) return null
-  const agentOnly = user.roles.length === 1 && user.roles.includes('nxr_agent')
-  return (agentOnly || permissions.includes('nxr:agent:workbench')) && router.hasRoute('NxrWorkspaceClients') ? workspacePath('clients') : null
+  if (canViewDashboard(permissions)) return null
+  if (permissions.includes('nxr:agent:workbench') && router.hasRoute('NxrWorkspaceClients')) {
+    return workspacePath('clients')
+  }
+  return usePermissionStore().landingPath || '/401'
 }
 
 function legacyLanding(target) {
@@ -67,8 +70,8 @@ router.beforeEach(async (to, from) => {
         })
         const legacy = legacyLanding(to)
         if (legacy) return legacy
-        // Resolve the agent landing page only after the permission-filtered routes exist.
-        const landing = agentLandingPath(to)
+        // Resolve the landing page only after permission-filtered routes exist.
+        const landing = businessLandingPath(to)
         if (landing) return { path: landing, query: to.query, hash: to.hash, replace: true }
         return { ...to, replace: true }
       } catch (err) {
@@ -79,7 +82,7 @@ router.beforeEach(async (to, from) => {
     }
     const legacy = legacyLanding(to)
     if (legacy) return legacy
-    const landing = agentLandingPath(to)
+    const landing = businessLandingPath(to)
     if (landing) return { path: landing, query: to.query, hash: to.hash, replace: true }
     return true
   } else {

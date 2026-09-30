@@ -7,11 +7,29 @@ import {
 } from '../src/utils/submissionWorkspace.js'
 import en from '../src/i18n/messages/en.js'
 import zh from '../src/i18n/messages/zh-CN.js'
+import { canViewDashboard, firstAccessibleBusinessPath } from '../src/utils/dashboardAccess.js'
 
 const workspace = { path: 'nxr/submission-workbench', name: 'NxrSubmissionWorkbench', component: 'nxr/agent-workbench/index', meta: { title: '送评工作台' } }
 const partners = { path: 'nxr/partners', name: 'NxrPartners', component: 'nxr/partners/index', meta: { title: '子代理管理' } }
 const wrapper = entry => ({ path: '/', component: 'Layout', name: '', children: [structuredClone(entry)] })
 const translate = locale => key => key.split('.').reduce((value, part) => value[part], locale)
+
+test('card staff land on an authorized card page while dashboard access stays permission-driven', () => {
+  const routes = [
+    { path: 'nxr/cards', children: [
+      { path: 'new-entry', name: 'NxrNewEntry' },
+      { path: 'entries', name: 'NxrEntries' },
+      { path: 'upload', name: 'NxrUpload' }
+    ] },
+    { path: 'system', children: [{ path: 'brands', name: 'NxrBrands' }] }
+  ]
+  assert.equal(firstAccessibleBusinessPath(routes), '/nxr/cards/entries')
+  assert.equal(canViewDashboard(['nxr:entry:list', 'nxr:media:list']), false)
+  assert.equal(canViewDashboard(['nxr:dashboard:view']), true)
+  assert.equal(canViewDashboard(['*:*:*']), true)
+  assert.equal(firstAccessibleBusinessPath([{ path: 'system', children: [{ path: 'brands', name: 'NxrBrands' }] }]), '/system/brands')
+  assert.equal(firstAccessibleBusinessPath([{ path: 'nxr/cards', hidden: true, children: routes[0].children }]), null)
+})
 
 function routerFor(source) {
   const mapped = groupSubmissionWorkspaceRoutes(source, translate(en))
