@@ -3,6 +3,7 @@ import { ElMessage } from 'element-plus'
 import NProgress from 'nprogress'
 import 'nprogress/nprogress.css'
 import { getToken } from '@/utils/auth'
+import { loginLocation, safeLoginTarget } from '@/utils/loginRedirect'
 import { isHttp, isPathMatch } from '@/utils/validate'
 import { isRelogin } from '@/utils/request'
 import useUserStore from '@/store/modules/user'
@@ -42,7 +43,7 @@ router.beforeEach(async (to, from) => {
     const isLock = useLockStore().isLock
     if (to.path === '/login') {
       NProgress.done()
-      return { path: '/' }
+      return { path: safeLoginTarget(to.query.redirect) }
     }
     if (isWhiteList(to.path)) {
       return true
@@ -76,8 +77,9 @@ router.beforeEach(async (to, from) => {
         return { ...to, replace: true }
       } catch (err) {
         await useUserStore().logOut()
+        isRelogin.show = false
         ElMessage.error(err)
-        return { path: '/' }
+        return loginLocation(to.fullPath)
       }
     }
     const legacy = legacyLanding(to)
@@ -92,7 +94,7 @@ router.beforeEach(async (to, from) => {
       return true
     }
     NProgress.done()
-    return `/login?redirect=${to.fullPath}` // 否则全部重定向到登录页
+    return loginLocation(to.fullPath)
   }
 })
 

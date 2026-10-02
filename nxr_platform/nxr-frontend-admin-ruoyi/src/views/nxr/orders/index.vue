@@ -203,7 +203,7 @@
 <script setup name="NxrOrders">
 import auth from '@/plugins/auth'
 import OrderFinanceExceptionPanel from './components/OrderFinanceExceptionPanel.vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { orderDetailSection, orderManualStatuses } from './orderPresentation'
 import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
 import CommercePolicyPanel from './components/CommercePolicyPanel.vue'
@@ -243,6 +243,8 @@ import {
 
 const { proxy } = getCurrentInstance()
 const route = useRoute()
+const router = useRouter()
+const orderRouteName = route.name
 const merchantBatchPanel = ref(null)
 const detailTab = ref('admission')
 const detailRefresh = ref(0)
@@ -329,7 +331,7 @@ const filterStatusOptions = [
   { value: 'terms_confirmation', label: tx('Awaiting Terms Confirmation') },
   { value: 'payment_expired', label: tx('Payment Deadline Expired') },
   ...statusOptions,
-  { value: 'payment_exception', label: tx('付款异常待核查') }
+  { value: 'payment_exception', label: tx('Payment Exception') }
 ]
 
 const extraStatusLabels = {
@@ -650,9 +652,28 @@ watch(() => route.query.status, raw => {
   void loadOrders(true)
 }, { immediate: true })
 watch(() => [route.query.orderId, route.query.section], ([raw, section]) => {
+  if (route.name !== orderRouteName) return
   const id = Number(raw)
-  if (Number.isSafeInteger(id) && id > 0) void openDetail(id, section)
+  if (Number.isSafeInteger(id) && id > 0) {
+    if (detailOpen.value && detail.value?.id === id) detailTab.value = orderDetailSection(detail.value, section)
+    else void openDetail(id, section)
+  } else detailOpen.value = false
 }, { immediate: true })
+
+watch(() => [detailOpen.value, detail.value?.id, detailTab.value], ([open, id, section]) => {
+  if (route.name !== orderRouteName || !id) return
+  const query = { ...route.query }
+  if (open) {
+    if (Number(query.orderId) === id && query.section === section) return
+    query.orderId = String(id)
+    query.section = section
+  } else {
+    if (Number(query.orderId) !== id) return
+    delete query.orderId
+    delete query.section
+  }
+  void router.replace({ path: route.path, query, hash: route.hash })
+})
 </script>
 
 <style scoped>

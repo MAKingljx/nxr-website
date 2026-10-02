@@ -108,6 +108,7 @@ import { getCodeImg } from "@/api/login"
 import Cookies from "js-cookie"
 import { encrypt, decrypt } from "@/utils/jsencrypt"
 import useUserStore from '@/store/modules/user'
+import { loginDestination } from '@/utils/loginRedirect'
 import defaultSettings from '@/settings'
 import { ArrowRight } from '@element-plus/icons-vue'
 import nxrLogo from '@/assets/logo/nxr-logo-circle.png'
@@ -168,7 +169,7 @@ function handleLogin() {
           }
           return acc
         }, {})
-        router.push({ path: redirect.value || "/", query: otherQueryParams })
+        router.push(loginDestination(router, redirect.value, otherQueryParams))
       }).catch(() => {
         loading.value = false
         // 重新获取验证码

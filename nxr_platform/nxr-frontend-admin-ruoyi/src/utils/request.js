@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { ElNotification , ElMessageBox, ElMessage, ElLoading } from 'element-plus'
 import { getToken, touchTokenCookie } from '@/utils/auth'
+import { browserReloginUrl } from '@/utils/loginRedirect'
 import errorCode from '@/utils/errorCode'
 import { tansParams, blobValidate } from '@/utils/ruoyi'
 import cache from '@/plugins/cache'
@@ -93,7 +94,7 @@ service.interceptors.response.use(res => {
         ElMessageBox.confirm(tx('Your session has expired. Sign in again to continue.'), tx('Session Expired'), { confirmButtonText: tx('Sign In'), cancelButtonText: tx('Cancel'), type: 'warning' }).then(() => {
           isRelogin.show = false
           useUserStore().logOut().then(() => {
-            location.href = `${import.meta.env.BASE_URL}index`
+            location.href = browserReloginUrl(location, import.meta.env.BASE_URL)
           })
       }).catch(() => {
         isRelogin.show = false

@@ -6,7 +6,7 @@ import static org.mockito.Mockito.*;
 import com.nxr.platform.commerce.OrderAccessScopeService;
 import com.nxr.platform.customer.CustomerOrderPhotoService;
 import org.junit.jupiter.api.Test;
-import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.io.FileSystemResource;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -15,7 +15,7 @@ class AdminOrderPhotoControllerTest {
     void currentOrderIsAuthorizedAndMustActuallyContainThePhoto() {
         var photos = mock(CustomerOrderPhotoService.class);
         var scope = mock(OrderAccessScopeService.class);
-        var image = new ByteArrayResource(new byte[]{1,2,3});
+        var image = new FileSystemResource("local-audit-photo.jpg");
         when(photos.readAttached(22, 7)).thenReturn(image);
         var controller = new AdminOrderPhotoController(photos, scope);
         assertThat(controller.preview(7, 22L).getBody()).isSameAs(image);

@@ -24,7 +24,7 @@
         <el-card shadow="hover" class="stat-card" @click="applyStatFilter('waiting')"><el-statistic :title="$tx('Waiting for Images')" :value="summary.waitingForUpload" /></el-card>
       </el-col>
       <el-col :span="6">
-        <el-card shadow="hover" class="stat-card" @click="applyStatFilter('uploaded')"><el-statistic :title="$tx('Uploaded to Server')" :value="summary.uploadedToServer" /></el-card>
+        <el-card shadow="hover" class="stat-card" @click="applyStatFilter('uploaded')"><el-statistic :title="$tx('Recorded uploads')" :value="summary.uploadedToServer" /></el-card>
       </el-col>
     </el-row>
     <div v-if="summaryLoaded" class="summary-strip mb8">
@@ -34,8 +34,9 @@
       <el-tag type="success" effect="plain" class="summary-action" @click="applyUploadStatusFilter('client_pushed')">
         {{ $tx('Client Pushed') }}: {{ summary.clientPushed }}
       </el-tag>
-      <el-tag effect="plain">{{ $tx('Front Images') }}: {{ summary.hasFrontImage }}</el-tag>
-      <el-tag effect="plain">{{ $tx('Back Images') }}: {{ summary.hasBackImage }}</el-tag>
+      <el-tag type="success" effect="plain">{{ $tx('Published') }}: {{ summary.livePublished }}</el-tag>
+      <el-tag effect="plain">{{ $tx('Staged front images') }}: {{ summary.hasFrontImage }}</el-tag>
+      <el-tag effect="plain">{{ $tx('Staged back images') }}: {{ summary.hasBackImage }}</el-tag>
       <template v-for="(count, status) in summary.statusCounts" :key="status">
         <el-tag v-if="status !== 'client_pushed'" effect="plain" class="summary-action" @click="applyUploadStatusFilter(status)">
           {{ uploadStateLabel(status) }}: {{ count }}
