@@ -71,6 +71,8 @@ public class SysPermissionService
                 // 多角色设置permissions属性，以便数据权限匹配权限
                 for (SysRole role : roles)
                 {
+                    // Never leave permissions from a previous active state on a disabled role.
+                    role.setPermissions(new HashSet<>());
                     if (StringUtils.equals(role.getStatus(), UserConstants.ROLE_NORMAL) && !role.isAdmin())
                     {
                         Set<String> rolePerms = menuService.selectMenuPermsByRoleId(role.getRoleId());

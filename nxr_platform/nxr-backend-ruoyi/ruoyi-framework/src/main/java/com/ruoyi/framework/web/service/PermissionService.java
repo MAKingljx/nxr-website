@@ -4,6 +4,7 @@ import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
 import com.ruoyi.common.constant.Constants;
+import com.ruoyi.common.constant.UserConstants;
 import com.ruoyi.common.core.domain.entity.SysRole;
 import com.ruoyi.common.core.domain.model.LoginUser;
 import com.ruoyi.common.utils.SecurityUtils;
@@ -98,6 +99,10 @@ public class PermissionService
         }
         for (SysRole sysRole : loginUser.getUser().getRoles())
         {
+            if (!UserConstants.ROLE_NORMAL.equals(sysRole.getStatus()))
+            {
+                continue;
+            }
             String roleKey = sysRole.getRoleKey();
             if (Constants.SUPER_ADMIN.equals(roleKey) || roleKey.equals(StringUtils.trim(role)))
             {

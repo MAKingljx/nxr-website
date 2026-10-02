@@ -22,6 +22,7 @@ import com.ruoyi.system.mapper.SysRoleDeptMapper;
 import com.ruoyi.system.mapper.SysRoleMapper;
 import com.ruoyi.system.mapper.SysRoleMenuMapper;
 import com.ruoyi.system.mapper.SysUserRoleMapper;
+import com.ruoyi.system.service.AuthorizationCacheService;
 import com.ruoyi.system.service.ISysRoleService;
 
 /**
@@ -32,6 +33,9 @@ import com.ruoyi.system.service.ISysRoleService;
 @Service
 public class SysRoleServiceImpl implements ISysRoleService
 {
+    @Autowired
+    private AuthorizationCacheService authorizationCache;
+
     @Autowired
     private SysRoleMapper roleMapper;
 
@@ -95,7 +99,7 @@ public class SysRoleServiceImpl implements ISysRoleService
         Set<String> permsSet = new HashSet<>();
         for (SysRole perm : perms)
         {
-            if (StringUtils.isNotNull(perm))
+            if (StringUtils.isNotNull(perm) && UserConstants.ROLE_NORMAL.equals(perm.getStatus()))
             {
                 permsSet.addAll(Arrays.asList(perm.getRoleKey().trim().split(",")));
             }
@@ -252,7 +256,9 @@ public class SysRoleServiceImpl implements ISysRoleService
         roleMapper.updateRole(role);
         // 删除角色与菜单关联
         roleMenuMapper.deleteRoleMenuByRoleId(role.getRoleId());
-        return insertRoleMenu(role);
+        int rows = insertRoleMenu(role);
+        authorizationCache.invalidate();
+        return rows;
     }
 
     /**
@@ -264,7 +270,12 @@ public class SysRoleServiceImpl implements ISysRoleService
     @Override
     public int updateRoleStatus(SysRole role)
     {
-        return roleMapper.updateRole(role);
+        int rows = roleMapper.updateRole(role);
+        if (rows > 0)
+        {
+            authorizationCache.invalidate();
+        }
+        return rows;
     }
 
     /**
@@ -282,7 +293,9 @@ public class SysRoleServiceImpl implements ISysRoleService
         // 删除角色与部门关联
         roleDeptMapper.deleteRoleDeptByRoleId(role.getRoleId());
         // 新增角色和部门信息（数据权限）
-        return insertRoleDept(role);
+        int rows = insertRoleDept(role);
+        authorizationCache.invalidate();
+        return rows;
     }
 
     /**
@@ -347,7 +360,12 @@ public class SysRoleServiceImpl implements ISysRoleService
         roleMenuMapper.deleteRoleMenuByRoleId(roleId);
         // 删除角色与部门关联
         roleDeptMapper.deleteRoleDeptByRoleId(roleId);
-        return roleMapper.deleteRoleById(roleId);
+        int rows = roleMapper.deleteRoleById(roleId);
+        if (rows > 0)
+        {
+            authorizationCache.invalidate();
+        }
+        return rows;
     }
 
     /**
@@ -374,7 +392,12 @@ public class SysRoleServiceImpl implements ISysRoleService
         roleMenuMapper.deleteRoleMenu(roleIds);
         // 删除角色与部门关联
         roleDeptMapper.deleteRoleDept(roleIds);
-        return roleMapper.deleteRoleByIds(roleIds);
+        int rows = roleMapper.deleteRoleByIds(roleIds);
+        if (rows > 0)
+        {
+            authorizationCache.invalidate();
+        }
+        return rows;
     }
 
     /**
@@ -386,7 +409,12 @@ public class SysRoleServiceImpl implements ISysRoleService
     @Override
     public int deleteAuthUser(SysUserRole userRole)
     {
-        return userRoleMapper.deleteUserRoleInfo(userRole);
+        int rows = userRoleMapper.deleteUserRoleInfo(userRole);
+        if (rows > 0)
+        {
+            authorizationCache.invalidate();
+        }
+        return rows;
     }
 
     /**
@@ -399,7 +427,12 @@ public class SysRoleServiceImpl implements ISysRoleService
     @Override
     public int deleteAuthUsers(Long roleId, Long[] userIds)
     {
-        return userRoleMapper.deleteUserRoleInfos(roleId, userIds);
+        int rows = userRoleMapper.deleteUserRoleInfos(roleId, userIds);
+        if (rows > 0)
+        {
+            authorizationCache.invalidate();
+        }
+        return rows;
     }
 
     /**
@@ -421,6 +454,11 @@ public class SysRoleServiceImpl implements ISysRoleService
             ur.setRoleId(roleId);
             list.add(ur);
         }
-        return userRoleMapper.batchUserRole(list);
+        int rows = userRoleMapper.batchUserRole(list);
+        if (rows > 0)
+        {
+            authorizationCache.invalidate();
+        }
+        return rows;
     }
 }

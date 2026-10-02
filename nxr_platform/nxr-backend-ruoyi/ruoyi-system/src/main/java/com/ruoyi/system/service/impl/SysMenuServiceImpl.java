@@ -27,6 +27,7 @@ import com.ruoyi.system.domain.vo.RouterVo;
 import com.ruoyi.system.mapper.SysMenuMapper;
 import com.ruoyi.system.mapper.SysRoleMapper;
 import com.ruoyi.system.mapper.SysRoleMenuMapper;
+import com.ruoyi.system.service.AuthorizationCacheService;
 import com.ruoyi.system.service.ISysMenuService;
 
 /**
@@ -42,6 +43,9 @@ public class SysMenuServiceImpl implements ISysMenuService
     public static final String PREMISSION_STRING = "perms[\"{0}\"]";
 
     public static final Long MENU_ROOT_ID = 0L;
+
+    @Autowired
+    private AuthorizationCacheService authorizationCache;
 
     @Autowired
     private SysMenuMapper menuMapper;
@@ -309,7 +313,12 @@ public class SysMenuServiceImpl implements ISysMenuService
     @Override
     public int insertMenu(SysMenu menu)
     {
-        return menuMapper.insertMenu(menu);
+        int rows = menuMapper.insertMenu(menu);
+        if (rows > 0)
+        {
+            authorizationCache.invalidate();
+        }
+        return rows;
     }
 
     /**
@@ -321,7 +330,12 @@ public class SysMenuServiceImpl implements ISysMenuService
     @Override
     public int updateMenu(SysMenu menu)
     {
-        return menuMapper.updateMenu(menu);
+        int rows = menuMapper.updateMenu(menu);
+        if (rows > 0)
+        {
+            authorizationCache.invalidate();
+        }
+        return rows;
     }
 
     /**
@@ -359,7 +373,12 @@ public class SysMenuServiceImpl implements ISysMenuService
     @Override
     public int deleteMenuById(Long menuId)
     {
-        return menuMapper.deleteMenuById(menuId);
+        int rows = menuMapper.deleteMenuById(menuId);
+        if (rows > 0)
+        {
+            authorizationCache.invalidate();
+        }
+        return rows;
     }
 
     /**

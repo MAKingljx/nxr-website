@@ -12,6 +12,9 @@ public class CacheConstants
      */
     public static final String LOGIN_TOKEN_KEY = "login_tokens:";
 
+    /** Shared authorization revision, invalidated after role/menu/user changes commit. */
+    public static final String AUTHORIZATION_REVISION_KEY = "authorization_revision";
+
     /**
      * 验证码 redis key
      */

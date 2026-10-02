@@ -20,7 +20,6 @@ import com.ruoyi.common.utils.SecurityUtils;
 import com.ruoyi.common.utils.StringUtils;
 import com.ruoyi.framework.web.service.SysLoginService;
 import com.ruoyi.framework.web.service.SysPermissionService;
-import com.ruoyi.framework.web.service.TokenService;
 import com.ruoyi.system.service.ISysConfigService;
 import com.ruoyi.system.service.ISysMenuService;
 
@@ -40,9 +39,6 @@ public class SysLoginController
 
     @Autowired
     private SysPermissionService permissionService;
-
-    @Autowired
-    private TokenService tokenService;
 
     @Autowired
     private ISysConfigService configService;
@@ -77,12 +73,8 @@ public class SysLoginController
         // 角色集合
         Set<String> roles = permissionService.getRolePermission(user);
         // 权限集合
-        Set<String> permissions = permissionService.getMenuPermission(user);
-        if (!loginUser.getPermissions().equals(permissions))
-        {
-            loginUser.setPermissions(permissions);
-            tokenService.refreshToken(loginUser);
-        }
+        // Token authentication has already refreshed this snapshot from current authorization.
+        Set<String> permissions = loginUser.getPermissions();
         AjaxResult ajax = AjaxResult.success();
         ajax.put("user", user);
         ajax.put("roles", roles);

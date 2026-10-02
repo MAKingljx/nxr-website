@@ -1,6 +1,5 @@
 package com.ruoyi.framework.web.service;
 
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -11,6 +10,10 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import com.ruoyi.common.constant.CacheConstants;
 import com.ruoyi.common.constant.Constants;
+import com.ruoyi.common.constant.UserConstants;
+import com.ruoyi.common.core.domain.entity.SysUser;
+import com.ruoyi.system.service.AuthorizationCacheService;
+import com.ruoyi.system.service.ISysUserService;
 import com.ruoyi.common.core.domain.model.LoginUser;
 import com.ruoyi.common.core.redis.RedisCache;
 import com.ruoyi.common.utils.ServletUtils;
@@ -59,6 +62,15 @@ public class TokenService
     @Autowired
     private RedisCache redisCache;
 
+    @Autowired
+    private AuthorizationCacheService authorizationCache;
+
+    @Autowired
+    private ISysUserService userService;
+
+    @Autowired
+    private SysPermissionService permissionService;
+
     /**
      * 获取用户身份信息
      * 
@@ -77,6 +89,40 @@ public class TokenService
                 String uuid = (String) claims.get(Constants.LOGIN_USER_KEY);
                 String userKey = getTokenKey(uuid);
                 LoginUser user = redisCache.getCacheObject(userKey);
+                if (user == null)
+                {
+                    return null;
+                }
+                if (user.getExpireTime() == null || user.getExpireTime() <= System.currentTimeMillis())
+                {
+                    delLoginUser(uuid);
+                    return null;
+                }
+                String revision = authorizationCache.getRevision();
+                // Missing revision includes every pre-upgrade token and every newly issued token.
+                if (!revision.equals(user.getAuthorizationRevision()))
+                {
+                    SysUser currentUser = userService.selectUserById(user.getUserId());
+                    if (currentUser == null || !"0".equals(currentUser.getDelFlag())
+                            || !UserConstants.NORMAL.equals(currentUser.getStatus()))
+                    {
+                        delLoginUser(uuid);
+                        return null;
+                    }
+                    user.setUser(currentUser);
+                    user.setDeptId(currentUser.getDeptId());
+                    user.setPermissions(permissionService.getMenuPermission(currentUser));
+                    user.setAuthorizationRevision(revision);
+                    // Keep the remaining lifetime; only verifyToken handles sliding renewal.
+                    long remainingMillis = user.getExpireTime() - System.currentTimeMillis();
+                    if (remainingMillis <= 0)
+                    {
+                        delLoginUser(uuid);
+                        return null;
+                    }
+                    int remainingSeconds = (int) Math.min(Integer.MAX_VALUE, (remainingMillis + 999) / 1000);
+                    redisCache.setCacheObject(userKey, user, remainingSeconds, TimeUnit.SECONDS);
+                }
                 return user;
             }
             catch (Exception e)
@@ -126,6 +172,7 @@ public class TokenService
         String token = IdUtils.fastUUID();
         loginUser.setToken(token);
         loginUser.setRememberMe(rememberMe);
+        loginUser.setAuthorizationRevision(null);
         setUserAgent(loginUser);
         refreshToken(loginUser);
 
@@ -242,40 +289,4 @@ public class TokenService
         return CacheConstants.LOGIN_TOKEN_KEY + uuid;
     }
 
-    /**
-     * 角色权限变更后，刷新所有持有该角色的在线用户权限
-     *
-     * @param roleId            变更的角色ID
-     * @param permissionService 权限服务
-     */
-    public void refreshPermissionByRoleId(Long roleId, SysPermissionService permissionService)
-    {
-        // 扫描所有在线 token
-        String pattern = CacheConstants.LOGIN_TOKEN_KEY + "*";
-        Collection<String> keys = redisCache.keys(pattern);
-        if (keys == null || keys.isEmpty())
-        {
-            return;
-        }
-        for (String key : keys)
-        {
-            LoginUser loginUser = redisCache.getCacheObject(key);
-            if (loginUser == null || loginUser.getUser() == null || loginUser.getUser().isAdmin())
-            {
-                // 管理员拥有所有权限，跳过
-                continue;
-            }
-            // 判断该用户是否拥有此角色
-            boolean hasRole = loginUser.getUser().getRoles() != null
-                    && loginUser.getUser().getRoles().stream().anyMatch(r -> roleId.equals(r.getRoleId()));
-            if (!hasRole)
-            {
-                continue;
-            }
-            // 刷新权限缓存
-            loginUser.setPermissions(permissionService.getMenuPermission(loginUser.getUser()));
-            refreshToken(loginUser);
-            log.info("角色[{}]权限变更，已刷新在线用户[{}]的权限缓存", roleId, loginUser.getUsername());
-        }
-    }
 }

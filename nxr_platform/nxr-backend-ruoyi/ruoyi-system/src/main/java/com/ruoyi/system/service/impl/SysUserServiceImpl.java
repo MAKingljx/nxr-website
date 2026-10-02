@@ -28,6 +28,7 @@ import com.ruoyi.system.mapper.SysRoleMapper;
 import com.ruoyi.system.mapper.SysUserMapper;
 import com.ruoyi.system.mapper.SysUserPostMapper;
 import com.ruoyi.system.mapper.SysUserRoleMapper;
+import com.ruoyi.system.service.AuthorizationCacheService;
 import com.ruoyi.system.service.ISysConfigService;
 import com.ruoyi.system.service.ISysDeptService;
 import com.ruoyi.system.service.ISysUserService;
@@ -41,6 +42,9 @@ import com.ruoyi.system.service.ISysUserService;
 public class SysUserServiceImpl implements ISysUserService
 {
     private static final Logger log = LoggerFactory.getLogger(SysUserServiceImpl.class);
+
+    @Autowired
+    private AuthorizationCacheService authorizationCache;
 
     @Autowired
     private SysUserMapper userMapper;
@@ -301,7 +305,9 @@ public class SysUserServiceImpl implements ISysUserService
         userPostMapper.deleteUserPostByUserId(userId);
         // 新增用户与岗位管理
         insertUserPost(user);
-        return userMapper.updateUser(user);
+        int rows = userMapper.updateUser(user);
+        authorizationCache.invalidate();
+        return rows;
     }
 
     /**
@@ -316,6 +322,7 @@ public class SysUserServiceImpl implements ISysUserService
     {
         userRoleMapper.deleteUserRoleByUserId(userId);
         insertUserRole(userId, roleIds);
+        authorizationCache.invalidate();
     }
 
     /**
@@ -327,7 +334,12 @@ public class SysUserServiceImpl implements ISysUserService
     @Override
     public int updateUserStatus(SysUser user)
     {
-        return userMapper.updateUserStatus(user.getUserId(), user.getStatus());
+        int rows = userMapper.updateUserStatus(user.getUserId(), user.getStatus());
+        if (rows > 0)
+        {
+            authorizationCache.invalidate();
+        }
+        return rows;
     }
 
     /**
@@ -463,7 +475,12 @@ public class SysUserServiceImpl implements ISysUserService
         userRoleMapper.deleteUserRoleByUserId(userId);
         // 删除用户与岗位表
         userPostMapper.deleteUserPostByUserId(userId);
-        return userMapper.deleteUserById(userId);
+        int rows = userMapper.deleteUserById(userId);
+        if (rows > 0)
+        {
+            authorizationCache.invalidate();
+        }
+        return rows;
     }
 
     /**
@@ -485,7 +502,12 @@ public class SysUserServiceImpl implements ISysUserService
         userRoleMapper.deleteUserRole(userIds);
         // 删除用户与岗位关联
         userPostMapper.deleteUserPost(userIds);
-        return userMapper.deleteUserByIds(userIds);
+        int rows = userMapper.deleteUserByIds(userIds);
+        if (rows > 0)
+        {
+            authorizationCache.invalidate();
+        }
+        return rows;
     }
 
     /**
@@ -534,6 +556,7 @@ public class SysUserServiceImpl implements ISysUserService
                     user.setDeptId(u.getDeptId());
                     user.setUpdateBy(operName);
                     userMapper.updateUser(user);
+                    authorizationCache.invalidate();
                     successNum++;
                     successMsg.append("<br/>" + successNum + "、账号 " + user.getUserName() + " 更新成功");
                 }

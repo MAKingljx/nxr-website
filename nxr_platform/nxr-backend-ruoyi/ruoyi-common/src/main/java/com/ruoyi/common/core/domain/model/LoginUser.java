@@ -71,6 +71,9 @@ public class LoginUser implements UserDetails
      */
     private Set<String> permissions;
 
+    /** Null on legacy sessions, forcing an authoritative reload on their next request. */
+    private String authorizationRevision;
+
     /**
      * 用户信息
      */
@@ -261,6 +264,16 @@ public class LoginUser implements UserDetails
     public void setPermissions(Set<String> permissions)
     {
         this.permissions = permissions;
+    }
+
+    public String getAuthorizationRevision()
+    {
+        return authorizationRevision;
+    }
+
+    public void setAuthorizationRevision(String authorizationRevision)
+    {
+        this.authorizationRevision = authorizationRevision;
     }
 
     public SysUser getUser()

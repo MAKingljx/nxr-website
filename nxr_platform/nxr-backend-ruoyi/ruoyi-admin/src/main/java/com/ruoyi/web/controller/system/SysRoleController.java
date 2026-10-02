@@ -22,8 +22,6 @@ import com.ruoyi.common.core.domain.entity.SysUser;
 import com.ruoyi.common.core.page.TableDataInfo;
 import com.ruoyi.common.enums.BusinessType;
 import com.ruoyi.common.utils.poi.ExcelUtil;
-import com.ruoyi.framework.web.service.SysPermissionService;
-import com.ruoyi.framework.web.service.TokenService;
 import com.ruoyi.system.domain.SysUserRole;
 import com.ruoyi.system.service.ISysDeptService;
 import com.ruoyi.system.service.ISysRoleService;
@@ -40,12 +38,6 @@ public class SysRoleController extends BaseController
 {
     @Autowired
     private ISysRoleService roleService;
-
-    @Autowired
-    private TokenService tokenService;
-
-    @Autowired
-    private SysPermissionService permissionService;
 
     @Autowired
     private ISysUserService userService;
@@ -126,8 +118,6 @@ public class SysRoleController extends BaseController
         
         if (roleService.updateRole(role) > 0)
         {
-            // 刷新所有持有该角色的在线用户权限
-            tokenService.refreshPermissionByRoleId(role.getRoleId(), permissionService);
             return success();
         }
         return error("修改角色'" + role.getRoleName() + "'失败，请联系管理员");
