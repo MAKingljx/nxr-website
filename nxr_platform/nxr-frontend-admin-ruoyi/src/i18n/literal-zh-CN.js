@@ -1292,4 +1292,7 @@ export default {
   "Payment reversed": "付款已撤销",
   "Funds verified": "款项已核实",
   "Filters": "筛选条件",
+  "Unable to load the image or access is restricted": "图片读取失败或无权限",
+  "Unable to load image": "图片读取失败",
+  "Loading image…": "读取图片…",
 }

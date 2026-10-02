@@ -66,6 +66,7 @@
             v-for="(photoId, index) in admission.supplementalPhotoIds"
             :key="photoId"
             :photo-id="photoId"
+            :order-id="orderId"
             :label="`${$tx('Supplemental')} ${index + 1}`"
           />
         </div>
