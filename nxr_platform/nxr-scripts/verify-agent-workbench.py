@@ -202,9 +202,6 @@ def main():
     customer(prefix + f'/cards/{stock[0]["id"]}/return-check', key({'inventoryCode': stock[0]['inventoryCode']}), blocked={409})
     empty_shipment = key({'clientId': alice['id'], 'cardIds': [stock[0]['id']], 'carrierName': 'Final Carrier', 'trackingNumber': 'FINAL-' + suffix})
     customer(prefix + '/return-shipments', empty_shipment, blocked={409})
-    recharge = customer(prefix + '/merchant/wallet-recharges', {'currencyCode': 'USD', 'amount': '1000', 'providerCode': 'bank_transfer', 'payerReference': 'QA-' + suffix})
-    customer(f'/api/admin/customers/{agent["customer"]["id"]}/wallet-recharges/{recharge["id"]}/confirm', {'providerTransactionId': 'SELF-CREDIT-BLOCKED', 'note': 'must be rejected'}, blocked={403})
-    admin(f'/api/admin/customers/{agent["customer"]["id"]}/wallet-recharges/{recharge["id"]}/confirm', {'providerTransactionId': 'QA-SIMULATED-' + suffix, 'note': 'Simulated transfer only in disposable database'})
     inbound_payload = {'carrierName': 'Agent to NXR', 'trackingNumber': 'MASTER-IN-' + suffix}
     customer(prefix + f'/merchant/batches/{batch_no}/inbound-shipment', inbound_payload, blocked={409})
     for order in batch['orders']:
@@ -212,7 +209,14 @@ def main():
         approved = admin(f'/api/admin/order-admissions/{order["orderId"]}/decision', {'decision': 'approve', 'expectedRevision': admission['admissionRevision'], 'note': 'QA accepted'})
         detail = customer(prefix + '/orders/' + order['orderNo'])
         customer(prefix + f'/orders/{order["orderNo"]}/admission/accept-terms', {'termsVersion': approved['termsVersion'], 'acceptedQuotedAmount': detail['totalAmount'], 'acceptedCurrency': 'USD'})
-        customer(prefix + f'/orders/{order["orderNo"]}/wallet-payment', {'idempotencyKey': 'qa-agent-pay-' + order['orderNo']})
+        # Partner staff do not settle orders; the platform records the synthetic receipt.
+        customer(prefix + f'/orders/{order["orderNo"]}/wallet-payment', {'idempotencyKey': 'qa-agent-pay-' + order['orderNo']}, blocked={403})
+        admin_detail = admin(f'/api/admin/orders/{order["orderId"]}')
+        payment = next(p for p in admin_detail['payments'] if p['statusCode'] == 'pending')
+        admin(f'/api/admin/orders/{order["orderId"]}/payments/{payment["id"]}/confirm', {
+            'providerTransactionId': 'QA-SIMULATED-' + order['orderNo'],
+            'note': 'Synthetic local receipt; no external payment'
+        })
     inbound = customer(prefix + f'/merchant/batches/{batch_no}/inbound-shipment', inbound_payload)
     main_in = next(x for x in inbound['shipments'] if x['directionCode'] == 'inbound')
     admin(f'/api/admin/merchant-batches/{batch_id}/shipments/{main_in["id"]}/delivered', {})
@@ -277,6 +281,7 @@ def main():
     admin('/system/user/changeStatus', {'userId': operator['userId'], 'status': '1'}, method='PUT')
     customer(prefix + '/clients', blocked={401, 403})
     admin('/system/user/changeStatus', {'userId': operator['userId'], 'status': '0'}, method='PUT')
+    operator['token'] = api('/login', {'username': operator['userName'], 'password': operator['password']})['token']
     check('backend account reactivation preserves company access', customer(prefix + '/context')['company']['id'] == agent['customer']['id'])
     admin(f"/api/admin/customers/{agent['customer']['id']}/status", {'active': False}, method='PUT')
     customer(prefix + '/clients', blocked={403})
