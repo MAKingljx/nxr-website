@@ -152,7 +152,8 @@ public class CustomerOrderPhotoService {
                 long reusable = jdbc.sql("""
                     SELECT COUNT(*) FROM agent_card c
                     JOIN agent_intake i ON i.id = c.intake_id AND i.merchant_customer_id = c.merchant_customer_id
-                    JOIN merchant_order_batch_item bi ON bi.client_reference = i.intake_no AND bi.order_id = :sourceOrder
+                    JOIN merchant_order_batch_item bi ON bi.order_id = :sourceOrder
+                        AND CAST(bi.client_reference AS CHAR(128)) = CAST(i.intake_no AS CHAR(128))
                     JOIN merchant_order_batch b ON b.id = bi.batch_id AND b.merchant_customer_id = c.merchant_customer_id
                     JOIN grading_order o ON o.id = bi.order_id AND o.customer_id = c.merchant_customer_id
                     JOIN grading_order_item oi ON oi.order_id = o.id AND (oi.front_photo_id = :photo OR oi.back_photo_id = :photo)

@@ -493,11 +493,13 @@ public class AgentWorkbenchService {
             .params(params("id",id,"owner",owner)).query((rs,n)->new Submission(rs.getLong("id"),rs.getLong("batch_id"),rs.getString("batch_no"),List.of(),rs.getObject("created_at",LocalDateTime.class)))
             .optional().orElseThrow(AgentWorkbenchService::missing);
         // Batch references snapshot the globally unique intake number; current links can change after cancellation.
+        // CHAR casts use one connection collation for these columns in existing MySQL schemas.
         return new Submission(row.id(),row.batchId(),row.batchNo(),jdbc.sql("""
-            SELECT i.id FROM agent_intake i
-            JOIN merchant_order_batch_item bi ON bi.client_reference = i.intake_no
-            JOIN merchant_order_batch b ON b.id = bi.batch_id AND b.merchant_customer_id = i.merchant_customer_id
-            WHERE bi.batch_id=:batch AND i.merchant_customer_id=:owner ORDER BY i.id
+            SELECT i.id FROM merchant_order_batch b
+            JOIN merchant_order_batch_item bi ON bi.batch_id = b.id
+            JOIN agent_intake i ON i.merchant_customer_id = b.merchant_customer_id
+                AND CAST(bi.client_reference AS CHAR(128)) = CAST(i.intake_no AS CHAR(128))
+            WHERE b.id=:batch AND b.merchant_customer_id=:owner ORDER BY i.id
             """)
             .params(params("batch",row.batchId(),"owner",owner)).query(Long.class).list(),row.createdAt());
     }
