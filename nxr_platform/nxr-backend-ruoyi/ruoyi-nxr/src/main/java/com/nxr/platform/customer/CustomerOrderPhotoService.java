@@ -147,8 +147,21 @@ public class CustomerOrderPhotoService {
             long assigned = jdbc.sql("SELECT COUNT(*) FROM agent_card WHERE id = :card AND merchant_customer_id = :owner AND (front_photo_id = :photo OR back_photo_id = :photo)")
                 .param("card", cardId).param("owner", customerId).param("photo", photoId).query(Long.class).single();
             if (assigned != 1 || !preserved(photo)) throw missing();
-            if (photo.get("order_id") != null && ((Number) photo.get("order_id")).longValue() != orderId)
-                throw bad("This image belongs to another application");
+            if (photo.get("order_id") != null && ((Number) photo.get("order_id")).longValue() != orderId) {
+                // Keep the first order's evidence immutable. Only this intake's cancelled submission can be reused.
+                long reusable = jdbc.sql("""
+                    SELECT COUNT(*) FROM agent_card c
+                    JOIN agent_intake i ON i.id = c.intake_id AND i.merchant_customer_id = c.merchant_customer_id
+                    JOIN merchant_order_batch_item bi ON bi.client_reference = i.intake_no AND bi.order_id = :sourceOrder
+                    JOIN merchant_order_batch b ON b.id = bi.batch_id AND b.merchant_customer_id = c.merchant_customer_id
+                    JOIN grading_order o ON o.id = bi.order_id AND o.customer_id = c.merchant_customer_id
+                    JOIN grading_order_item oi ON oi.order_id = o.id AND (oi.front_photo_id = :photo OR oi.back_photo_id = :photo)
+                    WHERE c.id = :card AND c.merchant_customer_id = :owner AND o.status_code = 'cancelled'
+                    """).param("sourceOrder", ((Number) photo.get("order_id")).longValue())
+                    .param("photo", photoId).param("card", cardId).param("owner", customerId).query(Long.class).single();
+                if (reusable != 1) throw bad("This image belongs to another application");
+                continue;
+            }
             jdbc.sql("UPDATE customer_order_photo SET order_id = :orderId, attached_at = CURRENT_TIMESTAMP WHERE id = :id AND customer_id = :owner")
                 .param("orderId", orderId).param("id", photoId).param("owner", customerId).update();
         }
@@ -171,7 +184,17 @@ public class CustomerOrderPhotoService {
 
     public FileSystemResource readAttached(long orderId, long photoId) {
         Map<String, Object> photo = jdbc.sql("SELECT * FROM customer_order_photo WHERE id = :id AND order_id = :orderId")
-            .param("id", photoId).param("orderId", orderId).query().listOfRows().stream().findFirst().orElseThrow(CustomerOrderPhotoService::missing);
+            .param("id", photoId).param("orderId", orderId).query().listOfRows().stream().findFirst().orElse(null);
+        if (photo == null) {
+            photo = jdbc.sql("""
+                SELECT p.* FROM customer_order_photo p
+                WHERE p.id = :id AND p.preserved_for_agent = 1
+                  AND EXISTS (SELECT 1 FROM grading_order_item oi
+                    JOIN grading_order o ON o.id = oi.order_id AND o.customer_id = p.customer_id
+                    WHERE o.id = :orderId AND (oi.front_photo_id = p.id OR oi.back_photo_id = p.id))
+                """).param("id", photoId).param("orderId", orderId).query().listOfRows().stream().findFirst()
+                .orElseThrow(CustomerOrderPhotoService::missing);
+        }
         return resource(photo, false);
     }
 

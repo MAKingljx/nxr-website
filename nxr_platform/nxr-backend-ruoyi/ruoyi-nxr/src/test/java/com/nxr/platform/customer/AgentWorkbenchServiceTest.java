@@ -50,6 +50,7 @@ class AgentWorkbenchServiceTest {
     private MerchantBatchService batches;
     private CustomerOrderPhotoService photos;
     private OrderAdmissionService admission;
+    private CustomerPortalService cancellationPortal;
     private final AtomicInteger sequence=new AtomicInteger(100);
 
     @BeforeEach void setup() throws Exception {
@@ -69,6 +70,9 @@ class AgentWorkbenchServiceTest {
         var manager=new DataSourceTransactionManager(ds); tx=new TransactionTemplate(manager); tx.setIsolationLevel(org.springframework.transaction.TransactionDefinition.ISOLATION_READ_COMMITTED);
         JdbcClient client=JdbcClient.create(jdbc);
         var fulfillment=new OrderFulfillmentService(client,jdbc);
+        jdbc.execute("CREATE TABLE payment_attempt(id BIGINT AUTO_INCREMENT PRIMARY KEY, order_id BIGINT NOT NULL, status_code VARCHAR(32) NOT NULL)");
+        cancellationPortal = new CustomerPortalService(client,jdbc,fulfillment);
+        cancellationPortal.setAgentOrderCancellationService(new AgentOrderCancellationService(client));
         portal=mock(CustomerPortalService.class);
         var commerce=mock(CommercePolicyService.class);
         when(commerce.quoteBatch(anyLong(),any(),any(),any(),any())).thenAnswer(call -> {
@@ -148,6 +152,117 @@ class AgentWorkbenchServiceTest {
         assertThatThrownBy(()->tx.execute(s->service.submit(1,new SubmissionRequest(List.of(a.intake().id()),10L,"agent_return","USD","Other","same-request"))))
             .hasMessageContaining("409");
         assertThatThrownBy(()->tx.execute(s->service.submit(2,request))).hasMessageContaining("404");
+    }
+
+    @Test void cancellingOneUnpaidIntakeReleasesItsCardsForResubmissionAndKeepsExactBatchHistory() {
+        Client c=createClient(1,"A"); IntakeDetail a=ready(c.id(),2,"a"), b=ready(c.id(),1,"b");
+        SubmissionRequest request=new SubmissionRequest(List.of(a.intake().id(),b.intake().id()),10L,"agent_return","USD","Original","original");
+        Submission original=tx.execute(s->service.submit(1,request));
+        IntakeDetail submitted=service.intakeDetail(1,a.intake().id());
+        long oldOrder=submitted.intake().orderId(), oldItem=submitted.cards().get(0).orderItemId();
+        BigDecimal oldAmount=jdbc.queryForObject("SELECT total_amount FROM grading_order WHERE id=?",BigDecimal.class,oldOrder);
+        cancel(submitted.intake());
+        IntakeDetail released=service.intakeDetail(1,a.intake().id());
+        assertThat(released.intake().statusCode()).isEqualTo("ready");
+        assertThat(released.intake().orderId()).isNull(); assertThat(released.intake().batchId()).isNull();
+        assertThat(released.cards()).allMatch(card->"in_stock".equals(card.statusCode()) && card.orderItemId()==null);
+        assertThat(service.intakeDetail(1,b.intake().id()).intake().statusCode()).isEqualTo("submitted");
+        assertThat(jdbc.queryForObject("SELECT status_code FROM grading_order WHERE id=?",String.class,oldOrder)).isEqualTo("cancelled");
+        assertThat(jdbc.queryForObject("SELECT order_id FROM grading_order_item WHERE id=?",Long.class,oldItem)).isEqualTo(oldOrder);
+        assertThat(jdbc.queryForObject("SELECT total_amount FROM grading_order WHERE id=?",BigDecimal.class,oldOrder)).isEqualByComparingTo(oldAmount);
+        assertThat(released.events()).filteredOn(e->"card_submission_cancelled".equals(e.eventCode()))
+            .hasSize(2).allMatch(e->e.note().contains(submitted.intake().orderNo()) && e.note().contains(original.batchNo()));
+        long events=count("agent_event"); cancel(submitted.intake()); assertThat(count("agent_event")).isEqualTo(events);
+
+        Submission replacement=submit(released,"replacement");
+        assertThat(replacement.batchId()).isNotEqualTo(original.batchId());
+        assertThat(replacement.intakeIds()).containsExactly(a.intake().id());
+        assertThat(tx.execute(s->service.submit(1,request)).intakeIds()).containsExactly(a.intake().id(),b.intake().id());
+        assertThat(batches.requireAdminBatch(original.batchId()).orders()).hasSize(2);
+        assertThat(batches.requireAdminBatch(replacement.batchId()).orders()).hasSize(1);
+        assertThat(service.intakeDetail(1,a.intake().id()).intake().orderId()).isNotEqualTo(oldOrder);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM payment_record",Long.class)).isZero();
+    }
+
+    @Test void cancellingSubmittedPhotosAllowsExactCardResubmissionAndPreservesBothOrderImages() throws Exception {
+        Client c=createClient(1,"A"); IntakeDetail intake=ready(c.id(),2,"photos");
+        ByteArrayOutputStream output=new ByteArrayOutputStream();
+        ImageIO.write(new BufferedImage(200,300,BufferedImage.TYPE_INT_RGB),"png",output);
+        for(Card card:intake.cards()) {
+            tx.execute(s->service.uploadPhoto(1,card.id(),"front",new MockMultipartFile("file","front.png","image/png",output.toByteArray())));
+        }
+        Submission original=submit(intake,"photo-original");
+        IntakeDetail submitted=service.intakeDetail(1,intake.intake().id());
+        long oldOrder=submitted.intake().orderId(), photo=submitted.cards().get(0).frontPhotoId();
+        cancel(submitted.intake());
+        Submission replacement=submit(service.intakeDetail(1,intake.intake().id()),"photo-replacement");
+        IntakeDetail current=service.intakeDetail(1,intake.intake().id());
+        long newOrder=current.intake().orderId();
+        assertThat(replacement.batchId()).isNotEqualTo(original.batchId());
+        assertThat(photos.attachedOrderId(photo)).isEqualTo(oldOrder);
+        assertThat(photos.readAttached(oldOrder,photo).getContentAsByteArray()).isEqualTo(photos.readAttached(newOrder,photo).getContentAsByteArray());
+        assertThat(jdbc.queryForObject("SELECT front_photo_id FROM grading_order_item WHERE id=?",Long.class,current.cards().get(0).orderItemId())).isEqualTo(photo);
+        assertThatThrownBy(()->tx.executeWithoutResult(s->photos.attachAgentEvidence(1,current.cards().get(1).id(),newOrder,List.of(photo))))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("404");
+        assertThatThrownBy(()->tx.executeWithoutResult(s->photos.attachAgentEvidence(2,current.cards().get(0).id(),newOrder,List.of(photo))))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("404");
+        assertThatThrownBy(()->tx.executeWithoutResult(s->photos.attachToOrder(1,newOrder,List.of(photo))))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("inventory card");
+        long foreign=sequence.incrementAndGet();
+        jdbc.update("INSERT INTO grading_order(id,order_no,customer_id,status_code,service_level_code,total_card_count,service_fee,return_shipping_fee,total_amount,currency_code,contact_name,contact_phone,return_address_line1,return_city,return_postal_code,return_country) VALUES(?, ?,2,'admission_review','basic_grading',1,10,0,10,'USD','Other agent','123','Other road','City','1','US')",foreign,"NXR-FOREIGN-"+foreign);
+        assertThatThrownBy(()->photos.readAttached(foreign,photo)).isInstanceOf(ResponseStatusException.class).hasMessageContaining("404");
+        jdbc.update("UPDATE grading_order SET status_code='received' WHERE id=?",oldOrder);
+        assertThatThrownBy(()->tx.executeWithoutResult(s->photos.attachAgentEvidence(1,current.cards().get(0).id(),newOrder,List.of(photo))))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("another application");
+    }
+
+    @Test void recordedFundsAndInboundProgressRejectCancellationWithoutReleasingInventory() {
+        Client c=createClient(1,"A"); IntakeDetail intake=ready(c.id(),1,"paid"); submit(intake,"paid-submission");
+        IntakeDetail submitted=service.intakeDetail(1,intake.intake().id()); long order=submitted.intake().orderId();
+        jdbc.update("INSERT INTO payment_record(order_id,direction_code,payment_type_code,payment_no,provider_code,status_code,amount,currency_code) VALUES(?,'receivable','grading_fee','PAID-TEST','manual_transfer','confirmed',10,'USD')",order);
+        assertThatThrownBy(()->cancel(submitted.intake())).isInstanceOf(ResponseStatusException.class).hasMessageContaining("financial review");
+        assertThatThrownBy(()->tx.execute(s->cancellationPortal.updateOrderStatusByAdmin(order,9,new CustomerPortalService.UpdateOrderStatusRequest("cancelled","Unsafe cancellation"))))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("financial review");
+        assertThat(service.intakeDetail(1,intake.intake().id()).intake().orderId()).isEqualTo(order);
+        assertThat(service.intakeDetail(1,intake.intake().id()).cards().get(0).orderItemId()).isEqualTo(submitted.cards().get(0).orderItemId());
+        jdbc.update("UPDATE payment_record SET status_code='pending' WHERE order_id=?",order);
+        jdbc.update("UPDATE grading_order SET status_code='inbound_shipped' WHERE id=?",order);
+        assertThatThrownBy(()->tx.execute(s->cancellationPortal.updateOrderStatusByAdmin(order,9,new CustomerPortalService.UpdateOrderStatusRequest("cancelled","Unsafe shipment cancellation"))))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("before inbound shipment");
+        // Even an inconsistent child state cannot release cards after its shared parcel leaves the agent.
+        jdbc.update("UPDATE grading_order SET status_code='awaiting_inbound' WHERE id=?",order);
+        jdbc.update("INSERT INTO merchant_batch_shipment(batch_id,direction_code,carrier_name,tracking_number,status_code,created_by_type) VALUES(?,'inbound','UPS','ALREADY-SHIPPED','shipped','customer')",submitted.intake().batchId());
+        assertThatThrownBy(()->tx.execute(s->cancellationPortal.updateOrderStatusByAdmin(order,9,new CustomerPortalService.UpdateOrderStatusRequest("cancelled","Master already shipped"))))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("master parcel has already shipped");
+        assertThat(jdbc.queryForObject("SELECT status_code FROM grading_order WHERE id=?",String.class,order)).isEqualTo("awaiting_inbound");
+        assertThat(service.intakeDetail(1,intake.intake().id()).intake().statusCode()).isEqualTo("submitted");
+        assertThat(service.intakeDetail(1,intake.intake().id()).events()).noneMatch(e->e.eventCode().endsWith("submission_cancelled"));
+    }
+
+    @Test void cancellationCanFinishWhileMasterShipmentOwnsItsBatchLock() throws Exception {
+        Client c=createClient(1,"A"); IntakeDetail a=ready(c.id(),1,"cancel"), b=ready(c.id(),1,"ship");
+        Submission original=tx.execute(s->service.submit(1,new SubmissionRequest(List.of(a.intake().id(),b.intake().id()),10L,"agent_return","USD","Parallel","parallel")));
+        Intake cancelled=service.intakeDetail(1,a.intake().id()).intake();
+        long active=service.intakeDetail(1,b.intake().id()).intake().orderId();
+        jdbc.update("UPDATE grading_order SET status_code='awaiting_inbound' WHERE id=?",active);
+        var batchLocked=new java.util.concurrent.CountDownLatch(1);
+        var cancellationDone=new java.util.concurrent.CountDownLatch(1);
+        var pool=Executors.newFixedThreadPool(2);
+        try {
+            var shipping=pool.submit(()->tx.execute(s->{
+                jdbc.queryForObject("SELECT id FROM merchant_order_batch WHERE id=? FOR UPDATE",Long.class,original.batchId());
+                batchLocked.countDown();
+                try { assertThat(cancellationDone.await(3,TimeUnit.SECONDS)).isTrue(); }
+                catch(InterruptedException e) { throw new IllegalStateException(e); }
+                return batches.createInboundShipment(1,original.batchNo(),new MerchantBatchService.BatchShipmentRequest("UPS","PARALLEL-IN",null));
+            }));
+            assertThat(batchLocked.await(3,TimeUnit.SECONDS)).isTrue();
+            var cancelling=pool.submit(()->{ try { cancel(cancelled); } finally { cancellationDone.countDown(); } });
+            cancelling.get(3,TimeUnit.SECONDS);
+            assertThat(shipping.get(3,TimeUnit.SECONDS).orders()).extracting(MerchantBatchService.BatchOrderItem::statusCode)
+                .containsExactly("cancelled","inbound_shipped");
+        } finally { pool.shutdownNow(); }
+        assertThat(service.intakeDetail(1,a.intake().id()).intake().statusCode()).isEqualTo("ready");
     }
 
     @Test void failureAfterBatchCreationRollsBackOrdersTokensInventoryLinksAndAllowsSafeRetry() {
@@ -292,6 +407,7 @@ class AgentWorkbenchServiceTest {
         IntakeDetail i=createIntake(1,client,count,key); receive(i); for(Card c:i.cards()) check(i,c,false); return service.intakeDetail(1,i.intake().id());
     }
     private Submission submit(IntakeDetail i,String key) { return tx.execute(s->service.submit(1,new SubmissionRequest(List.of(i.intake().id()),10L,"agent_return","USD","Batch",key))); }
+    private void cancel(Intake intake) { tx.execute(s->cancellationPortal.cancelCustomerOrder(1,intake.orderNo(),new CustomerPortalService.CancelOrderRequest("Customer withdrew the application"))); }
     private Card returnCard(Card c,String scan) { return tx.execute(s->service.returnCheck(1,c.id(),new ReturnCheckRequest(scan,null,null))); }
     private ShipmentDetail ship(long client,List<Long> cards,String key) { return tx.execute(s->service.createShipment(1,new ShipmentRequest(client,cards,"DHL","RETURN",key,null,null))); }
     private void markNxrDelivered(Submission s) {

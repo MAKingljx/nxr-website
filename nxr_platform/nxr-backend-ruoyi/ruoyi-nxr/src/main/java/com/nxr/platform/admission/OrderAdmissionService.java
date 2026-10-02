@@ -351,9 +351,28 @@ public class OrderAdmissionService {
 
     public void requireGenericStatusChangeAllowed(long orderId) {
         AdmissionRow row = requireById(orderId, true);
-        if (row.admissionStatus() != null && (row.termsAcceptedAt() == null || isExpired(row))) {
+        if (row.admissionStatus() != null && (row.termsAcceptedAt() == null
+            || (isExpired(row) && !hasAcceptedFulfillmentPayment(row)))) {
             throw conflict("Admission and payment deadline state can only be changed through the admission workflow");
         }
+    }
+
+    /** The due date limits payment entry; it does not expire an already accepted fulfillment payment. */
+    private boolean hasAcceptedFulfillmentPayment(AdmissionRow row) {
+        if (!Set.of("awaiting_inbound", "inbound_shipped", "intake_exception", "received", "grading", "review",
+            "quality_check", "quality_hold", "completed", "return_shipped", "delivered").contains(row.orderStatus())
+            || !"approved".equals(row.admissionStatus()) || !"active".equals(row.deadlineStatus())
+            || row.approvedTermsVersion() == null
+            || !java.util.Objects.equals(row.approvedTermsVersion(), row.acceptedTermsVersion())
+            || !quoteSnapshotMatchesOrder(row)) {
+            return false;
+        }
+        return jdbcClient.sql("""
+                SELECT COUNT(*) FROM payment_record WHERE order_id = :orderId
+                  AND direction_code = 'receivable' AND payment_type_code = 'grading_fee'
+                  AND status_code = 'confirmed'
+                """)
+            .param("orderId", row.orderId()).query(Long.class).single() > 0;
     }
 
     @Scheduled(fixedDelayString = "${nxr.order-admission.expiry-scan-ms:60000}")

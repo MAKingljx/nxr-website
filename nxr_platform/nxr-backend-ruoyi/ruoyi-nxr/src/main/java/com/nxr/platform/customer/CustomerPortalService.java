@@ -73,6 +73,7 @@ public class CustomerPortalService {
     private CustomerOrderPhotoService customerOrderPhotoService;
     private CommercePolicyService commercePolicyService;
     private OrderAccessScopeService orderAccessScopeService;
+    private AgentOrderCancellationService agentOrderCancellationService;
 
     public CustomerPortalService(JdbcClient jdbcClient, JdbcTemplate jdbcTemplate) {
         this(jdbcClient, jdbcTemplate, null, null, null);
@@ -152,6 +153,11 @@ public class CustomerPortalService {
     @Autowired(required = false)
     public void setOrderAccessScopeService(OrderAccessScopeService orderAccessScopeService) {
         this.orderAccessScopeService = orderAccessScopeService;
+    }
+
+    @Autowired(required = false)
+    public void setAgentOrderCancellationService(AgentOrderCancellationService agentOrderCancellationService) {
+        this.agentOrderCancellationService = agentOrderCancellationService;
     }
 
     public CardCommunityResponse loadCardCommunity(String certificateId) {
@@ -503,7 +509,7 @@ public class CustomerPortalService {
             order.contactName(), order.contactPhone(), order.returnAddressLine1(), order.returnAddressLine2(),
             order.returnCity(), order.returnRegion(), order.returnPostalCode(), order.returnCountry(),
             order.customerNote(), null, order.intakeCode(), order.packingSlipCode(), order.shippingLabelCreatedAt(),
-            order.customer(), order.createdAt(), order.updatedAt(), order.items(), order.payments(), order.shipments(), order.timeline()
+            order.customer(), order.createdAt(), order.updatedAt(), order.items(), order.payments(), order.shipments(), order.timeline(), order.merchantBatch()
         );
     }
 
@@ -603,9 +609,11 @@ public class CustomerPortalService {
         lockCustomerOrderForPayment(customerId, orderNo);
         OrderDetailResponse order = requireCustomerOrder(customerId, orderNo);
         if ("cancelled".equals(order.statusCode())) {
-            return order;
+            releaseCancelledAgentOrder(order.id());
+            return requireCustomerOrder(customerId, orderNo);
         }
         String reason = requireText(request == null ? null : request.reason(), "Cancellation reason", 1000);
+        assertBatchCancellationAllowed(order.id(), order.statusCode());
         assertNoActiveGatewayPayment(order.id());
         MerchantWalletService wallet = merchantWalletService;
         boolean walletPaid = wallet != null && wallet.hasPaidWalletOrder(order.id());
@@ -737,6 +745,9 @@ public class CustomerPortalService {
         lockOrderForPayment(orderId);
         OrderDetailResponse order = requireAdminOrder(orderId);
         String targetStatus = normalizeStatus(request.statusCode());
+        if (Set.of("inbound_shipped", "return_shipped", "delivered").contains(targetStatus)) {
+            assertIndividualShipmentAllowed(order.id());
+        }
         requireFulfillmentService().assertManualStatusTransitionAllowed(orderId, targetStatus);
         if (order.admissionStatus() != null
             && Set.of("awaiting_payment", "payment_review", "awaiting_inbound").contains(targetStatus)) {
@@ -748,6 +759,7 @@ public class CustomerPortalService {
         }
         String detail = blankToNull(clean(request.detail(), 1000));
         if ("cancelled".equals(targetStatus)) {
+            assertBatchCancellationAllowed(order.id(), order.statusCode());
             assertNoActiveGatewayPayment(order.id());
         }
         if ("cancelled".equals(targetStatus) && merchantWalletService != null && merchantWalletService.hasPaidWalletOrder(order.id())) {
@@ -878,9 +890,19 @@ public class CustomerPortalService {
     }
 
     private void assertIndividualShipmentAllowed(long orderId) {
-        String batchNo = jdbcClient.sql(
+        MerchantBatchLink batch = merchantBatchLink(orderId);
+        if (batch != null) {
+            throw new ResponseStatusException(
+                HttpStatus.CONFLICT,
+                "Order belongs to merchant batch " + batch.batchNo() + "; use the batch's shared shipment workflow"
+            );
+        }
+    }
+
+    private MerchantBatchLink merchantBatchLink(long orderId) {
+        return jdbcClient.sql(
                 """
-                SELECT b.batch_no
+                SELECT b.id, b.batch_no, b.status_code
                 FROM merchant_order_batch_item bi
                 JOIN merchant_order_batch b ON b.id = bi.batch_id
                 WHERE bi.order_id = :orderId AND b.status_code <> 'cancelled'
@@ -888,14 +910,16 @@ public class CustomerPortalService {
                 """
             )
             .param("orderId", orderId)
-            .query(String.class)
+            .query((rs, rowNum) -> new MerchantBatchLink(rs.getLong("id"), rs.getString("batch_no"), rs.getString("status_code")))
             .optional()
             .orElse(null);
-        if (batchNo != null) {
-            throw new ResponseStatusException(
-                HttpStatus.CONFLICT,
-                "Order belongs to merchant batch " + batchNo + "; use the batch's shared shipment workflow"
-            );
+    }
+
+    private void assertBatchCancellationAllowed(long orderId, String currentStatus) {
+        if (merchantBatchLink(orderId) != null && !Set.of("admission_review", "terms_confirmation", "payment_expired",
+            "awaiting_payment", "payment_review", "awaiting_inbound", "cancelled").contains(currentStatus)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "A batch order can only be cancelled before inbound shipment");
         }
     }
 
@@ -1289,7 +1313,7 @@ public class CustomerPortalService {
                 new CustomerReference(rs.getLong("customer_id"), rs.getString("customer_email"), rs.getString("customer_display_name")),
                 rs.getObject("created_at", LocalDateTime.class),
                 rs.getObject("updated_at", LocalDateTime.class),
-                List.of(), List.of(), List.of(), List.of()
+                List.of(), List.of(), List.of(), List.of(), null
             ))
             .optional()
             .map(this::withOrderRelations);
@@ -1304,7 +1328,7 @@ public class CustomerPortalService {
             base.returnCity(), base.returnRegion(), base.returnPostalCode(), base.returnCountry(),
             base.customerNote(), base.internalNote(), base.intakeCode(), base.packingSlipCode(), base.shippingLabelCreatedAt(),
             base.customer(), base.createdAt(), base.updatedAt(),
-            listOrderItems(base.id()), listPayments(base.id()), listShipments(base.id()), listTimeline(base.id())
+            listOrderItems(base.id()), listPayments(base.id()), listShipments(base.id()), listTimeline(base.id()), merchantBatchLink(base.id())
         );
     }
 
@@ -1561,6 +1585,7 @@ public class CustomerPortalService {
     ) {
         OrderDetailResponse order = requireAdminOrder(orderId);
         if (order.statusCode().equals(targetStatus)) {
+            if ("cancelled".equals(targetStatus)) releaseCancelledAgentOrder(orderId);
             addTimelineEvent(orderId, "status_note", title, detail, targetStatus, visibleToCustomer, actorType, customerId, adminUserId);
             return;
         }
@@ -1573,6 +1598,7 @@ public class CustomerPortalService {
             .param("targetStatus", targetStatus)
             .param("orderId", orderId)
             .update();
+        if ("cancelled".equals(targetStatus)) releaseCancelledAgentOrder(orderId);
         addTimelineEvent(orderId, "status_changed", title, detail, targetStatus, visibleToCustomer, actorType, customerId, adminUserId);
         if (visibleToCustomer) {
             String notificationStatus = notificationStatus(targetStatus);
@@ -1587,6 +1613,10 @@ public class CustomerPortalService {
         if (notificationOutboxService != null) {
             notificationOutboxService.enqueueOrderStatus(customerId, orderNo, statusCode, message);
         }
+    }
+
+    private void releaseCancelledAgentOrder(long orderId) {
+        if (agentOrderCancellationService != null) agentOrderCancellationService.releaseCancelledOrder(orderId);
     }
 
     private static String notificationStatus(String orderStatus) {
@@ -2191,8 +2221,12 @@ public class CustomerPortalService {
         List<OrderItemResponse> items,
         List<PaymentRecord> payments,
         List<ShipmentRecord> shipments,
-        List<OrderTimelineEvent> timeline
+        List<OrderTimelineEvent> timeline,
+        MerchantBatchLink merchantBatch
     ) {
+    }
+
+    public record MerchantBatchLink(long batchId, String batchNo, String statusCode) {
     }
 
     public record CustomerReference(long id, String email, String displayName) {

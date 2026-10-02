@@ -320,10 +320,11 @@ public class MerchantBatchService {
         shipments.addAll(jdbcClient.sql(
                 """
                 SELECT direction_code, carrier_name, tracking_number, status_code, shipped_at, delivered_at
-                FROM merchant_batch_shipment WHERE batch_id = :batchId ORDER BY shipped_at, id
+                FROM merchant_batch_shipment WHERE batch_id = :batchId AND :orderStatus <> 'cancelled' ORDER BY shipped_at, id
                 """
             )
             .param("batchId", row.batchId())
+            .param("orderStatus", row.statusCode())
             .query((rs, rowNum) -> mapPublicShipment(rs, "batch"))
             .list());
         return new PublicTrackingResponse(
@@ -479,7 +480,8 @@ public class MerchantBatchService {
             .update();
         jdbcClient.sql(
                 "UPDATE grading_order_item SET status_code = 'return_shipped', updated_at = CURRENT_TIMESTAMP "
-                    + "WHERE order_id IN (SELECT order_id FROM merchant_order_batch_item WHERE batch_id = :batchId)"
+                    + "WHERE order_id IN (SELECT bi.order_id FROM merchant_order_batch_item bi JOIN grading_order o ON o.id = bi.order_id "
+                    + "WHERE bi.batch_id = :batchId AND o.status_code <> 'cancelled')"
             )
             .param("batchId", batch.id())
             .update();
@@ -526,7 +528,8 @@ public class MerchantBatchService {
                 .update();
             jdbcClient.sql(
                     "UPDATE grading_order_item SET status_code = 'delivered', updated_at = CURRENT_TIMESTAMP "
-                        + "WHERE order_id IN (SELECT order_id FROM merchant_order_batch_item WHERE batch_id = :batchId) AND status_code = 'return_shipped'"
+                        + "WHERE order_id IN (SELECT bi.order_id FROM merchant_order_batch_item bi JOIN grading_order o ON o.id = bi.order_id "
+                        + "WHERE bi.batch_id = :batchId AND o.status_code <> 'cancelled') AND status_code = 'return_shipped'"
                 )
                 .param("batchId", batch.id())
                 .update();
@@ -696,7 +699,7 @@ public class MerchantBatchService {
             .query((rs, rowNum) -> new BatchOrderState(
                 rs.getLong("id"), rs.getString("order_no"), rs.getLong("customer_id"), rs.getString("status_code")
             ))
-            .list();
+            .list().stream().filter(order -> !"cancelled".equals(order.statusCode())).toList();
     }
 
     private void enqueueBatchStatus(List<BatchOrderState> orders, String statusCode, String publicMessage) {
@@ -753,7 +756,8 @@ public class MerchantBatchService {
                 INSERT INTO order_timeline_event
                     (order_id, event_code, title, detail, status_code, visible_to_customer, actor_type_code)
                 SELECT bi.order_id, :eventCode, :title, :detail, :status, 1, 'system'
-                FROM merchant_order_batch_item bi WHERE bi.batch_id = :batchId
+                FROM merchant_order_batch_item bi JOIN grading_order o ON o.id = bi.order_id
+                WHERE bi.batch_id = :batchId AND o.status_code <> 'cancelled'
                 """
             )
             .param("eventCode", eventCode)

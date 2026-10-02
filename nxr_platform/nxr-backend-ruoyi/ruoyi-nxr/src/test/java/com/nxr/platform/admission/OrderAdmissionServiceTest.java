@@ -65,7 +65,8 @@ class OrderAdmissionServiceTest {
               UNIQUE(order_id, photo_id)
             );
             CREATE TABLE payment_record (
-              id BIGINT AUTO_INCREMENT PRIMARY KEY, order_id BIGINT NOT NULL, status_code VARCHAR(32) NOT NULL
+              id BIGINT AUTO_INCREMENT PRIMARY KEY, order_id BIGINT NOT NULL, status_code VARCHAR(32) NOT NULL,
+              direction_code VARCHAR(32) DEFAULT 'receivable', payment_type_code VARCHAR(32) DEFAULT 'grading_fee'
             );
             CREATE TABLE payment_attempt (
               id BIGINT AUTO_INCREMENT PRIMARY KEY, order_id BIGINT NOT NULL, active_order_id BIGINT,
@@ -182,6 +183,49 @@ class OrderAdmissionServiceTest {
             .isEqualTo("payment_expired");
         assertThat(jdbc.sql("SELECT event_code FROM order_admission_event ORDER BY id DESC LIMIT 1").query(String.class).single())
             .isEqualTo("payment_expired");
+    }
+
+    @Test
+    void acceptedPaidFulfillmentCanContinueAfterTheOriginalPaymentDeadline() {
+        tx(() -> service.decide(10L, 9L, new OrderAdmissionService.DecisionRequest("approve", "Approved", 1)));
+        tx(() -> service.acceptTerms(
+            7L, "NXR-100", new OrderAdmissionService.AcceptTermsRequest("terms-v1", new BigDecimal("100.00"), "USD")
+        ));
+        jdbc.sql("UPDATE payment_record SET status_code='confirmed' WHERE order_id=10").update();
+        jdbc.sql("UPDATE grading_order SET status_code='received', payment_due_at=TIMESTAMP '2026-09-08 01:00:00' WHERE id=10").update();
+
+        for (String status : java.util.List.of("received", "grading", "review", "quality_check", "completed", "return_shipped")) {
+            jdbc.sql("UPDATE grading_order SET status_code=:status WHERE id=10").param("status", status).update();
+            tx(() -> { service.requireGenericStatusChangeAllowed(10L); service.expireDuePayments(); return null; });
+            assertThat(jdbc.sql("SELECT status_code FROM grading_order WHERE id=10").query(String.class).single()).isEqualTo(status);
+        }
+        assertThat(jdbc.sql("SELECT status_code FROM payment_record WHERE order_id=10").query(String.class).single()).isEqualTo("confirmed");
+
+        jdbc.sql("UPDATE grading_order SET status_code='received', total_amount=101 WHERE id=10").update();
+        assertGenericBlocked();
+        jdbc.sql("UPDATE grading_order SET total_amount=100, terms_accepted_at=NULL WHERE id=10").update();
+        assertGenericBlocked();
+    }
+
+    @Test
+    void expiredUnpaidAndLatePaymentHeldOrdersCannotUseGenericStatusToEnterFulfillment() {
+        tx(() -> service.decide(10L, 9L, new OrderAdmissionService.DecisionRequest("approve", "Approved", 1)));
+        tx(() -> service.acceptTerms(
+            7L, "NXR-100", new OrderAdmissionService.AcceptTermsRequest("terms-v1", new BigDecimal("100.00"), "USD")
+        ));
+        jdbc.sql("UPDATE grading_order SET payment_due_at=TIMESTAMP '2026-09-08 01:00:00' WHERE id=10").update();
+        assertGenericBlocked();
+        jdbc.sql("UPDATE grading_order SET status_code='received' WHERE id=10").update();
+        assertGenericBlocked();
+        jdbc.sql("UPDATE payment_record SET status_code='confirmed' WHERE order_id=10").update();
+        jdbc.sql("UPDATE grading_order SET status_code='payment_exception' WHERE id=10").update();
+        assertGenericBlocked();
+        assertThat(tx(() -> service.verifiedPaymentRequiresReview(10L))).isTrue();
+    }
+
+    private void assertGenericBlocked() {
+        assertThatThrownBy(() -> tx(() -> { service.requireGenericStatusChangeAllowed(10L); return null; }))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("admission workflow");
     }
 
     @Test

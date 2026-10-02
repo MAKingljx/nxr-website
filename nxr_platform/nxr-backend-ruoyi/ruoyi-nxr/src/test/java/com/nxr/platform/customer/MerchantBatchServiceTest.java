@@ -125,6 +125,49 @@ class MerchantBatchServiceTest {
     }
 
     @Test
+    void cancelledChildrenStayInHistoryAndDoNotBlockOrJoinRemainingMasterParcels() {
+        MerchantBatchService.BatchCreateResult created = service.createBatch(1, request());
+        long cancelled = created.rows().get(0).orderId(), active = created.rows().get(1).orderId();
+        jdbc.update("INSERT INTO grading_order_item(order_id,item_no,card_name,language_code,status_code) VALUES(?,1,'Cancelled card','EN','submitted'),(?,1,'Active card','EN','submitted')", cancelled, active);
+        jdbc.update("UPDATE grading_order SET status_code='cancelled' WHERE id=?", cancelled);
+        jdbc.update("UPDATE grading_order SET status_code='awaiting_inbound' WHERE id=?", active);
+
+        var inbound = service.createInboundShipment(1, created.batchNo(), new MerchantBatchService.BatchShipmentRequest("UPS", "ACTIVE-IN", null));
+        assertThat(inbound.orders()).hasSize(2);
+        assertThat(inbound.orders()).extracting(MerchantBatchService.BatchOrderItem::statusCode).containsExactly("cancelled", "inbound_shipped");
+        jdbc.update("UPDATE grading_order SET status_code='completed' WHERE id=?", active);
+        var outbound = service.createOutboundShipment(created.batchId(), 901, new MerchantBatchService.BatchShipmentRequest("DHL", "ACTIVE-OUT", null));
+        long shipment = outbound.shipments().stream().filter(s -> "outbound".equals(s.directionCode())).findFirst().orElseThrow().id();
+        var delivered = service.markShipmentDelivered(created.batchId(), shipment, 901);
+        assertThat(delivered.statusCode()).isEqualTo("delivered");
+        assertThat(delivered.orders()).extracting(MerchantBatchService.BatchOrderItem::statusCode).containsExactly("cancelled", "delivered");
+        assertThat(jdbc.queryForObject("SELECT status_code FROM grading_order_item WHERE order_id=?", String.class, cancelled)).isEqualTo("submitted");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM order_timeline_event WHERE order_id=? AND event_code LIKE 'batch_%'", Integer.class, cancelled)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM order_timeline_event WHERE order_id=? AND event_code LIKE 'batch_%'", Integer.class, active)).isEqualTo(3);
+        assertThat(service.publicTracking(created.rows().get(0).trackingToken()).shipments()).isEmpty();
+        org.mockito.Mockito.verify(fulfillment, org.mockito.Mockito.never()).assertOutboundReady(cancelled);
+        org.mockito.Mockito.verify(fulfillment).assertOutboundReady(active);
+    }
+
+    @Test
+    void cancelledChildrenDoNotWaivePaymentOrCompletionForRemainingOrdersAndEmptyBatchesCannotShip() {
+        MerchantBatchService.BatchCreateResult created = service.createBatch(1, request());
+        long cancelled = created.rows().get(0).orderId(), active = created.rows().get(1).orderId();
+        jdbc.update("UPDATE grading_order SET status_code='cancelled' WHERE id=?", cancelled);
+        assertThatThrownBy(() -> service.createInboundShipment(1, created.batchNo(), new MerchantBatchService.BatchShipmentRequest("UPS", "EARLY", null)))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("paid and ready");
+        assertThatThrownBy(() -> service.createOutboundShipment(created.batchId(), 901, new MerchantBatchService.BatchShipmentRequest("DHL", "EARLY", null)))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("completed");
+        jdbc.update("UPDATE grading_order SET status_code='cancelled' WHERE id=?", active);
+        assertThatThrownBy(() -> service.createInboundShipment(1, created.batchNo(), new MerchantBatchService.BatchShipmentRequest("UPS", "EMPTY", null)))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("no accepted orders");
+        assertThatThrownBy(() -> service.createOutboundShipment(created.batchId(), 901, new MerchantBatchService.BatchShipmentRequest("DHL", "EMPTY", null)))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("completed");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM merchant_batch_shipment", Integer.class)).isZero();
+        assertThat(service.requireAdminBatch(created.batchId()).orders()).hasSize(2);
+    }
+
+    @Test
     void sharedBatchShipmentWorkflowStillMovesEveryChildTogether() {
         MerchantBatchService.BatchCreateResult created = service.createBatch(1, request());
         jdbc.update(

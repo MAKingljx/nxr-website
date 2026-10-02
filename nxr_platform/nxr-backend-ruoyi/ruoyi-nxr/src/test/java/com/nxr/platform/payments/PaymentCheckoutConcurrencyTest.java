@@ -244,7 +244,7 @@ class PaymentCheckoutConcurrencyTest {
             new BigDecimal("20.00"), new BigDecimal("8.40"), new BigDecimal("28.40"), "USD",
             "Collector", "123", "Street", null, "City", null, "100000", "CN",
             null, null, null, null, null, new CustomerReference(7L, "customer@example.com", "Collector"),
-            now, now, List.of(), List.of(payment), List.of(), List.of()
+            now, now, List.of(), List.of(payment), List.of(), List.of(), null
         );
     }
 }

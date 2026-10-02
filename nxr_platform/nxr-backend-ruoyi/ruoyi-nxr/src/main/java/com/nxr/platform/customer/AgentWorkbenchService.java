@@ -492,7 +492,13 @@ public class AgentWorkbenchService {
         var row=jdbc.sql("SELECT s.id,s.batch_id,b.batch_no,s.created_at FROM agent_submission s JOIN merchant_order_batch b ON b.id=s.batch_id AND b.merchant_customer_id=s.merchant_customer_id WHERE s.id=:id AND s.merchant_customer_id=:owner")
             .params(params("id",id,"owner",owner)).query((rs,n)->new Submission(rs.getLong("id"),rs.getLong("batch_id"),rs.getString("batch_no"),List.of(),rs.getObject("created_at",LocalDateTime.class)))
             .optional().orElseThrow(AgentWorkbenchService::missing);
-        return new Submission(row.id(),row.batchId(),row.batchNo(),jdbc.sql("SELECT id FROM agent_intake WHERE batch_id=:batch AND merchant_customer_id=:owner ORDER BY id")
+        // Batch references snapshot the globally unique intake number; current links can change after cancellation.
+        return new Submission(row.id(),row.batchId(),row.batchNo(),jdbc.sql("""
+            SELECT i.id FROM agent_intake i
+            JOIN merchant_order_batch_item bi ON bi.client_reference = i.intake_no
+            JOIN merchant_order_batch b ON b.id = bi.batch_id AND b.merchant_customer_id = i.merchant_customer_id
+            WHERE bi.batch_id=:batch AND i.merchant_customer_id=:owner ORDER BY i.id
+            """)
             .params(params("batch",row.batchId(),"owner",owner)).query(Long.class).list(),row.createdAt());
     }
     private void requireBatchReturned(long owner,Card card) {

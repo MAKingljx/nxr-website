@@ -330,6 +330,18 @@ class OrderFulfillmentWorkflowTest {
             .isInstanceOf(ResponseStatusException.class)
             .hasMessageContaining("shared shipment workflow");
 
+        for (String target : List.of("inbound_shipped", "return_shipped", "delivered")) {
+            assertThatThrownBy(() -> portalService.updateOrderStatusByAdmin(order.id(), 901L,
+                new CustomerPortalService.UpdateOrderStatusRequest(target, "Cannot bypass the master parcel")))
+                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("shared shipment workflow");
+        }
+        var link = portalService.requireAdminOrder(order.id()).merchantBatch();
+        assertThat(link.batchId()).isEqualTo(91L);
+        assertThat(link.batchNo()).isEqualTo("MB-TEST");
+        assertThat(portalService.requireCustomerOrder(1L, order.orderNo()).merchantBatch()).isEqualTo(link);
+        jdbcTemplate.update("UPDATE merchant_order_batch SET status_code='cancelled' WHERE id=91");
+        assertThat(portalService.requireAdminOrder(order.id()).merchantBatch()).isNull();
+
         assertThat(jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM order_shipment WHERE order_id = ?", Integer.class, order.id()
         )).isEqualTo(1);
