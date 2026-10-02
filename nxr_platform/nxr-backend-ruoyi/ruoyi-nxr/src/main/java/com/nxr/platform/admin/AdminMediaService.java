@@ -349,19 +349,33 @@ public class AdminMediaService {
             return new MediaReference(publicUrl, false, false);
         }
         String providerCode = rs.getString(prefix + "_provider");
+        boolean available = isReferenceAvailable(stage, providerCode, rs.getString(prefix + "_bucket"),
+            storageKey, rs.getString(prefix + "_version"), publicUrl);
+        return new MediaReference(publicUrl, available, !available);
+    }
+
+    boolean isReferenceAvailable(String stage, String providerCode, String bucket, String key,
+                                 String version, String publicUrl) {
+        if (!isPresent(key) && !isPresent(publicUrl)) return false;
+        // The synchronizer preserves Python's published HTTP references. They are
+        // not staged files in the read-only Python upload directory.
+        if ("published".equals(stage) && "legacy-python".equalsIgnoreCase(providerCode)
+            && "python-public".equals(bucket) && isRemoteUrl(publicUrl)) {
+            return true;
+        }
         boolean available = isRemoteUrl(publicUrl)
             && (!isPresent(providerCode) || mediaStorageRegistry == null || !mediaStorageRegistry.supports(providerCode));
         if (isPresent(providerCode) && mediaStorageRegistry != null && mediaStorageRegistry.supports(providerCode)) {
             available = mediaStorageRegistry.providerFor(providerCode).referenceExists(
                 new MediaStorageProvider.StoredMediaLocation(
                     stage,
-                    rs.getString(prefix + "_bucket"),
-                    storageKey,
-                    rs.getString(prefix + "_version")
+                    bucket,
+                    key,
+                    version
                 )
             );
         }
-        return new MediaReference(publicUrl, available, !available);
+        return available;
     }
 
     private boolean isRemoteUrl(String value) {

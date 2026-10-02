@@ -3,6 +3,7 @@ package com.nxr.platform.admin;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.nxr.platform.admin.storage.LocalMediaStorageProvider;
+import com.nxr.platform.admin.storage.LegacyPythonMediaStorageProvider;
 import com.nxr.platform.admin.storage.MediaStorageProvider;
 import com.nxr.platform.admin.storage.MediaStorageRegistry;
 import java.nio.file.Files;
@@ -96,6 +97,27 @@ class AdminMediaQueueParityTest {
             uploadStatus, imageStatus, true, 1, 20
         ).total();
     }
+
+    @Test
+    void migratedPythonPublishedUrlsRemainLiveAfterStagedFilesAreCleared() {
+        jdbcTemplate.update("UPDATE submission_media SET storage_provider_code='legacy-python', storage_bucket='python-public', storage_key=CONCAT('CERT002/',media_side_code), public_url=CONCAT('https://images.example.invalid/CERT002_',media_side_code,'.webp') WHERE submission_id=2 AND media_stage_code='published'");
+        var legacy = new LegacyPythonMediaStorageProvider(mediaRootPath());
+        var service = new AdminMediaService(JdbcClient.create(jdbcTemplate), jdbcTemplate, null,
+            new MediaStorageRegistry(java.util.List.of(new LocalMediaStorageProvider(storageRoot.toString(),
+                "http://localhost:8090", "local-media"), legacy), "local"), 12, 1024, 2048, 1000000);
+        var response = service.loadQueue(null, null, null, null, null, null, null, null,
+            null, "published", true, 1, 20);
+        assertThat(response.items()).singleElement().satisfies(item -> {
+            assertThat(item.certId()).isEqualTo("CERT002");
+            assertThat(item.hasPublishedFront()).isTrue();
+            assertThat(item.hasPublishedBack()).isTrue();
+            assertThat(item.hasStagedFront()).isFalse();
+        });
+        assertThat(response.summary().livePublished()).isOne();
+        assertThat(response.summary().waitingForUpload()).isEqualTo(2);
+    }
+
+    private String mediaRootPath() { return storageRoot.resolve("python-uploads").toString(); }
 
     @Test
     void streamedQueueKeepsPagingAndClampsRequestsPastTheLastPage() {

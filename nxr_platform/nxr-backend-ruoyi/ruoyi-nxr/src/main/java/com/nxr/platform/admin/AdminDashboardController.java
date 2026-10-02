@@ -30,6 +30,9 @@ public class AdminDashboardController {
     @PreAuthorize("@ss.hasPermi('nxr:dashboard:view')")
     public AjaxResult dashboard() {
         accessScopeService.requireUnrestricted(SecurityUtils.getUserId(), "Global dashboard aggregates");
-        return AjaxResult.success(adminDashboardService.loadDashboard());
+        return AjaxResult.success(adminDashboardService.loadDashboard(
+            SecurityUtils.hasPermi("nxr:order:manage") || SecurityUtils.hasPermi("nxr:order:support"),
+            SecurityUtils.hasPermi("nxr:order:payment") || SecurityUtils.hasPermi("nxr:customer:finance")
+        ));
     }
 }

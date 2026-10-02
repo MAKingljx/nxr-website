@@ -4,12 +4,15 @@ import com.nxr.platform.shared.ProductTypePolicy;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -20,12 +23,23 @@ public class AdminDashboardService {
     private static final int ACTION_LIMIT = 8;
 
     private final JdbcClient jdbcClient;
+    private final AdminMediaService mediaService;
 
     public AdminDashboardService(JdbcClient jdbcClient) {
+        this(jdbcClient, null);
+    }
+
+    @Autowired
+    public AdminDashboardService(JdbcClient jdbcClient, AdminMediaService mediaService) {
         this.jdbcClient = jdbcClient;
+        this.mediaService = mediaService;
     }
 
     public AdminDashboardResponse loadDashboard() {
+        return loadDashboard(true, true);
+    }
+
+    public AdminDashboardResponse loadDashboard(boolean supportAccess, boolean financeAccess) {
         Integer totalSubmissions = jdbcClient.sql("SELECT COUNT(*) FROM grading_submission")
             .query(Integer.class)
             .single();
@@ -56,7 +70,7 @@ public class AdminDashboardService {
             loadProductMix(),
             loadOrderPipeline(),
             loadMediaStatus(),
-            loadActionItems(),
+            loadActionItems(supportAccess, financeAccess),
             loadRecentEntries(),
             loadRecentOrders(),
             loadRecentPublished()
@@ -242,12 +256,45 @@ public class AdminDashboardService {
                 int tracked = rs.getInt("tracked_entries");
                 int published = rs.getInt("published");
                 int ready = rs.getInt("ready_to_publish");
+                if (mediaService != null) ready = loadAvailableStagedCount();
                 return new MediaStatus(tracked, Math.max(0, tracked - published - ready), ready, published);
             })
             .single();
     }
 
-    private List<ActionItem> loadActionItems() {
+    private int loadAvailableStagedCount() {
+        // Inspect only staged pairs awaiting initial publication. This keeps the
+        // homepage fast even when the published catalogue contains many images.
+        return jdbcClient.sql("""
+            SELECT sf.storage_provider_code AS front_provider, sf.storage_bucket AS front_bucket,
+                   sf.storage_key AS front_key, sf.storage_object_version AS front_version,
+                   sf.public_url AS front_url,
+                   sb.storage_provider_code AS back_provider, sb.storage_bucket AS back_bucket,
+                   sb.storage_key AS back_key, sb.storage_object_version AS back_version,
+                   sb.public_url AS back_url
+            FROM grading_submission s
+            JOIN submission_media sf ON sf.submission_id=s.id AND sf.media_stage_code='staged'
+                AND sf.media_side_code='front' AND sf.sort_order=1 AND sf.is_active=1
+            JOIN submission_media sb ON sb.submission_id=s.id AND sb.media_stage_code='staged'
+                AND sb.media_side_code='back' AND sb.sort_order=1 AND sb.is_active=1
+            LEFT JOIN submission_upload_state us ON us.submission_id=s.id
+            WHERE s.status_code IN ('approved', 'published')
+              AND COALESCE(us.status_code, 'not_started') NOT IN ('uploading', 'client_pushed')
+              AND NOT (
+                  EXISTS (SELECT 1 FROM submission_media p WHERE p.submission_id=s.id
+                      AND p.media_stage_code='published' AND p.media_side_code='front' AND p.is_active=1)
+                  AND EXISTS (SELECT 1 FROM submission_media p WHERE p.submission_id=s.id
+                      AND p.media_stage_code='published' AND p.media_side_code='back' AND p.is_active=1)
+              )
+            """)
+            .query((rs, row) -> mediaService.isReferenceAvailable("staged", rs.getString("front_provider"),
+                rs.getString("front_bucket"), rs.getString("front_key"), rs.getString("front_version"),
+                rs.getString("front_url")) && mediaService.isReferenceAvailable("staged", rs.getString("back_provider"),
+                rs.getString("back_bucket"), rs.getString("back_key"), rs.getString("back_version"), rs.getString("back_url")))
+            .list().stream().mapToInt(available -> available ? 1 : 0).sum();
+    }
+
+    private List<ActionItem> loadActionItems(boolean supportAccess, boolean financeAccess) {
         List<ActionItem> items = new ArrayList<>();
 
         items.addAll(jdbcClient.sql(
@@ -266,7 +313,7 @@ public class AdminDashboardService {
                 rs.getString("card_name"),
                 rs.getString("status_code"),
                 rs.getObject("created_at", LocalDateTime.class),
-                "/nxr/main/pending-review"
+                "/nxr/cards/pending-review?status=pending&certId=" + queryValue(rs.getString("cert_id"))
             ))
             .list());
 
@@ -325,7 +372,7 @@ public class AdminDashboardService {
                 rs.getString("card_name"),
                 rs.getString("action_status"),
                 rs.getObject("action_at", LocalDateTime.class),
-                "/nxr/upload"
+                "/nxr/cards/upload?certId=" + queryValue(rs.getString("cert_id"))
             ))
             .list());
 
@@ -345,14 +392,41 @@ public class AdminDashboardService {
                 null,
                 rs.getString("status_code"),
                 rs.getObject("created_at", LocalDateTime.class),
-                "/nxr/submissions/orders"
+                "/nxr/submissions/orders?orderId=" + rs.getLong("id")
             ))
             .list());
 
+        if (supportAccess) items.addAll(jdbcClient.sql("""
+                SELECT t.id, t.order_id, t.ticket_no, t.subject, t.status_code, t.updated_at
+                FROM support_ticket t
+                WHERE t.status_code IN ('open', 'assigned')
+                ORDER BY t.updated_at ASC, t.id ASC LIMIT 5
+                """)
+            .query((rs, row) -> new ActionItem(rs.getLong("id"), "support", rs.getString("ticket_no"),
+                rs.getString("subject"), rs.getString("status_code"), rs.getObject("updated_at", LocalDateTime.class),
+                "/nxr/submissions/orders?orderId=" + rs.getLong("order_id") + "&section=support"))
+            .list());
+        if (financeAccess) items.addAll(jdbcClient.sql("""
+                SELECT e.id, e.order_id, o.order_no, e.exception_type_code, e.resolution_status_code, e.created_at
+                FROM payment_finance_exception e JOIN grading_order o ON o.id=e.order_id
+                WHERE e.resolution_status_code='open'
+                ORDER BY e.created_at ASC, e.id ASC LIMIT 5
+                """)
+            .query((rs, row) -> new ActionItem(rs.getLong("id"), "finance", rs.getString("order_no"),
+                null, rs.getString("exception_type_code"), rs.getObject("created_at", LocalDateTime.class),
+                "/nxr/submissions/orders?orderId=" + rs.getLong("order_id") + "&section=finance"))
+            .list());
+
         return items.stream()
-            .sorted(Comparator.comparing(ActionItem::actionAt, Comparator.nullsLast(Comparator.naturalOrder())))
+            .sorted(Comparator.comparingInt((ActionItem item) ->
+                    "finance".equals(item.kind()) || "support".equals(item.kind()) ? 0 : 1)
+                .thenComparing(ActionItem::actionAt, Comparator.nullsLast(Comparator.naturalOrder())))
             .limit(ACTION_LIMIT)
             .toList();
+    }
+
+    private static String queryValue(String value) {
+        return URLEncoder.encode(value == null ? "" : value, StandardCharsets.UTF_8);
     }
 
     private List<RecentEntry> loadRecentEntries() {
