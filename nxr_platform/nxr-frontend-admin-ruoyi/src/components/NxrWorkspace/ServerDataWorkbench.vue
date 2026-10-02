@@ -13,6 +13,7 @@
     :page-size-options="pageSizeOptions"
     :show-reset="showReset"
     :aria-label="ariaLabel"
+    :labels="labels"
     @query="$emit('query', $event)"
     @reset="$emit('reset')"
     @retry="$emit('retry')"
@@ -51,7 +52,17 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
+import { tx } from '@/i18n'
 import { PhoenixServerDataWorkbench } from '@phoenix-server-data-workbench/index.ts'
+
+const labels = computed(() => ({
+  workbench: tx('Server data list'), filters: tx('Filters'), query: tx('Search'), reset: tx('Reset'),
+  loadingTitle: tx('Loading…'), loadingDescription: tx('Please wait.'), errorTitle: tx('Unable to load data'), retry: tx('Retry'),
+  emptyTitle: tx('No records'), emptyDescription: tx('No records match the current filters.'),
+  pagination: tx('Pagination'), previousPage: tx('Previous page'), nextPage: tx('Next page'),
+  pageSize: tx('Per page'), page: tx('Page'), of: tx('of'), total: tx('Total'), items: tx('items')
+}))
 
 defineProps({
   loading: { type: Boolean, default: false },

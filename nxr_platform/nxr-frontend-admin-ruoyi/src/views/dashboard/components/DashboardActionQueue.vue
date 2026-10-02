@@ -57,7 +57,7 @@ const kindLabels = {
   publication: 'Publication',
   media: 'Images',
   payment: 'Payment',
-  order: 'Order'
+  order: 'Order', support: 'Support', finance: 'Finance'
 }
 
 const statusLabels = {
@@ -77,7 +77,7 @@ const statusLabels = {
   quality_check: 'Quality Check',
   quality_hold: 'QC Rework',
   completed: 'Ready to Return',
-  return_shipped: 'Return Shipped'
+  return_shipped: 'Return Shipped', open: 'Open', assigned: 'Assigned', waiting_customer: 'Waiting for Customer', refund_requested: 'Refund requested', reconciliation_hold: 'Reconciliation hold'
 }
 
 function kindLabel(kind) {
@@ -86,7 +86,7 @@ function kindLabel(kind) {
 
 function kindTone(kind) {
   if (kind === 'media') return 'danger'
-  if (kind === 'payment') return 'warning'
+  if (['payment', 'finance'].includes(kind)) return 'warning'
   if (kind === 'publication') return 'success'
   return 'primary'
 }

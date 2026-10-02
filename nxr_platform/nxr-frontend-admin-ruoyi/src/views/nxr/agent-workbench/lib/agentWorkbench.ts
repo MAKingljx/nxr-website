@@ -234,7 +234,7 @@ const statusLabels: Record<string, string> = {
 export const agentStatusLabel = (code: string) => tx(statusLabels[code] || code)
 const batchStatusLabels: Record<string, string> = {
   open: 'Batch in preparation', inbound_shipped: 'In transit to NXR', received: 'Received by NXR',
-  return_shipped: 'Returned to sub-agent', delivered: 'Customer received batch', cancelled: 'Cancelled',
+  return_shipped: 'Returned to sub-agent', delivered: 'Sub-agent received batch', cancelled: 'Cancelled',
 }
 export const agentBatchStatusLabel = (code: string) => tx(batchStatusLabels[code] || code)
 const eventLabels: Record<string, string> = {

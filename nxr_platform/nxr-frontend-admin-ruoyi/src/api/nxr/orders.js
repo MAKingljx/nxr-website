@@ -97,3 +97,7 @@ export function saveGradingServicePrice(data) {
 export function saveReturnShippingOption(optionId, data) {
   return request({ url: optionId ? `/api/admin/orders/shipping-options/${optionId}` : '/api/admin/orders/shipping-options', method: 'post', data })
 }
+
+export function getOrderFinanceExceptions(orderId) {
+  return request({ url: `/api/admin/orders/${orderId}/finance-exceptions`, method: 'get', suppressErrorMessage: true })
+}

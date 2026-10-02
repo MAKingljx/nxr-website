@@ -3,7 +3,9 @@ import { parseTime } from '@/utils/ruoyi'
 const avatarPalette = ['#386f73', '#596f91', '#8a694a', '#6e5d86', '#4e785c']
 
 export function formatCustomerDate(value) {
-  return value ? parseTime(value, '{y}-{m}-{d} {h}:{i}') : '-'
+  if (!value) return '-'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '-' : parseTime(date, '{y}-{m}-{d} {h}:{i}')
 }
 
 export function avatarText(name) {

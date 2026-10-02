@@ -703,6 +703,7 @@ function applyMenuRoute() {
   queryParams.value.page = 1
   queryParams.value.query = undefined
   queryParams.value.status = menuStatus()
+  queryParams.value.certId = routeQueryValue('certId') || undefined
   getList()
 
   if (routeQueryValue('mode') === 'create') {

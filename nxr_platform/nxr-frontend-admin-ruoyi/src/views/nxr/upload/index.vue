@@ -262,6 +262,7 @@ import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
 import { fetchMediaQueueItems, fetchMediaQueueSummary, importMediaFolder, publishSubmissionMedia, publishSubmissionMediaBatch, markSubmissionClientPushed } from '@/api/nxr/media'
 
 const { proxy } = getCurrentInstance()
+const route = useRoute()
 const allowedImagePattern = /\.(webp|png|jpe?g)$/i
 
 const queue = ref([])
@@ -603,7 +604,10 @@ function mediaStateTag(item) {
   return 'info'
 }
 
-loadQueue()
+watch(() => route.query.certId, value => {
+  certIdFilter.value = typeof value === 'string' ? value : ''
+  void loadQueue(true)
+}, { immediate: true })
 loadSummary()
 </script>
 

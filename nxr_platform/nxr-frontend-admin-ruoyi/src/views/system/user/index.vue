@@ -113,7 +113,7 @@
         <el-row>
           <el-col :span="12">
             <el-form-item v-if="form.userId == undefined" :label="$tx('Username')" prop="userName">
-              <el-input v-model="form.userName" :placeholder="$tx('Enter username')" maxlength="30" />
+              <el-input v-model="form.userName" :placeholder="$tx('Enter username')" maxlength="20" />
             </el-form-item>
           </el-col>
           <el-col :span="12">

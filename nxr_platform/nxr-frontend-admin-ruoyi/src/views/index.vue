@@ -37,7 +37,7 @@
           :icon="DocumentChecked"
         />
         <dashboard-metric-card
-          :label="$tx('Ready to Publish')"
+          :label="$tx('Approved awaiting publication')"
           :value="dashboard.approvedReady"
           :detail="$tx('Approved certificates awaiting publication')"
           :icon="UploadFilled"
@@ -183,7 +183,7 @@ const workloadSummary = computed(() => {
   if (!canViewDashboard) return tx('Use the navigation to open a feature available to this account')
   if (loadError.value) return tx('Operations data failed to load. Try again shortly.')
   if (!pendingWork.value) return tx('No entries are waiting for review or publication')
-  return tx('{pending} pending review · {ready} ready to publish', {
+  return tx('{pending} pending review · {ready} approved awaiting publication', {
     pending: formatNumber(dashboard.value.pendingReview),
     ready: formatNumber(dashboard.value.approvedReady)
   })

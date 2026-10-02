@@ -16,7 +16,7 @@
 
     <order-card-lookup v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:workbench']" @open-order="openDetail" />
 
-    <merchant-batch-panel @open-order="openDetail" v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:shipping','nxr:order:batch']" />
+    <merchant-batch-panel ref="merchantBatchPanel" @open-order="openDetail" v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:shipping','nxr:order:batch']" />
 
     <el-form ref="queryRef" :model="queryParams" :inline="true" @submit.prevent>
       <el-form-item :label="$tx('Order Status')" prop="status">
@@ -41,10 +41,16 @@
       <el-table-column :label="$tx('Actions')" width="100" align="center"><template #default="scope"><el-button link type="primary" icon="View" @click="openDetail(scope.row.id)">{{ $tx('View') }}</el-button></template></el-table-column>
     </el-table>
 
-    <pagination v-show="total > 0" :total="total" v-model:page="queryParams.page" v-model:limit="queryParams.pageSize" @pagination="loadOrders" />
+    <pagination v-show="total > 0" :total="total" v-model:page="queryParams.page" v-model:limit="queryParams.pageSize" @pagination="loadOrders()" />
 
-    <el-drawer direction="rtl" v-model="detailOpen" :title="$tx('Grading Order Details')" size="1080px" append-to-body>
+    <el-drawer direction="rtl" v-model="detailOpen" :title="$tx('Grading Order Details')" size="min(1080px, 96vw)" append-to-body class="order-detail-drawer">
       <template v-if="detail">
+        <div class="order-detail-actions">
+          <strong>{{ detail.orderNo }}</strong>
+          <el-button type="primary" @click="detailTab = primaryDetailSection">{{ primaryActionLabel }}</el-button>
+          <el-button v-if="detail.merchantBatch" v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:shipping','nxr:order:batch']" @click="openMasterBatch">{{ $tx('Open master batch') }}</el-button>
+          <el-button icon="Refresh" :loading="loading" @click="refreshDetail">{{ $tx('Refresh') }}</el-button>
+        </div>
         <el-descriptions :column="3" border class="mb12">
           <el-descriptions-item :label="$tx('Order No.')">{{ detail.orderNo }}</el-descriptions-item>
           <el-descriptions-item :label="$tx('Order Status')"><el-tag :type="statusType(displayOrderStatus(detail))">{{ labelStatus(displayOrderStatus(detail)) }}</el-tag></el-descriptions-item>
@@ -55,14 +61,19 @@
           <el-descriptions-item :label="$tx('Amount')">{{ detail.currencyCode }} {{ Number(detail.totalAmount).toFixed(2) }}</el-descriptions-item>
           <el-descriptions-item :label="$tx('Service Fee')">{{ detail.currencyCode }} {{ Number(detail.serviceFee).toFixed(2) }}</el-descriptions-item>
           <el-descriptions-item :label="$tx('Return Shipping')">{{ detail.currencyCode }} {{ Number(detail.returnShippingFee).toFixed(2) }}</el-descriptions-item>
+          <el-descriptions-item v-if="detail.merchantBatch" :label="$tx('Master batch')" :span="3">{{ detail.merchantBatch.batchNo }}</el-descriptions-item>
           <el-descriptions-item :label="$tx('Customer Note')" :span="3">{{ detail.customerNote || '-' }}</el-descriptions-item>
         </el-descriptions>
 
-        <el-divider content-position="left">{{ $tx('Application Review & Payment Terms') }}</el-divider>
-        <order-admission-panel v-if="detail?.id" v-hasPermi="['nxr:order:admission','nxr:order:manage']" :order-id="detail.id" :order-amount="detail.totalAmount" :currency-code="detail.currencyCode" :show-config="false" @changed="refreshDetail" />
-        <el-alert v-if="!fulfillmentOpen" type="info" :closable="false" show-icon :title="$tx('Complete application review, terms confirmation, and payment before warehouse or grading work begins.')" />
+        <el-tabs v-model="detailTab" class="order-detail-tabs">
+          <el-tab-pane :label="$tx('Review & Terms')" name="admission">
 
-        <el-divider content-position="left">{{ $tx('Warehouse Intake & Exceptions') }}</el-divider>
+        <order-admission-panel v-if="detail?.id" v-hasPermi="['nxr:order:admission','nxr:order:manage']" :order-id="detail.id" :order-amount="detail.totalAmount" :currency-code="detail.currencyCode" :show-config="false" @changed="refreshDetail" />
+        <el-alert v-if="awaitingFulfillment" type="info" :closable="false" show-icon :title="$tx('Complete application review, terms confirmation, and payment before warehouse or grading work begins.')" />
+
+          </el-tab-pane>
+          <el-tab-pane :label="$tx('Warehouse')" name="warehouse">
+
         <el-form v-if="operations && fulfillmentOpen" v-hasPermi="['nxr:order:manage','nxr:order:warehouse']" :inline="true" :model="intakeForm" class="operation-form">
           <el-form-item :label="$tx('Intake Code')"><el-input v-model="intakeForm.intakeCode" style="width:180px" /></el-form-item>
           <el-form-item :label="$tx('Package No.')"><el-input v-model="intakeForm.packageNo" style="width:150px" /></el-form-item>
@@ -71,7 +82,7 @@
           <el-form-item :label="$tx('Note')"><el-input v-model="intakeForm.conditionNote" style="width:220px" /></el-form-item>
           <el-form-item><el-button type="primary" :loading="receivingOrder" @click="receiveOrder">{{ $tx('Confirm Intake') }}</el-button></el-form-item>
         </el-form>
-        <el-empty v-if="operations && !operations.receipts.length && !operations.exceptions.length" :description="$tx('No intake records')" :image-size="58" />
+        <p v-if="operations && !operations.receipts.length && !operations.exceptions.length" class="order-section-empty">{{ $tx('No intake records') }}</p>
         <el-table v-if="operations?.receipts.length" :data="operations.receipts" size="small" border class="mb12">
           <el-table-column :label="$tx('Received At')" width="170"><template #default="scope">{{ parseTime(scope.row.receivedAt) }}</template></el-table-column><el-table-column :label="$tx('Package No.')" prop="packageNo" min-width="150" /><el-table-column :label="$tx('Expected')" prop="expectedCount" width="80" align="center" /><el-table-column :label="$tx('Received')" prop="receivedCount" width="80" align="center" /><el-table-column :label="$tx('Receiver ID')" prop="receivedByUserId" width="100" align="center" /><el-table-column :label="$tx('Note')" prop="conditionNote" min-width="180" />
         </el-table>
@@ -79,7 +90,9 @@
           <el-table-column :label="$tx('Exception')" width="130"><template #default="scope">{{ labelStatus(scope.row.exceptionTypeCode) }}</template></el-table-column><el-table-column :label="$tx('Title')" prop="title" min-width="170" /><el-table-column :label="$tx('Details')" prop="detail" min-width="220" /><el-table-column :label="$tx('Status')" width="100"><template #default="scope"><el-tag :type="scope.row.statusCode === 'resolved' ? 'success' : 'danger'">{{ labelStatus(scope.row.statusCode) }}</el-tag></template></el-table-column><el-table-column :label="$tx('Resolution')" prop="resolutionNote" min-width="180" /><el-table-column :label="$tx('Actions')" width="100"><template #default="scope"><el-button v-if="scope.row.statusCode !== 'resolved'" v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:support']" link type="primary" @click="openExceptionResolution(scope.row)">{{ $tx('Resolve') }}</el-button></template></el-table-column>
         </el-table>
 
-        <el-divider content-position="left">{{ $tx('Order Cards & Grading Links') }}</el-divider>
+          </el-tab-pane>
+          <el-tab-pane :label="$tx('Cards & Grading')" name="cards" lazy>
+
         <el-table :data="detail.items" size="small" border>
           <el-table-column label="#" prop="itemNo" width="55" align="center" />
           <el-table-column :label="$tx('Card Name')" prop="cardName" min-width="180" />
@@ -99,14 +112,18 @@
             <el-form-item :label="$tx('Order Card')"><el-select v-model="taskForm.orderItemId" clearable :placeholder="$tx('Whole order')" style="width:190px"><el-option v-for="item in detail.items" :key="item.id" :label="`${item.itemNo}. ${item.cardName}`" :value="item.id" /></el-select></el-form-item>
             <el-form-item><el-button type="primary" :loading="creatingTask" @click="createTask">{{ $tx('New Task') }}</el-button></el-form-item>
           </el-form>
-          <el-table :data="operations.workTasks" size="small" border>
+          <el-table v-if="operations.workTasks.length" :data="operations.workTasks" size="small" border>
             <el-table-column :label="$tx('Task')" width="150"><template #default="scope">{{ taskLabel(scope.row.taskTypeCode) }}</template></el-table-column><el-table-column :label="$tx('Card ID')" prop="orderItemId" width="90" align="center" /><el-table-column :label="$tx('Status')" width="150"><template #default="scope"><el-select v-model="taskDrafts[scope.row.id].statusCode" size="small"><el-option :label="$tx('Pending')" value="pending" /><el-option :label="$tx('In Progress')" value="in_progress" /><el-option :label="$tx('Completed')" value="completed" /><el-option :label="$tx('Failed / Retry')" value="failed" /></el-select></template></el-table-column><el-table-column :label="$tx('Attempts')" prop="attemptCount" width="90" align="center" /><el-table-column :label="$tx('Result / Failure Reason')" min-width="240"><template #default="scope"><el-input v-model="taskDrafts[scope.row.id].summary" size="small" :placeholder="taskDrafts[scope.row.id].statusCode === 'failed' ? $tx('Enter failure reason') : $tx('Enter task result')" /></template></el-table-column><el-table-column :label="$tx('Actions')" width="100"><template #default="scope"><el-button v-hasPermi="['nxr:order:manage','nxr:order:grading']" link type="primary" :loading="savingTaskId === scope.row.id" @click="saveTask(scope.row)">{{ $tx('Save') }}</el-button></template></el-table-column>
           </el-table>
           <el-form v-if="fulfillmentOpen" v-hasPermi="['nxr:order:manage','nxr:order:grading']" :inline="true" :model="qualityForm" class="operation-form quality-form"><el-form-item :label="$tx('QC Result')"><el-radio-group v-model="qualityForm.passed"><el-radio-button :value="true">{{ $tx('Pass') }}</el-radio-button><el-radio-button :value="false">{{ $tx('Rework') }}</el-radio-button></el-radio-group></el-form-item><el-form-item :label="$tx('QC Note')"><el-input v-model="qualityForm.note" style="width:300px" /></el-form-item><el-form-item><el-button type="success" :loading="savingQuality" @click="saveQualityCheck">{{ $tx('Submit QC') }}</el-button></el-form-item></el-form>
         </template>
 
-        <el-divider content-position="left">{{ $tx('Payments & Transactions') }}</el-divider>
-        <el-table :data="detail.payments" size="small" border>
+          </el-tab-pane>
+          <el-tab-pane :label="$tx('Finance')" name="finance">
+        <order-finance-exception-panel v-if="canViewFinanceExceptions" :order-id="detail.id" :active="detailTab === 'finance' && detailOpen" :refresh-key="detailRefresh" />
+        <p v-if="!detail.payments.length" class="order-section-empty">{{ $tx('No payments recorded') }}</p>
+
+        <el-table v-if="detail.payments.length" :data="detail.payments" size="small" border>
           <el-table-column :label="$tx('Type')" width="120"><template #default="scope">{{ scope.row.paymentTypeCode }}</template></el-table-column>
           <el-table-column :label="$tx('Amount')" width="130"><template #default="scope">{{ scope.row.currencyCode }} {{ Number(scope.row.amount).toFixed(2) }}</template></el-table-column>
           <el-table-column :label="$tx('Provider')" min-width="140"><template #default="scope">{{ scope.row.providerCode }}</template></el-table-column>
@@ -115,24 +132,35 @@
           <el-table-column :label="$tx('Actions')" width="150"><template #default="scope"><el-button v-if="canReviewPayment(scope.row)" v-hasPermi="['nxr:order:manage','nxr:order:payment']" link type="success" @click="openPaymentAction(scope.row, 'confirm')">{{ $tx('Confirm') }}</el-button><el-button v-if="canReviewPayment(scope.row)" v-hasPermi="['nxr:order:manage','nxr:order:payment']" link type="danger" @click="openPaymentAction(scope.row, 'reject')">{{ $tx('Reject') }}</el-button></template></el-table-column>
         </el-table>
 
-        <el-divider content-position="left">{{ $tx('Shipping & Progress') }}</el-divider>
-        <el-row v-if="fulfillmentOpen" :gutter="16" class="mb12">
-          <el-col v-hasPermi="['nxr:order:manage']" :span="12"><el-form :inline="true" :model="statusForm"><el-form-item :label="$tx('Advance Status')"><el-select v-model="statusForm.statusCode" :disabled="detail?.statusCode === 'payment_exception'" style="width: 180px"><el-option v-for="item in statusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item><el-form-item><el-button type="primary" :loading="savingStatus" :disabled="detail?.statusCode === 'payment_exception'" @click="saveStatus">{{ $tx('Save') }}</el-button></el-form-item></el-form></el-col>
-          <el-col v-hasPermi="['nxr:order:manage','nxr:order:shipping']" :span="12"><el-form :inline="true" :model="shipmentForm"><el-form-item :label="$tx('Direction')"><el-select v-model="shipmentForm.direction" style="width: 100px"><el-option :label="$tx('Inbound')" value="inbound" /><el-option :label="$tx('Outbound')" value="outbound" /></el-select></el-form-item><el-form-item :label="$tx('Carrier')"><el-input v-model="shipmentForm.carrierName" style="width: 120px" /></el-form-item><el-form-item :label="$tx('Tracking No.')"><el-input v-model="shipmentForm.trackingNumber" style="width: 150px" /></el-form-item><el-form-item><el-button type="primary" :loading="savingShipment" @click="saveShipment">{{ $tx('Add Shipment') }}</el-button></el-form-item></el-form></el-col>
-        </el-row>
-        <el-table :data="detail.shipments" size="small" border><el-table-column :label="$tx('Direction')" width="100"><template #default="scope">{{ scope.row.directionCode === 'inbound' ? $tx('Inbound') : $tx('Outbound') }}</template></el-table-column><el-table-column :label="$tx('Carrier')" prop="carrierName" width="130" /><el-table-column :label="$tx('Tracking No.')" prop="trackingNumber" min-width="200" /><el-table-column :label="$tx('Status')" width="120"><template #default="scope"><el-tag :type="scope.row.statusCode === 'delivered' ? 'success' : 'info'">{{ labelStatus(scope.row.statusCode) }}</el-tag></template></el-table-column><el-table-column :label="$tx('Shipped At')" width="170"><template #default="scope">{{ parseTime(scope.row.shippedAt) }}</template></el-table-column><el-table-column :label="$tx('Actions')" width="110"><template #default="scope"><el-button v-if="!scope.row.deliveredAt" v-hasPermi="['nxr:order:manage','nxr:order:shipping']" link type="success" @click="markDelivered(scope.row)">{{ $tx('Mark Delivered') }}</el-button></template></el-table-column></el-table>
+          </el-tab-pane>
+          <el-tab-pane :label="$tx('Shipping')" name="shipping">
+        <el-alert v-if="detail.merchantBatch" type="info" :closable="false" show-icon :title="$tx('Shipping and batch receipt are managed through master batch {batchNo}.', { batchNo: detail.merchantBatch.batchNo })" class="mb12" />
 
-        <el-form v-if="detail.shipments.length" v-hasPermi="['nxr:order:manage','nxr:order:shipping']" :inline="true" :model="trackingForm" class="operation-form">
+        <el-row v-if="fulfillmentOpen" :gutter="16" class="mb12">
+          <el-col v-hasPermi="['nxr:order:manage']" :span="12"><el-form :inline="true" :model="statusForm"><el-form-item :label="$tx('Advance Status')"><el-select v-model="statusForm.statusCode" :disabled="detail?.statusCode === 'payment_exception'" style="width: 180px"><el-option v-for="item in manualStatusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item><el-form-item><el-button type="primary" :loading="savingStatus" :disabled="detail?.statusCode === 'payment_exception'" @click="saveStatus">{{ $tx('Save') }}</el-button></el-form-item></el-form></el-col>
+          <el-col v-if="!detail.merchantBatch" v-hasPermi="['nxr:order:manage','nxr:order:shipping']" :span="12"><el-form :inline="true" :model="shipmentForm"><el-form-item :label="$tx('Direction')"><el-select v-model="shipmentForm.direction" style="width: 100px"><el-option :label="$tx('Inbound')" value="inbound" /><el-option :label="$tx('Outbound')" value="outbound" /></el-select></el-form-item><el-form-item :label="$tx('Carrier')"><el-input v-model="shipmentForm.carrierName" style="width: 120px" /></el-form-item><el-form-item :label="$tx('Tracking No.')"><el-input v-model="shipmentForm.trackingNumber" style="width: 150px" /></el-form-item><el-form-item><el-button type="primary" :loading="savingShipment" @click="saveShipment">{{ $tx('Add Shipment') }}</el-button></el-form-item></el-form></el-col>
+        </el-row>
+        <el-table v-if="detail.shipments.length" :data="detail.shipments" size="small" border><el-table-column :label="$tx('Direction')" width="100"><template #default="scope">{{ scope.row.directionCode === 'inbound' ? $tx('Inbound') : $tx('Outbound') }}</template></el-table-column><el-table-column :label="$tx('Carrier')" prop="carrierName" width="130" /><el-table-column :label="$tx('Tracking No.')" prop="trackingNumber" min-width="200" /><el-table-column :label="$tx('Status')" width="120"><template #default="scope"><el-tag :type="scope.row.statusCode === 'delivered' ? 'success' : 'info'">{{ labelStatus(scope.row.statusCode) }}</el-tag></template></el-table-column><el-table-column :label="$tx('Shipped At')" width="170"><template #default="scope">{{ parseTime(scope.row.shippedAt) }}</template></el-table-column><el-table-column :label="$tx('Actions')" width="110"><template #default="scope"><el-button v-if="!detail.merchantBatch && !scope.row.deliveredAt" v-hasPermi="['nxr:order:manage','nxr:order:shipping']" link type="success" @click="markDelivered(scope.row)">{{ $tx('Mark Delivered') }}</el-button></template></el-table-column></el-table>
+
+        <el-form v-if="!detail.merchantBatch && detail.shipments.length" v-hasPermi="['nxr:order:manage','nxr:order:shipping']" :inline="true" :model="trackingForm" class="operation-form">
           <el-form-item :label="$tx('Shipment')"><el-select v-model="trackingForm.shipmentId" style="width:220px"><el-option v-for="shipment in detail.shipments" :key="shipment.id" :label="`${shipment.directionCode} · ${shipment.carrierName} · ${shipment.trackingNumber}`" :value="shipment.id" /></el-select></el-form-item><el-form-item :label="$tx('Event')"><el-select v-model="trackingForm.eventCode" style="width:150px"><el-option v-for="item in trackingEventOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item><el-form-item :label="$tx('Location')"><el-input v-model="trackingForm.locationLabel" style="width:150px" /></el-form-item><el-form-item :label="$tx('Details')"><el-input v-model="trackingForm.eventDetail" style="width:210px" /></el-form-item><el-form-item><el-button type="primary" :loading="savingTracking" @click="saveTrackingEvent">{{ $tx('Add Tracking Event') }}</el-button></el-form-item>
         </el-form>
         <el-table v-if="operations?.trackingEvents.length" :data="operations.trackingEvents" size="small" border><el-table-column :label="$tx('Time')" width="170"><template #default="scope">{{ parseTime(scope.row.eventTime) }}</template></el-table-column><el-table-column :label="$tx('Direction')" prop="directionCode" width="90" /><el-table-column :label="$tx('Event')" min-width="150"><template #default="scope">{{ scope.row.eventTitle }}</template></el-table-column><el-table-column :label="$tx('Location')" prop="locationLabel" width="150" /><el-table-column :label="$tx('Details')" prop="eventDetail" min-width="200" /></el-table>
 
-        <el-divider content-position="left">{{ $tx('Support Tickets & Return Shipping Changes') }}</el-divider>
-        <el-table v-if="operations" :data="operations.tickets" size="small" border class="mb12"><el-table-column :label="$tx('Ticket No.')" prop="ticketNo" width="150" /><el-table-column :label="$tx('Type')" width="120"><template #default="scope">{{ labelStatus(scope.row.categoryCode) }}</template></el-table-column><el-table-column :label="$tx('Subject')" prop="subject" min-width="190" /><el-table-column :label="$tx('Status')" width="130"><template #default="scope"><el-tag>{{ labelStatus(scope.row.statusCode) }}</el-tag></template></el-table-column><el-table-column :label="$tx('Latest Message')" min-width="230"><template #default="scope">{{ scope.row.messages.at(-1)?.message || '-' }}</template></el-table-column><el-table-column :label="$tx('Actions')" width="100"><template #default="scope"><el-button v-hasPermi="['nxr:order:manage','nxr:order:support']" link type="primary" @click="openTicketAction(scope.row)">{{ $tx('Handle') }}</el-button></template></el-table-column></el-table>
-        <el-table v-if="operations" :data="operations.shippingChanges" size="small" border><el-table-column :label="$tx('Previous Option')" prop="oldOptionName" min-width="140" /><el-table-column :label="$tx('New Option')" prop="newOptionName" min-width="140" /><el-table-column :label="$tx('Adjustment')" width="120"><template #default="scope">{{ scope.row.currencyCode }} {{ Number(scope.row.differenceAmount).toFixed(2) }}</template></el-table-column><el-table-column :label="$tx('Status')" width="140"><template #default="scope"><el-tag>{{ labelStatus(scope.row.statusCode) }}</el-tag></template></el-table-column><el-table-column :label="$tx('Reason')" prop="reason" min-width="200" /><el-table-column :label="$tx('Actions')" width="190"><template #default="scope"><el-button v-if="scope.row.statusCode === 'requested'" v-hasPermi="['nxr:order:manage','nxr:order:support']" link type="success" @click="openShippingReview(scope.row, true)">{{ $tx('Approve') }}</el-button><el-button v-if="scope.row.statusCode === 'requested'" v-hasPermi="['nxr:order:manage','nxr:order:support']" link type="danger" @click="openShippingReview(scope.row, false)">{{ $tx('Reject') }}</el-button><el-button v-if="scope.row.statusCode === 'awaiting_settlement'" v-hasPermi="['nxr:order:manage','nxr:order:payment']" link type="primary" @click="openSettlement(scope.row)">{{ $tx('Record Settlement') }}</el-button></template></el-table-column></el-table>
+          </el-tab-pane>
+          <el-tab-pane :label="$tx('Support')" name="support">
+        <p v-if="operations && !operations.tickets.length && !operations.shippingChanges.length" class="order-section-empty">{{ $tx('No support tickets or shipping changes') }}</p>
 
-        <el-divider content-position="left">{{ $tx('Customer-visible Timeline') }}</el-divider>
-        <el-timeline><el-timeline-item v-for="event in detail.timeline" :key="event.id" :timestamp="parseTime(event.createdAt)"><strong>{{ event.title }}</strong><p v-if="event.detail" class="timeline-detail">{{ event.detail }}</p></el-timeline-item></el-timeline>
+        <el-table v-if="operations?.tickets.length" :data="operations.tickets" size="small" border class="mb12"><el-table-column :label="$tx('Ticket No.')" prop="ticketNo" width="150" /><el-table-column :label="$tx('Type')" width="120"><template #default="scope">{{ labelStatus(scope.row.categoryCode) }}</template></el-table-column><el-table-column :label="$tx('Subject')" prop="subject" min-width="190" /><el-table-column :label="$tx('Status')" width="130"><template #default="scope"><el-tag>{{ labelStatus(scope.row.statusCode) }}</el-tag></template></el-table-column><el-table-column :label="$tx('Latest Message')" min-width="230"><template #default="scope">{{ scope.row.messages.at(-1)?.message || '-' }}</template></el-table-column><el-table-column :label="$tx('Actions')" width="100"><template #default="scope"><el-button v-hasPermi="['nxr:order:manage','nxr:order:support']" link type="primary" @click="openTicketAction(scope.row)">{{ $tx('Handle') }}</el-button></template></el-table-column></el-table>
+        <el-table v-if="operations?.shippingChanges.length" :data="operations.shippingChanges" size="small" border><el-table-column :label="$tx('Previous Option')" prop="oldOptionName" min-width="140" /><el-table-column :label="$tx('New Option')" prop="newOptionName" min-width="140" /><el-table-column :label="$tx('Adjustment')" width="120"><template #default="scope">{{ scope.row.currencyCode }} {{ Number(scope.row.differenceAmount).toFixed(2) }}</template></el-table-column><el-table-column :label="$tx('Status')" width="140"><template #default="scope"><el-tag>{{ labelStatus(scope.row.statusCode) }}</el-tag></template></el-table-column><el-table-column :label="$tx('Reason')" prop="reason" min-width="200" /><el-table-column :label="$tx('Actions')" width="190"><template #default="scope"><el-button v-if="scope.row.statusCode === 'requested'" v-hasPermi="['nxr:order:manage','nxr:order:support']" link type="success" @click="openShippingReview(scope.row, true)">{{ $tx('Approve') }}</el-button><el-button v-if="scope.row.statusCode === 'requested'" v-hasPermi="['nxr:order:manage','nxr:order:support']" link type="danger" @click="openShippingReview(scope.row, false)">{{ $tx('Reject') }}</el-button><el-button v-if="scope.row.statusCode === 'awaiting_settlement'" v-hasPermi="['nxr:order:manage','nxr:order:payment']" link type="primary" @click="openSettlement(scope.row)">{{ $tx('Record Settlement') }}</el-button></template></el-table-column></el-table>
+
+          </el-tab-pane>
+          <el-tab-pane :label="$tx('Timeline')" name="timeline">
+
+        <p v-if="!detail.timeline.length" class="order-section-empty">{{ $tx('No timeline events') }}</p>
+        <el-timeline v-else><el-timeline-item v-for="event in detail.timeline" :key="event.id" :timestamp="parseTime(event.createdAt)"><strong>{{ event.title }}</strong><p v-if="event.detail" class="timeline-detail">{{ event.detail }}</p></el-timeline-item></el-timeline>
+          </el-tab-pane>
+        </el-tabs>
       </template>
     </el-drawer>
 
@@ -173,6 +201,10 @@
 </template>
 
 <script setup name="NxrOrders">
+import auth from '@/plugins/auth'
+import OrderFinanceExceptionPanel from './components/OrderFinanceExceptionPanel.vue'
+import { useRoute } from 'vue-router'
+import { orderDetailSection, orderManualStatuses } from './orderPresentation'
 import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
 import CommercePolicyPanel from './components/CommercePolicyPanel.vue'
 import MediaCapacityPanel from './components/MediaCapacityPanel.vue'
@@ -210,6 +242,13 @@ import {
 } from '@/api/nxr/orders'
 
 const { proxy } = getCurrentInstance()
+const route = useRoute()
+const merchantBatchPanel = ref(null)
+const detailTab = ref('admission')
+const detailRefresh = ref(0)
+const canViewFinanceExceptions = computed(() => auth.hasPermiOr(['nxr:order:payment', 'nxr:customer:finance']))
+const primaryDetailSection = computed(() => orderDetailSection(detail.value))
+const primaryActionLabel = computed(() => tx({ admission: 'Review application', warehouse: 'Warehouse intake', cards: 'Continue grading', finance: 'Review payment', shipping: 'Shipping & Progress', timeline: 'View progress' }[primaryDetailSection.value] || 'View progress'))
 const rows = ref([])
 const total = ref(0)
 const loading = ref(false)
@@ -268,6 +307,9 @@ const fulfillmentOpen = computed(() => ![
   'payment_review', 'payment_exception', 'cancelled', 'delivered'
 ].includes(detail.value?.statusCode))
 
+const awaitingFulfillment = computed(() => ['admission_review', 'terms_confirmation', 'payment_expired', 'awaiting_payment', 'payment_review', 'payment_exception'].includes(detail.value?.statusCode))
+const manualStatusOptions = computed(() => orderManualStatuses(statusOptions, detail.value?.merchantBatch))
+
 const taskTypeOptions = [
   { value: 'preprocess', label: tx('Card Preprocessing') }, { value: 'vision', label: tx('Machine Vision Inspection') },
   { value: 'manual_review', label: tx('Manual Review') }, { value: 'encapsulation', label: tx('Standard Encapsulation') }
@@ -307,18 +349,20 @@ function paymentType(value) { return value === 'confirmed' ? 'success' : value =
 function canReviewPayment(payment) { return ['awaiting_payment', 'payment_review', 'payment_expired'].includes(detail.value?.statusCode) && ['pending', 'proof_submitted'].includes(payment.statusCode) }
 
 function loadOrders(resetPage = false) {
-  if (resetPage) queryParams.page = 1
+  if (resetPage === true) queryParams.page = 1
   loading.value = true
   return listGradingOrders(queryParams).then((res) => { rows.value = res.data.items; total.value = res.data.total; queryParams.page = res.data.page; queryParams.pageSize = res.data.pageSize }).finally(() => { loading.value = false })
 }
 
 function resetQuery() { proxy.resetForm('queryRef'); loadOrders(true) }
 
-async function openDetail(orderId) {
+async function openDetail(orderId, section) {
   const [detailResponse, operationsResponse] = await Promise.all([getGradingOrder(orderId), getOrderOperations(orderId)])
   detail.value = detailResponse.data
+  detailTab.value = orderDetailSection(detail.value, section)
+  detailRefresh.value += 1
   operations.value = operationsResponse.data
-  statusForm.statusCode = detail.value.statusCode
+  statusForm.statusCode = detail.value.merchantBatch && ['inbound_shipped', 'return_shipped', 'delivered'].includes(detail.value.statusCode) ? '' : detail.value.statusCode
   intakeForm.intakeCode = operations.value.intakeCode || ''
   intakeForm.receivedCount = operations.value.expectedCardCount
   intakeForm.packageNo = ''
@@ -335,7 +379,12 @@ async function openDetail(orderId) {
   detailOpen.value = true
 }
 
-function refreshDetail() { if (!detail.value) return Promise.resolve(); return openDetail(detail.value.id).then(() => loadOrders()) }
+function refreshDetail() { if (!detail.value) return Promise.resolve(); return openDetail(detail.value.id, detailTab.value).then(() => loadOrders()) }
+
+async function openMasterBatch() {
+  if (!detail.value?.merchantBatch) return
+  await merchantBatchPanel.value?.open(detail.value.merchantBatch.batchId)
+}
 
 function openPaymentAction(payment, action) { activePayment.value = payment; paymentAction.value = action; paymentForm.providerTransactionId = ''; paymentForm.note = ''; paymentDialogOpen.value = true }
 
@@ -596,10 +645,22 @@ async function saveServicePriceConfig() {
   }
 }
 
-loadOrders()
+watch(() => route.query.status, raw => {
+  queryParams.status = filterStatusOptions.some(option => option.value === raw) ? raw : undefined
+  void loadOrders(true)
+}, { immediate: true })
+watch(() => [route.query.orderId, route.query.section], ([raw, section]) => {
+  const id = Number(raw)
+  if (Number.isSafeInteger(id) && id > 0) void openDetail(id, section)
+}, { immediate: true })
 </script>
 
 <style scoped>
+.order-detail-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.order-detail-actions strong{margin-right:auto}
+.order-section-empty{padding:12px 0;margin:0;color:var(--nxr-text-muted)}
+.order-detail-tabs :deep(.el-tabs__header){position:sticky;top:0;z-index:2;background:var(--nxr-surface)}
+.order-detail-tabs :deep(.el-tabs__item){padding:0 14px}
 small,.timeline-detail{color:var(--nxr-text-faint)}
 .service-price-form{display:flex;align-items:flex-end;gap:4px;flex-wrap:wrap}
 .link-submission{display:flex;align-items:center;gap:8px}

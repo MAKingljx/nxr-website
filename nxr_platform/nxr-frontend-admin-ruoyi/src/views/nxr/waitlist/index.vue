@@ -48,7 +48,7 @@
           <nxr-status-tag :code="scope.row.statusCode" domain="waitlist" />
         </template>
       </el-table-column>
-      <el-table-column :label="$tx('Joined At')" prop="createdAt" width="200" show-overflow-tooltip />
+      <el-table-column :label="$tx('Joined At')" width="200" show-overflow-tooltip><template #default="scope">{{ formatCustomerDate(scope.row.createdAt) }}</template></el-table-column>
       </el-table>
     </nxr-server-data-workbench>
   </main>
@@ -58,6 +58,7 @@
 import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
 import NxrServerDataWorkbench from '@/components/NxrWorkspace/ServerDataWorkbench.vue'
 import NxrStatusTag from '@/components/NxrWorkspace/StatusTag.vue'
+import { formatCustomerDate } from '../customers/customerPresentation'
 import { fetchWaitlist } from '@/api/nxr/waitlist'
 
 const rows = ref([])

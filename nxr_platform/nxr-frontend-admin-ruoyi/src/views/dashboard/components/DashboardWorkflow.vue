@@ -35,7 +35,7 @@
         <span class="workflow-label">{{ $tx('Publication') }}</span>
         <div class="workflow-metric">
           <strong>{{ formatNumber(approvedReady) }}</strong>
-          <small>{{ $tx('ready') }}</small>
+          <small>{{ $tx('approved') }}</small>
         </div>
       </div>
     </div>
