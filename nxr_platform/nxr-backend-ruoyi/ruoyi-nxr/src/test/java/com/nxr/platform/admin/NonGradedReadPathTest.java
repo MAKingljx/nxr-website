@@ -32,7 +32,7 @@ class NonGradedReadPathTest {
 
     @Test
     void dashboardPublicMediaExportAndCustomerReadsKeepProductsWithoutScores() {
-        AdminDashboardService.AdminDashboardResponse dashboard = new AdminDashboardService(jdbcClient).loadDashboard();
+        AdminDashboardService.AdminDashboardResponse dashboard = new AdminDashboardService(jdbcClient).loadDashboard(false, false);
         assertThat(dashboard.recentPublished()).singleElement().satisfies(card -> {
             assertThat(card.productType()).isEqualTo("merch_product");
             assertThat(card.merchDescription()).isEqualTo("Limited legacy merchandise");
