@@ -409,7 +409,7 @@ public class AdminDashboardService {
         if (financeAccess) items.addAll(jdbcClient.sql("""
                 SELECT e.id, e.order_id, o.order_no, e.exception_type_code, e.resolution_status_code, e.created_at
                 FROM payment_finance_exception e JOIN grading_order o ON o.id=e.order_id
-                WHERE e.resolution_status_code='open'
+                WHERE e.resolution_status_code IN ('open','manual_review')
                 ORDER BY e.created_at ASC, e.id ASC LIMIT 5
                 """)
             .query((rs, row) -> new ActionItem(rs.getLong("id"), "finance", rs.getString("order_no"),

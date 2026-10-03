@@ -16,7 +16,7 @@ public class AgentOrderCancellationService {
         this.jdbc = jdbc;
     }
 
-    void releaseCancelledOrder(long orderId) {
+    public void releaseCancelledOrder(long orderId) {
         List<IntakeLink> intakes = jdbc.sql("""
             SELECT i.id, i.merchant_customer_id, i.client_id, i.expected_card_count, i.status_code,
                    o.order_no, i.batch_id,

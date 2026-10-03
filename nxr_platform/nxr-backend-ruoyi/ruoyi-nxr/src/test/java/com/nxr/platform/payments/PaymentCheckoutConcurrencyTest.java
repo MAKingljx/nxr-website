@@ -79,7 +79,8 @@ class PaymentCheckoutConcurrencyTest {
             CREATE TABLE payment_finance_exception (
               id BIGINT AUTO_INCREMENT PRIMARY KEY, order_id BIGINT, payment_record_id BIGINT, payment_attempt_id BIGINT,
               provider_code VARCHAR(32), provider_event_id VARCHAR(255), provider_transaction_id VARCHAR(255),
-              exception_type_code VARCHAR(32), amount DECIMAL(12,2), currency_code CHAR(3)
+              exception_type_code VARCHAR(32), amount DECIMAL(12,2), currency_code CHAR(3),
+              resolution_note CLOB, resolution_status_code VARCHAR(32) DEFAULT 'open'
             );
             CREATE TABLE order_timeline_event (
               id BIGINT AUTO_INCREMENT PRIMARY KEY, order_id BIGINT, event_code VARCHAR(32), title VARCHAR(255),
@@ -122,6 +123,7 @@ class PaymentCheckoutConcurrencyTest {
         service.createCheckout(7L, "NXR-100", new CheckoutRequest("paypal", "idem-key-0001"));
         jdbc.sql("UPDATE payment_attempt SET status_code='paid', provider_transaction_id='CAPTURE-ORIGINAL' WHERE order_id=10").update();
         jdbc.sql("UPDATE payment_record SET status_code='confirmed', provider_transaction_id='CAPTURE-ORIGINAL' WHERE id=20").update();
+        jdbc.sql("UPDATE grading_order SET status_code='grading' WHERE id=10").update();
 
         webhookPayment.set(new PaymentModels.VerifiedPayment(
             "refund-event-1", "CAPTURE-ORIGINAL", "REFUND-1", "", new BigDecimal("14.20"), "USD", "refunded", "{}"
@@ -132,6 +134,8 @@ class PaymentCheckoutConcurrencyTest {
             .isEqualByComparingTo("14.20");
         assertThat(jdbc.sql("SELECT status_code FROM grading_order WHERE id=10").query(String.class).single())
             .isEqualTo("payment_exception");
+        assertThat(FinanceExceptionReviewService.pausedStatus(jdbc.sql("SELECT resolution_note FROM payment_finance_exception").query(String.class).single()))
+            .isEqualTo("grading");
 
         webhookPayment.set(new PaymentModels.VerifiedPayment(
             "paid-event-late", "PAYPAL-REMOTE-1", "CAPTURE-ORIGINAL", "NXR-100",

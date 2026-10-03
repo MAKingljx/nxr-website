@@ -297,7 +297,7 @@ class PaymentCheckoutService {
         String status = normalizeProviderStatus(verified.status());
         // Lock order first, then re-read attempt/payment using a current locking
         // read. This is the same order used by wallet and manual settlement.
-        lockOrderState(candidate.orderId(), candidate.customerId());
+        String orderState = lockOrderState(candidate.orderId(), candidate.customerId());
         Attempt attempt = findById(candidate.id(), true)
             .filter(value -> value.provider().equals(provider) && matchesProviderReference(value, verified.providerOrderId()))
             .orElseThrow(() -> PaymentValidationException.badRequest("Verified provider payment is no longer linked to an NXR checkout"));
@@ -308,7 +308,7 @@ class PaymentCheckoutService {
             return;
         }
         if (Set.of("refunded", "reversed").contains(status)) {
-            recordFinanceException(provider, attempt, verified, status);
+            recordFinanceException(provider, attempt, verified, status, orderState);
             return;
         }
         customerPortalService.receivePaymentCallback(provider, new PaymentCallbackRequest(
@@ -328,7 +328,7 @@ class PaymentCheckoutService {
             .param("transactionId", verified.transactionId()).param("status", status).param("attemptId", attempt.id()).update();
     }
 
-    private void recordFinanceException(String provider, Attempt attempt, VerifiedPayment verified, String status) {
+    private void recordFinanceException(String provider, Attempt attempt, VerifiedPayment verified, String status, String orderState) {
         try {
             jdbcClient.sql(
                     """
@@ -341,19 +341,26 @@ class PaymentCheckoutService {
         } catch (DataIntegrityViolationException duplicate) {
             return;
         }
+        String previous = orderState;
+        if ("payment_exception".equals(orderState)) previous = jdbcClient.sql("""
+            SELECT resolution_note FROM payment_finance_exception WHERE order_id=:id
+                AND resolution_status_code IN ('open','manual_review') ORDER BY id DESC LIMIT 1
+            """).param("id", attempt.orderId()).query(String.class).optional()
+            .map(FinanceExceptionReviewService::pausedStatus).orElse(null);
         jdbcClient.sql(
                 """
                 INSERT INTO payment_finance_exception
                     (order_id, payment_record_id, payment_attempt_id, provider_code, provider_event_id,
-                     provider_transaction_id, exception_type_code, amount, currency_code)
+                     provider_transaction_id, exception_type_code, amount, currency_code, resolution_note)
                 VALUES
                     (:orderId, :paymentId, :attemptId, :provider, :eventId,
-                     :transactionId, :exceptionType, :amount, :currency)
+                     :transactionId, :exceptionType, :amount, :currency, :reviewNote)
                 """
             )
             .param("orderId", attempt.orderId()).param("paymentId", attempt.paymentRecordId()).param("attemptId", attempt.id())
             .param("provider", provider).param("eventId", verified.eventId()).param("transactionId", verified.transactionId())
-            .param("exceptionType", status).param("amount", normalizedMoney(verified.amount())).param("currency", attempt.currency()).update();
+            .param("exceptionType", status).param("amount", normalizedMoney(verified.amount())).param("currency", attempt.currency())
+            .param("reviewNote", FinanceExceptionReviewService.pauseMetadata(previous)).update();
         jdbcClient.sql(
                 """
                 UPDATE payment_record
