@@ -120,7 +120,7 @@
 
           </el-tab-pane>
           <el-tab-pane :label="$tx('Finance')" name="finance">
-        <order-finance-exception-panel v-if="canViewFinanceExceptions" :order-id="detail.id" :active="detailTab === 'finance' && detailOpen" :refresh-key="detailRefresh" />
+        <order-finance-exception-panel v-if="canViewFinanceExceptions" :order-id="detail.id" :active="detailTab === 'finance' && detailOpen" :refresh-key="detailRefresh" @reviewed="refreshFinanceReviewed" />
         <p v-if="!detail.payments.length" class="order-section-empty">{{ $tx('No payments recorded') }}</p>
 
         <el-table v-if="detail.payments.length" :data="detail.payments" size="small" border>
@@ -248,6 +248,7 @@ const orderRouteName = route.name
 const merchantBatchPanel = ref(null)
 const detailTab = ref('admission')
 const detailRefresh = ref(0)
+let detailGeneration = 0
 const canViewFinanceExceptions = computed(() => auth.hasPermiOr(['nxr:order:payment', 'nxr:customer:finance']))
 const primaryDetailSection = computed(() => orderDetailSection(detail.value))
 const primaryActionLabel = computed(() => tx({ admission: 'Review application', warehouse: 'Warehouse intake', cards: 'Continue grading', finance: 'Review payment', shipping: 'Shipping & Progress', timeline: 'View progress' }[primaryDetailSection.value] || 'View progress'))
@@ -358,10 +359,12 @@ function loadOrders(resetPage = false) {
 
 function resetQuery() { proxy.resetForm('queryRef'); loadOrders(true) }
 
-async function openDetail(orderId, section) {
+async function openDetail(orderId, section, preserveTab = false) {
+  const current = ++detailGeneration
   const [detailResponse, operationsResponse] = await Promise.all([getGradingOrder(orderId), getOrderOperations(orderId)])
+  if (current !== detailGeneration || (preserveTab && (!detailOpen.value || detail.value?.id !== orderId))) return
   detail.value = detailResponse.data
-  detailTab.value = orderDetailSection(detail.value, section)
+  if (!preserveTab) detailTab.value = orderDetailSection(detail.value, section)
   detailRefresh.value += 1
   operations.value = operationsResponse.data
   statusForm.statusCode = detail.value.merchantBatch && ['inbound_shipped', 'return_shipped', 'delivered'].includes(detail.value.statusCode) ? '' : detail.value.statusCode
@@ -382,6 +385,12 @@ async function openDetail(orderId, section) {
 }
 
 function refreshDetail() { if (!detail.value) return Promise.resolve(); return openDetail(detail.value.id, detailTab.value).then(() => loadOrders()) }
+
+async function refreshFinanceReviewed(orderId) {
+  if (detail.value?.id !== orderId) return
+  await Promise.all([openDetail(orderId, undefined, true), loadOrders()])
+  proxy.$modal.msgSuccess(tx('Financial review saved'))
+}
 
 async function openMasterBatch() {
   if (!detail.value?.merchantBatch) return

@@ -101,3 +101,11 @@ export function saveReturnShippingOption(optionId, data) {
 export function getOrderFinanceExceptions(orderId) {
   return request({ url: `/api/admin/orders/${orderId}/finance-exceptions`, method: 'get', suppressErrorMessage: true })
 }
+
+export function getOrderFinanceReviewContext(orderId) {
+  return request({ url: `/api/admin/orders/${orderId}/finance-exceptions/review-context`, method: 'get', suppressErrorMessage: true })
+}
+
+export function reviewOrderFinanceExceptions(orderId, data) {
+  return request({ url: `/api/admin/orders/${orderId}/finance-exceptions/review`, method: 'post', data, suppressErrorMessage: true, headers: { repeatSubmit: false } })
+}
