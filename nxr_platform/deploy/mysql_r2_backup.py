@@ -21,6 +21,8 @@ from pathlib import Path
 import re
 import secrets
 import shutil
+import signal
+import threading
 import stat
 import subprocess
 import sys
@@ -47,6 +49,139 @@ ENV_KEYS = {"SOURCE_DATABASE", "MYSQL_SOCKET", "MYSQL_USER", "MYSQL_DEFAULTS_FIL
 
 class BackupError(Exception):
     """Only deliberately sanitized descriptions cross the CLI boundary."""
+
+
+class BackupCancelled(BackupError):
+    pass
+
+
+_cancel_deferrals = 0
+_cancel_pending = False
+
+
+@contextlib.contextmanager
+def defer_cancellation():
+    # A signal arriving inside Popen's constructor must not discard the handle
+    # before the caller can stop/reap that newly spawned native process.
+    global _cancel_deferrals, _cancel_pending
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    _cancel_deferrals += 1
+    try:
+        yield
+    finally:
+        _cancel_deferrals -= 1
+        if _cancel_deferrals == 0 and _cancel_pending:
+            _cancel_pending = False
+            raise BackupCancelled("backup cancelled; owned resources are being cleaned")
+
+
+@contextlib.contextmanager
+def controlled_signals():
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous = {number: signal.getsignal(number) for number in (signal.SIGTERM, signal.SIGINT)}
+    def cancel(number, frame):
+        global _cancel_pending
+        if _cancel_deferrals:
+            _cancel_pending = True
+            return
+        raise BackupCancelled("backup cancelled; owned resources are being cleaned")
+    try:
+        for number in previous:
+            signal.signal(number, cancel)
+        yield
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+
+
+@contextlib.contextmanager
+def cleanup_signals():
+    # A second SIGTERM must not interrupt the cleanup triggered by the first.
+    # SIGKILL cannot be caught; the durable journal is the recovery boundary.
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous = {number: signal.getsignal(number) for number in (signal.SIGTERM, signal.SIGINT)}
+    try:
+        for number in previous:
+            signal.signal(number, signal.SIG_IGN)
+        yield
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
+
+
+def run_process(args: list[str], *, input_data: bytes | None = None,
+                output: Any = subprocess.PIPE, stdin: Any = None,
+                env: dict[str, str] | None = None, timeout: int) -> bytes:
+    """Stop and reap the native child before any schema/filesystem cleanup."""
+    process = None
+    try:
+        with defer_cancellation():
+            process = subprocess.Popen(args, stdin=subprocess.PIPE if input_data is not None else stdin,
+                                       stdout=output, stderr=subprocess.DEVNULL, env=env,
+                                       start_new_session=True)
+        stdout, _ = process.communicate(input=input_data, timeout=timeout)
+    except BaseException as error:
+        with cleanup_signals():
+            if process is not None:
+                if process.poll() is None:
+                    try:
+                        os.killpg(process.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    process.wait(timeout=5)
+        if isinstance(error, BackupCancelled):
+            raise
+        if isinstance(error, (OSError, subprocess.TimeoutExpired)):
+            raise BackupError("native process could not complete") from None
+        raise
+    finally:
+        with cleanup_signals():
+            if process is not None:
+                for stream in (process.stdin, process.stdout, process.stderr):
+                    if stream is not None:
+                        stream.close()
+    if process.returncode:
+        raise BackupError("native process failed; raw diagnostics are withheld")
+    return stdout or b""
+
+
+def fsync_directory(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def atomic_private_json(path: Path, value: dict[str, Any], *, create_only: bool = False) -> None:
+    temporary = path.parent / ("." + path.name + "." + secrets.token_hex(8) + ".tmp")
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as output:
+            output.write(json_bytes(value))
+            output.flush()
+            os.fsync(output.fileno())
+        if create_only:
+            os.link(temporary, path, follow_symlinks=False)
+            temporary.unlink()
+        else:
+            os.replace(temporary, path)
+        fsync_directory(path.parent)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def private_file(path: Path) -> None:
@@ -199,6 +334,102 @@ class Config:
         return "mysql/" + self.source_database + "/"
 
 
+class ScratchJournal:
+    FILENAME = "pending-cleanup.json"
+    STATES = {"absent", "create_pending", "create_ambiguous", "confirmed", "drop_pending", "drop_ambiguous", "removed"}
+    WORK_FILES = {"database.sql", "restored.sql", "importer.cnf", "database.sql.gz", "metadata.json", "backup.tar", "backup.tar.age", "roundtrip.age"}
+    FIELDS = {"tool", "version", "source_database", "uid", "nonce", "target_database", "importer_user", "work_dir", "work_device", "work_inode", "database_state", "user_state", "work_cleaned"}
+
+    def __init__(self, cfg: Config, document: dict[str, Any]):
+        self.cfg = cfg
+        self.document = document
+        self.path = cfg.state_root / self.FILENAME
+
+    @classmethod
+    def create(cls, cfg: Config, work: Path) -> "ScratchJournal":
+        private_dir(cfg.state_root)
+        private_dir(cfg.work_root)
+        if (cfg.state_root / cls.FILENAME).exists():
+            raise BackupError("an unresolved scratch journal already exists")
+        private_dir(work)
+        if work.parent.resolve() != cfg.work_root.resolve() or work.is_symlink() or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", work.name):
+            raise BackupError("verification work directory is outside the owned root")
+        info = work.lstat()
+        nonce = secrets.token_hex(12)
+        document = {"tool": TOOL, "version": VERSION, "source_database": cfg.source_database,
+                    "uid": os.getuid(), "nonce": nonce, "target_database": "nxr_backup_verify_" + nonce,
+                    "importer_user": "nxr_bv_" + nonce, "work_dir": str(work),
+                    "work_device": info.st_dev, "work_inode": info.st_ino,
+                    "database_state": "absent", "user_state": "absent", "work_cleaned": False}
+        journal = cls(cfg, document)
+        journal.save(create_only=True)
+        return journal
+
+    @classmethod
+    def load(cls, cfg: Config) -> "ScratchJournal":
+        private_dir(cfg.work_root)
+        private_dir(cfg.state_root)
+        path = cfg.state_root / cls.FILENAME
+        private_file(path)
+        try:
+            if path.stat().st_size > 8192:
+                raise ValueError()
+            document = json.loads(path.read_bytes())
+            if set(document) != cls.FIELDS or document["tool"] != TOOL or document["version"] != VERSION or document["source_database"] != cfg.source_database or type(document["uid"]) is not int or document["uid"] != os.getuid():
+                raise ValueError()
+            nonce = document["nonce"]
+            if not isinstance(nonce, str) or not re.fullmatch(r"[a-f0-9]{24}", nonce) or document["target_database"] != "nxr_backup_verify_" + nonce or document["importer_user"] != "nxr_bv_" + nonce or document["target_database"] == cfg.source_database:
+                raise ValueError()
+            if document["database_state"] not in cls.STATES or document["user_state"] not in cls.STATES or type(document["work_cleaned"]) is not bool or any(type(document[key]) is not int for key in ("work_device", "work_inode")):
+                raise ValueError()
+            work = Path(document["work_dir"])
+            if not work.is_absolute() or work.parent.resolve() != cfg.work_root.resolve() or not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", work.name):
+                raise ValueError()
+            journal = cls(cfg, document)
+            journal.validate_work()
+            return journal
+        except (ValueError, KeyError, TypeError, OSError):
+            raise BackupError("scratch ownership journal is invalid; manual inspection is required") from None
+
+    def validate_work(self) -> None:
+        work = Path(self.document["work_dir"])
+        if work.exists() or work.is_symlink():
+            info = work.lstat()
+            if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077 or info.st_dev != self.document["work_device"] or info.st_ino != self.document["work_inode"]:
+                raise BackupError("scratch work directory ownership changed; manual inspection is required")
+
+    def save(self, *, create_only: bool = False) -> None:
+        atomic_private_json(self.path, self.document, create_only=create_only)
+
+    def transition(self, kind: str, state: str) -> None:
+        if kind not in {"database", "user"} or state not in self.STATES:
+            raise BackupError("invalid scratch journal transition")
+        self.document[kind + "_state"] = state
+        self.save()
+
+    def names(self) -> str:
+        return self.document["target_database"] + " / " + self.document["importer_user"]
+
+    def cleanup_work(self) -> None:
+        self.validate_work()
+        work = Path(self.document["work_dir"])
+        if work.exists():
+            for entry in work.iterdir():
+                if entry.name not in self.WORK_FILES:
+                    raise BackupError("scratch work contains unexpected files; manual inspection is required")
+                private_file(entry)
+            shutil.rmtree(work)
+            fsync_directory(self.cfg.work_root)
+        self.document["work_cleaned"] = True
+        self.save()
+
+    def finish(self) -> None:
+        if self.document["database_state"] not in {"absent", "removed"} or self.document["user_state"] not in {"absent", "removed"} or not self.document["work_cleaned"]:
+            raise BackupError("scratch ownership remains unresolved: " + self.names())
+        self.path.unlink()
+        fsync_directory(self.cfg.state_root)
+
+
 class NativeMySQL:
     def __init__(self, cfg: Config):
         self.cfg = cfg
@@ -213,13 +444,8 @@ class NativeMySQL:
         # MySQL8 lacks --no-login-paths. Pin its documented login-file override
         # to the empty OS device so a personal .mylogin.cnf cannot override the importer.
         env["MYSQL_TEST_LOGIN_FILE"] = os.devnull
-        try:
-            result = subprocess.run(args, input=input_data, stdin=stdin, stdout=output, stderr=subprocess.DEVNULL, env=env, timeout=self.cfg.process_timeout, check=False)
-        except (OSError, subprocess.TimeoutExpired):
-            raise BackupError("native client could not complete") from None
-        if result.returncode:
-            raise BackupError("native client failed; raw diagnostics are withheld")
-        return result.stdout or b""
+        return run_process(args, input_data=input_data, output=output, stdin=stdin, env=env,
+                           timeout=getattr(self, "cleanup_timeout", self.cfg.process_timeout))
 
     def query(self, sql: str) -> list[list[str]]:
         result = self.execute(self.client(self.cfg.mysql_bin) + ["--batch", "--raw", "--skip-column-names"], input_data=sql.encode())
@@ -243,9 +469,45 @@ class NativeMySQL:
         args = self.client(self.cfg.mysqldump_bin) + ["--single-transaction", "--set-gtid-purged=OFF", "--no-tablespaces", "--hex-blob", "--order-by-primary", "--skip-extended-insert", "--default-character-set=utf8mb4", "--skip-triggers"]
         if coordinates:
             args.append("--source-data=2")
-        with path.open("xb") as handle:
-            os.chmod(path, 0o600)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "wb") as handle:
             self.execute(args + [database], output=handle)
+
+    def grant_database(self, target: str) -> str:
+        rows = self.query("SELECT @@GLOBAL.partial_revokes;")
+        if rows not in ([["0"]], [["1"]]):
+            raise BackupError("server partial_revokes setting cannot be verified")
+        # With partial_revokes OFF, GRANT database names interpret '_' and '%'
+        # as wildcards even inside backticks. CREATE/DROP use ordinary names.
+        return target.replace("_", "\\_").replace("%", "\\%") if rows == [["0"]] else target
+
+    def cleanup_journal(self, journal: ScratchJournal) -> None:
+        unresolved = False
+        previous = getattr(self, "cleanup_timeout", None)
+        self.cleanup_timeout = min(30, self.cfg.process_timeout)
+        try:
+            with cleanup_signals():
+                for kind, sql in (("database", "DROP DATABASE `" + journal.document["target_database"] + "`;"),
+                                  ("user", "DROP USER '" + journal.document["importer_user"] + "'@'localhost';")):
+                    state = journal.document[kind + "_state"]
+                    if state == "confirmed":
+                        journal.transition(kind, "drop_pending")
+                        try:
+                            self.query(sql)
+                        except BaseException:
+                            journal.transition(kind, "drop_ambiguous")
+                            unresolved = True
+                        else:
+                            journal.transition(kind, "removed")
+                    elif state not in {"absent", "removed"}:
+                        unresolved = True
+        finally:
+            if previous is None:
+                del self.cleanup_timeout
+            else:
+                self.cleanup_timeout = previous
+        if unresolved:
+            raise BackupError("scratch ownership requires manual inspection: " + journal.names())
 
     def verify_restore(self, dump: Path, original: dict[str, Any], work: Path, schema: dict[str, Any]) -> dict[str, Any]:
         if not self.cfg.allow_isolated_restore:
@@ -254,24 +516,30 @@ class NativeMySQL:
             raise BackupError("invalid verification schema settings")
         if inspect_dump(dump) != original:
             raise BackupError("snapshot changed before isolated import")
-        suffix = secrets.token_hex(12)
-        target = "nxr_backup_verify_" + suffix
-        importer = "nxr_bv_" + suffix
-        safe_db(target)
-        if target == self.cfg.source_database or not re.fullmatch(r"nxr_backup_verify_[a-f0-9]{24}", target) or not re.fullmatch(r"nxr_bv_[a-f0-9]{24}", importer):
-            raise BackupError("verification target is outside the scratch namespace")
+        journal_path = self.cfg.state_root / ScratchJournal.FILENAME
+        journal = ScratchJournal.load(self.cfg) if journal_path.exists() else ScratchJournal.create(self.cfg, work)
+        if Path(journal.document["work_dir"]) != work or journal.document["database_state"] != "absent" or journal.document["user_state"] != "absent":
+            raise BackupError("scratch journal is not a fresh verification workspace")
+        target = journal.document["target_database"]
+        importer = journal.document["importer_user"]
+        target_grant = self.grant_database(target)
         credential = work / "importer.cnf"
         password = secrets.token_urlsafe(36)
         write_private(credential, ("[client]\nuser=" + importer + "\npassword=" + password + "\n").encode())
-        created_database = created_user = False
         try:
-            # If either name already exists, MySQL refuses the command. Never adopt
-            # or remove a database/user owned by another run.
-            self.query("CREATE DATABASE `" + target + "` CHARACTER SET " + schema["character_set"] + " COLLATE " + schema["collation"] + ";")
-            created_database = True
-            self.query("CREATE USER '" + importer + "'@'localhost' IDENTIFIED BY '" + password + "';")
-            created_user = True
-            self.query("GRANT SELECT, INSERT, CREATE, DROP, ALTER, INDEX, LOCK TABLES, REFERENCES ON `" + target + "`.* TO '" + importer + "'@'localhost';")
+            for kind, sql in (("database", "CREATE DATABASE `" + target + "` CHARACTER SET " + schema["character_set"] + " COLLATE " + schema["collation"] + ";"),
+                              ("user", "CREATE USER '" + importer + "'@'localhost' IDENTIFIED BY '" + password + "';")):
+                # Persist intent before the server can commit. A missing response
+                # is ambiguous, never proof of absence or permission to DROP.
+                journal.transition(kind, "create_pending")
+                try:
+                    self.query(sql)
+                except BaseException:
+                    with cleanup_signals():
+                        journal.transition(kind, "create_ambiguous")
+                    raise
+                journal.transition(kind, "confirmed")
+            self.query("GRANT SELECT, INSERT, CREATE, DROP, ALTER, INDEX, LOCK TABLES, REFERENCES ON `" + target_grant + "`.* TO '" + importer + "'@'localhost';")
             with dump.open("rb") as handle:
                 self.execute(self.client(self.cfg.mysql_bin, credential, importer) + ["--binary-mode", "--skip-reconnect", "--local-infile=0", "--skip-auto-rehash", "--default-character-set=utf8mb4", target], stdin=handle)
             restored = work / "restored.sql"
@@ -284,22 +552,11 @@ class NativeMySQL:
                 raise BackupError("restored table integrity check failed")
             return {"verified": True, "table_count": len(verified["tables"]), "row_count": sum(value["rows"] for value in verified["data_signatures"].values())}
         finally:
-            cleanup_errors = []
-            if created_database:
+            with cleanup_signals():
                 try:
-                    self.query("DROP DATABASE `" + target + "`;")
-                except BackupError:
-                    cleanup_errors.append("database")
-            if created_user:
-                try:
-                    self.query("DROP USER '" + importer + "'@'localhost';")
-                except BackupError:
-                    cleanup_errors.append("user")
-            credential.unlink(missing_ok=True)
-            if cleanup_errors:
-                # Scratch names carry no credentials and let an operator inspect
-                # the exact orphan safely. Existing source schemas are untouched.
-                raise BackupError("scratch cleanup failed: " + target + " / " + importer)
+                    self.cleanup_journal(journal)
+                finally:
+                    credential.unlink(missing_ok=True)
 
 
 def inspect_dump(path: Path, *, require_coordinates: bool = True) -> dict[str, Any]:
@@ -419,20 +676,22 @@ class AgeEncryptor:
 
     def preflight(self) -> None:
         try:
-            result = subprocess.run([self.cfg.age_bin, "--encrypt", "--recipient", self.cfg.age_recipient], input=b"", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
-        except (OSError, subprocess.TimeoutExpired):
-            raise BackupError("age encryption is unavailable") from None
-        if result.returncode:
-            raise BackupError("age recipient or encryption tool is invalid")
+            run_process([self.cfg.age_bin, "--encrypt", "--recipient", self.cfg.age_recipient], input_data=b"", output=subprocess.DEVNULL, timeout=10)
+        except BackupCancelled:
+            raise
+        except BackupError:
+            raise BackupError("age encryption is unavailable or recipient is invalid") from None
 
     def encrypt(self, source: Path, target: Path) -> None:
         try:
             fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
             with os.fdopen(fd, "wb") as output:
-                result = subprocess.run([self.cfg.age_bin, "--encrypt", "--recipient", self.cfg.age_recipient, "--output", "-", str(source)], stdout=output, stderr=subprocess.DEVNULL, timeout=self.cfg.process_timeout)
-        except (OSError, subprocess.TimeoutExpired):
+                run_process([self.cfg.age_bin, "--encrypt", "--recipient", self.cfg.age_recipient, "--output", "-", str(source)], output=output, timeout=self.cfg.process_timeout)
+        except BackupCancelled:
+            raise
+        except (OSError, BackupError):
             raise BackupError("age encryption could not complete") from None
-        if result.returncode or not target.is_file() or target.stat().st_size < 100:
+        if not target.is_file() or target.stat().st_size < 100:
             raise BackupError("age encryption failed")
         os.chmod(target, 0o600)
         with target.open("rb") as handle:
@@ -448,10 +707,25 @@ class R2Storage:
         except ImportError:
             raise BackupError("backup boto3 dependency is unavailable") from None
         self.bucket = cfg.r2_bucket
+        self.image_bucket = cfg.image_bucket
         self.client = boto3.client("s3", endpoint_url=cfg.r2_endpoint, aws_access_key_id=cfg.r2_access_key_id, aws_secret_access_key=cfg.r2_secret_access_key, region_name="auto", config=BotoConfig(signature_version="s3v4", connect_timeout=10, read_timeout=120, retries={"max_attempts": 3}, s3={"addressing_style": "path"}))
 
     def preflight(self) -> None:
         self.client.head_bucket(Bucket=self.bucket)
+        try:
+            self.client.head_bucket(Bucket=self.image_bucket)
+        except BackupCancelled:
+            raise
+        except Exception as error:
+            response = getattr(error, "response", {})
+            if not isinstance(response, dict):
+                raise BackupError("card bucket credential isolation could not be verified") from None
+            status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            code = response.get("Error", {}).get("Code")
+            if status == 403 and code in {"AccessDenied", "Forbidden", "403"}:
+                return
+            raise BackupError("card bucket credential isolation could not be verified") from None
+        raise BackupError("backup credentials must not have access to the card image bucket")
 
     def upload(self, key: str, path: Path) -> None:
         self.client.upload_file(str(path), self.bucket, key, ExtraArgs={"ContentType": "application/octet-stream", "Metadata": {"sha256": sha_file(path)}})
@@ -540,7 +814,12 @@ class BackupService:
                 records.append(marker)
             except BackupError:
                 ignored += 1
-        return {"tool": TOOL, "source_database": self.cfg.source_database, "bucket": self.cfg.r2_bucket, "verified_backups": sorted(records, key=lambda item: (item["created_at"], item["backup_id"]), reverse=True), "invalid_markers": ignored}
+        result = {"tool": TOOL, "source_database": self.cfg.source_database, "bucket": self.cfg.r2_bucket, "verified_backups": sorted(records, key=lambda item: (item["created_at"], item["backup_id"]), reverse=True), "invalid_markers": ignored}
+        pending = self.cfg.state_root / ScratchJournal.FILENAME
+        if pending.exists() or pending.is_symlink():
+            journal = ScratchJournal.load(self.cfg)
+            result["pending_cleanup"] = {key: journal.document[key] for key in ("target_database", "importer_user", "database_state", "user_state", "work_cleaned")}
+        return result
 
     def prune(self, current_id: str) -> list[str]:
         records = self.status()["verified_backups"]
@@ -576,16 +855,47 @@ class BackupService:
         finally:
             os.close(fd)
 
+    @contextlib.contextmanager
+    def owned_work(self, prefix: str):
+        root = private_dir(self.cfg.work_root)
+        pending = self.cfg.state_root / ScratchJournal.FILENAME
+        if pending.exists() or pending.is_symlink():
+            previous = ScratchJournal.load(self.cfg)
+            raise BackupError("pending scratch cleanup; run recover-cleanup: " + previous.names())
+        work = Path(tempfile.mkdtemp(prefix=prefix, dir=root))
+        journal = ScratchJournal.create(self.cfg, work)
+        try:
+            yield work
+        finally:
+            with cleanup_signals():
+                current = ScratchJournal.load(self.cfg)
+                current.cleanup_work()
+                current.finish()
+
+    def recover_cleanup(self) -> dict[str, Any]:
+        if not self.cfg.allow_isolated_restore:
+            raise BackupError("isolated restore authorization is required for cleanup")
+        with self.lock(), cleanup_signals():
+            journal = ScratchJournal.load(self.cfg)
+            try:
+                self.mysql.cleanup_journal(journal)
+            finally:
+                journal.cleanup_work()
+            journal.finish()
+            return {"tool": TOOL, "source_database": self.cfg.source_database, "scratch_cleanup": "COMPLETE"}
+
     def run(self) -> dict[str, Any]:
         if not self.cfg.allow_isolated_restore:
             raise BackupError("isolated restore authorization is required before backup")
-        with self.lock():
+        with controlled_signals(), self.lock():
+            if (self.cfg.state_root / ScratchJournal.FILENAME).exists():
+                previous = ScratchJournal.load(self.cfg)
+                raise BackupError("pending scratch cleanup; run recover-cleanup: " + previous.names())
             preflight = self.preflight()
             root = private_dir(self.cfg.work_root)
             created_at = dt.datetime.now(dt.timezone.utc)
             backup_id = created_at.strftime("%Y%m%dT%H%M%SZ-") + secrets.token_hex(8)
-            with tempfile.TemporaryDirectory(prefix=backup_id + "-", dir=root) as temporary:
-                work = Path(temporary)
+            with self.owned_work(backup_id + "-") as work:
                 sql = work / "database.sql"
                 self.mysql.dump(self.cfg.source_database, sql)
                 snapshot = inspect_dump(sql)
@@ -672,6 +982,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("check", aliases=["preflight"])
     sub.add_parser("run", aliases=["backup"])
     sub.add_parser("status")
+    sub.add_parser("recover-cleanup", help="clean only confirmed scratch objects from the private ownership journal")
     resume = sub.add_parser("resume", help="finish retention for an already VERIFIED snapshot")
     resume.add_argument("backup_id")
     fetch = sub.add_parser("fetch", aliases=["download"])
@@ -682,16 +993,19 @@ def main(argv: list[str] | None = None) -> int:
     try:
         cfg = Config.from_values(load_env(args.env_file))
         service = BackupService(cfg)
-        if args.command in {"check", "preflight"}:
-            result = service.preflight()
-        elif args.command in {"run", "backup"}:
-            result = service.run()
-        elif args.command == "status":
-            result = service.status()
-        elif args.command == "resume":
-            result = service.resume(args.backup_id)
-        else:
-            result = service.fetch(args.backup_id, args.output)
+        with controlled_signals():
+            if args.command in {"check", "preflight"}:
+                result = service.preflight()
+            elif args.command in {"run", "backup"}:
+                result = service.run()
+            elif args.command == "status":
+                result = service.status()
+            elif args.command == "recover-cleanup":
+                result = service.recover_cleanup()
+            elif args.command == "resume":
+                result = service.resume(args.backup_id)
+            else:
+                result = service.fetch(args.backup_id, args.output)
         print(json.dumps(result, sort_keys=True))
         return 0
     except BackupError as error:

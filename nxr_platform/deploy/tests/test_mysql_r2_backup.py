@@ -418,14 +418,19 @@ class FlowTests(Base):
 
 
 class NativeTests(Base):
-    def native(self, fail_at=None, changed=False):
-        cfg = self.cfg
+    def native(self, fail_at=None, changed=False, partial_revokes="1"):
+        cfg = dataclasses.replace(self.cfg, state_root=self.root / ("state-" + b.secrets.token_hex(4)))
+        b.private_dir(cfg.work_root)
+        self.native_work = Path(tempfile.mkdtemp(prefix="native-", dir=cfg.work_root))
+        self.native_cfg = cfg
         calls = []
         class Native(b.NativeMySQL):
             def query(self, sql):
                 calls.append(sql)
                 if fail_at and sql.startswith(fail_at):
                     raise b.BackupError("injected native failure")
+                if sql == "SELECT @@GLOBAL.partial_revokes;":
+                    return [[partial_revokes]]
                 if sql.startswith("CHECK TABLE"):
                     return [["scratch.cards", "check", "status", "OK"]]
                 return []
@@ -448,7 +453,7 @@ class NativeTests(Base):
         native, calls = self.native()
         dump = self.dump()
         snapshot = b.inspect_dump(dump)
-        result = native.verify_restore(dump, snapshot, self.root, {"character_set": "utf8mb4", "collation": "utf8mb4_0900_ai_ci"})
+        result = native.verify_restore(dump, snapshot, self.native_work, {"character_set": "utf8mb4", "collation": "utf8mb4_0900_ai_ci"})
         self.assertTrue(result["verified"])
         sql = [call for call in calls if isinstance(call, str)]
         grants = [call for call in sql if call.startswith("GRANT")]
@@ -463,14 +468,14 @@ class NativeTests(Base):
         self.assertTrue(imports[0][-1].startswith("nxr_backup_verify_"))
         self.assertTrue(any(arg.startswith("--defaults-file=") for arg in imports[0]))
         self.assertFalse(any(arg.startswith("-p") for arg in imports[0]))
-        self.assertFalse((self.root / "importer.cnf").exists())
+        self.assertFalse((self.native_work / "importer.cnf").exists())
 
     def test_failure_cleanup_never_drops_unowned_names(self):
         for failure in ("CREATE DATABASE", "CREATE USER", "GRANT", "IMPORT"):
             native, calls = self.native(fail_at=failure)
             dump = self.dump()
             with self.subTest(failure=failure), self.assertRaises(b.BackupError):
-                native.verify_restore(dump, b.inspect_dump(dump), self.root, {"character_set": "utf8mb4", "collation": "utf8mb4_0900_ai_ci"})
+                native.verify_restore(dump, b.inspect_dump(dump), self.native_work, {"character_set": "utf8mb4", "collation": "utf8mb4_0900_ai_ci"})
             drops = [call for call in calls if isinstance(call, str) and call.startswith("DROP")]
             if failure == "CREATE DATABASE":
                 self.assertEqual(drops, [])
@@ -480,13 +485,13 @@ class NativeTests(Base):
             else:
                 self.assertEqual(len(drops), 2)
             self.assertNotIn(self.cfg.source_database, "\n".join(drops))
-            self.assertFalse((self.root / "importer.cnf").exists())
+            self.assertFalse((self.native_work / "importer.cnf").exists())
 
     def test_mismatched_restore_data_fails_and_cleans_up(self):
         native, calls = self.native(changed=True)
         dump = self.dump()
         with self.assertRaises(b.BackupError):
-            native.verify_restore(dump, b.inspect_dump(dump), self.root, {"character_set": "utf8mb4", "collation": "utf8mb4_0900_ai_ci"})
+            native.verify_restore(dump, b.inspect_dump(dump), self.native_work, {"character_set": "utf8mb4", "collation": "utf8mb4_0900_ai_ci"})
         self.assertEqual(len([call for call in calls if isinstance(call, str) and call.startswith("DROP")]), 2)
 
     def test_changed_dump_before_import_fails_without_sql(self):
@@ -495,21 +500,21 @@ class NativeTests(Base):
         snapshot = b.inspect_dump(dump)
         dump.write_bytes(DUMP.replace(b"'second'", b"'changed'"))
         with self.assertRaises(b.BackupError):
-            native.verify_restore(dump, snapshot, self.root, {"character_set": "utf8mb4", "collation": "utf8mb4_0900_ai_ci"})
+            native.verify_restore(dump, snapshot, self.native_work, {"character_set": "utf8mb4", "collation": "utf8mb4_0900_ai_ci"})
         self.assertEqual(calls, [])
 
     def test_injected_schema_escape_never_reaches_importer(self):
         native, calls = self.native()
         dump = self.dump(DUMP + b"USE nxr_source;\n")
         with self.assertRaises(b.BackupError):
-            native.verify_restore(dump, {}, self.root, {"character_set": "utf8mb4", "collation": "utf8mb4_0900_ai_ci"})
+            native.verify_restore(dump, {}, self.native_work, {"character_set": "utf8mb4", "collation": "utf8mb4_0900_ai_ci"})
         self.assertEqual(calls, [])
 
     def test_schema_setting_injection_never_reaches_admin_client(self):
         native, calls = self.native()
         dump = self.dump()
         with self.assertRaises(b.BackupError):
-            native.verify_restore(dump, b.inspect_dump(dump), self.root, {"character_set": "utf8mb4; DROP DATABASE nxr_source", "collation": "utf8mb4_0900_ai_ci"})
+            native.verify_restore(dump, b.inspect_dump(dump), self.native_work, {"character_set": "utf8mb4; DROP DATABASE nxr_source", "collation": "utf8mb4_0900_ai_ci"})
         self.assertEqual(calls, [])
 
     def test_native_dump_uses_safe_options_without_database_creation(self):
@@ -560,16 +565,16 @@ class CryptoTests(Base):
         source.write_bytes(b"source")
         target = self.root / "encrypted.age"
         def subprocess_run(args, **kwargs):
-            kwargs["stdout"].write(b"invalid-header" * 20)
-            return mock.Mock(returncode=0)
-        with mock.patch.object(b.subprocess, "run", side_effect=subprocess_run), self.assertRaises(b.BackupError):
+            kwargs["output"].write(b"invalid-header" * 20)
+            return b""
+        with mock.patch.object(b, "run_process", side_effect=subprocess_run), self.assertRaises(b.BackupError):
             b.AgeEncryptor(self.cfg).encrypt(source, target)
         self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
 
     def test_age_failure_never_returns_verified(self):
         source = self.root / "source.tar"
         source.write_bytes(b"source")
-        with mock.patch.object(b.subprocess, "run", return_value=mock.Mock(returncode=1)), self.assertRaises(b.BackupError):
+        with mock.patch.object(b, "run_process", side_effect=b.BackupError("failed")), self.assertRaises(b.BackupError):
             b.AgeEncryptor(self.cfg).encrypt(source, self.root / "encrypted.age")
 
 
@@ -592,10 +597,278 @@ class CompatibilityRegressionTests(Base):
         mysql=b.NativeMySQL(self.cfg)
         self.assertNotIn('--no-login-paths',mysql.client('mysql'))
         result=type('R',(),{'returncode':0,'stdout':b''})()
-        with mock.patch.object(b.subprocess,'run',return_value=result) as run:
+        with mock.patch.object(b,'run_process',return_value=b'') as run:
             mysql.execute(['mysql'])
         self.assertEqual(run.call_args.kwargs['env']['MYSQL_TEST_LOGIN_FILE'],os.devnull)
         self.assertNotIn('MYSQL_PWD',run.call_args.kwargs['env'])
+
+
+class CleanupSafetyTests(Base):
+    def journal(self):
+        b.private_dir(self.cfg.work_root)
+        work = Path(tempfile.mkdtemp(prefix="journal-", dir=self.cfg.work_root))
+        journal = b.ScratchJournal.create(self.cfg, work)
+        return journal, work
+
+    def test_journal_private_durable_without_credentials(self):
+        journal, work = self.journal()
+        journal.transition("database", "create_pending")
+        restored = b.ScratchJournal.load(self.cfg)
+        self.assertEqual(restored.document["database_state"], "create_pending")
+        self.assertEqual(stat.S_IMODE(journal.path.stat().st_mode), 0o600)
+        body = journal.path.read_text()
+        self.assertNotIn("password", body)
+        self.assertNotIn("CREATE", body)
+        self.assertNotIn("secret-key", body)
+        self.assertEqual(restored.document["source_database"], self.cfg.source_database)
+        self.assertEqual(restored.document["work_inode"], work.stat().st_ino)
+
+    def test_validated_confirmed_cleanup_exact_names_only(self):
+        journal, work = self.journal()
+        b.write_private(work / "database.sql", DUMP)
+        b.write_private(work / "importer.cnf", b"[client]\npassword=private-value\n")
+        journal.transition("database", "confirmed")
+        journal.transition("user", "confirmed")
+        calls = []
+        class Native(b.NativeMySQL):
+            def query(inner, sql):
+                calls.append(sql)
+                return []
+        service = b.BackupService(self.cfg, Native(self.cfg), self.storage, self.encryption)
+        result = service.recover_cleanup()
+        self.assertEqual(result["scratch_cleanup"], "COMPLETE")
+        self.assertEqual(calls, ["DROP DATABASE `" + journal.document["target_database"] + "`;", "DROP USER '" + journal.document["importer_user"] + "'@'localhost';"])
+        self.assertNotIn(self.cfg.source_database, "\n".join(calls))
+        self.assertFalse(work.exists())
+        self.assertFalse(journal.path.exists())
+        self.assertEqual(self.storage.deleted, [])
+
+    def test_ambiguous_create_never_dropped_but_plaintext_cleaned(self):
+        journal, work = self.journal()
+        b.write_private(work / "database.sql", DUMP)
+        journal.transition("database", "create_pending")
+        journal.transition("user", "confirmed")
+        calls = []
+        class Native(b.NativeMySQL):
+            def query(inner, sql):
+                calls.append(sql)
+                return []
+        service = b.BackupService(self.cfg, Native(self.cfg), self.storage, self.encryption)
+        with self.assertRaises(b.BackupError):
+            service.recover_cleanup()
+        self.assertEqual(calls, ["DROP USER '" + journal.document["importer_user"] + "'@'localhost';"])
+        self.assertFalse(work.exists())
+        loaded = b.ScratchJournal.load(self.cfg)
+        self.assertEqual(loaded.document["database_state"], "create_pending")
+        self.assertEqual(loaded.document["user_state"], "removed")
+        self.assertTrue(loaded.document["work_cleaned"])
+        self.assertEqual(self.storage.deleted, [])
+        with self.assertRaises(b.BackupError):
+            service.run()
+        self.assertEqual(self.storage.uploaded, [])
+
+    def test_timeout_after_create_commit_remains_ambiguous(self):
+        b.private_dir(self.cfg.work_root)
+        existing = set()
+        calls = []
+        class Native(b.NativeMySQL):
+            def preflight(inner):
+                return FakeMySQL().preflight()
+            def dump(inner, database, path, *, coordinates=True):
+                b.write_private(path, DUMP)
+            def query(inner, sql):
+                calls.append(sql)
+                if sql == "SELECT @@GLOBAL.partial_revokes;":
+                    return [["0"]]
+                if sql.startswith("CREATE DATABASE"):
+                    existing.add(sql.split("`")[1])
+                    raise b.BackupError("client timed out after server commit")
+                return []
+        service = b.BackupService(self.cfg, Native(self.cfg), self.storage, self.encryption)
+        with self.assertRaises(b.BackupError) as captured:
+            service.run()
+        journal = b.ScratchJournal.load(self.cfg)
+        self.assertEqual(existing, {journal.document["target_database"]})
+        self.assertEqual(journal.document["database_state"], "create_ambiguous")
+        self.assertIn(journal.document["target_database"], str(captured.exception))
+        self.assertFalse(any(sql.startswith("DROP") for sql in calls))
+        self.assertEqual(list(self.cfg.work_root.iterdir()), [])
+        before = len(calls)
+        with self.assertRaises(b.BackupError):
+            service.run()
+        self.assertEqual(len(calls), before)
+        self.assertEqual(self.storage.uploaded, [])
+
+    def test_ambiguous_drop_not_retried(self):
+        journal, work = self.journal()
+        journal.transition("database", "confirmed")
+        calls = []
+        class Native(b.NativeMySQL):
+            def query(inner, sql):
+                calls.append(sql)
+                raise b.BackupError("DROP response lost")
+        service = b.BackupService(self.cfg, Native(self.cfg), self.storage, self.encryption)
+        with self.assertRaises(b.BackupError):
+            service.recover_cleanup()
+        self.assertEqual(b.ScratchJournal.load(self.cfg).document["database_state"], "drop_ambiguous")
+        with self.assertRaises(b.BackupError):
+            service.recover_cleanup()
+        self.assertEqual(len(calls), 1)
+        self.assertFalse(work.exists())
+
+    def test_journal_tamper_does_not_touch_source_or_foreign_work(self):
+        for kind in ("source", "target", "nonce", "work", "mode"):
+            with self.subTest(kind=kind):
+                temporary = tempfile.TemporaryDirectory(dir=self.root)
+                scope = Path(temporary.name)
+                cfg = dataclasses.replace(self.cfg, state_root=scope / "state", work_root=scope / "work")
+                b.private_dir(cfg.work_root)
+                work = Path(tempfile.mkdtemp(prefix="owned-", dir=cfg.work_root))
+                journal = b.ScratchJournal.create(cfg, work)
+                outside = scope / "foreign"
+                outside.mkdir(mode=0o700)
+                b.write_private(outside / "important", b"keep")
+                value = journal.document.copy()
+                if kind == "source": value["source_database"] = "other"
+                if kind == "target": value["target_database"] = cfg.source_database
+                if kind == "nonce": value["nonce"] = "../invalid"
+                if kind == "work": value["work_dir"] = str(outside)
+                b.atomic_private_json(journal.path, value)
+                if kind == "mode": os.chmod(journal.path, 0o644)
+                with self.assertRaises(b.BackupError):
+                    b.ScratchJournal.load(cfg)
+                self.assertTrue((outside / "important").exists())
+                self.assertTrue(work.exists())
+                temporary.cleanup()
+
+    def test_work_inode_and_symlink_change_fail_closed(self):
+        journal, work = self.journal()
+        work.rmdir()
+        foreign = self.root / "foreign"
+        foreign.mkdir(mode=0o700)
+        b.write_private(foreign / "database.sql", b"protect")
+        work.symlink_to(foreign)
+        with self.assertRaises(b.BackupError):
+            b.ScratchJournal.load(self.cfg)
+        self.assertEqual((foreign / "database.sql").read_bytes(), b"protect")
+
+    def test_unknown_work_member_prevents_directory_cleanup(self):
+        journal, work = self.journal()
+        b.write_private(work / "important.txt", b"preserve")
+        with self.assertRaises(b.BackupError):
+            journal.cleanup_work()
+        self.assertTrue((work / "important.txt").exists())
+
+    def test_same_source_pending_status_reports_exact_names(self):
+        journal, work = self.journal()
+        journal.transition("database", "create_ambiguous")
+        result = self.service.status()
+        self.assertEqual(result["pending_cleanup"]["target_database"], journal.document["target_database"])
+        self.assertEqual(result["pending_cleanup"]["database_state"], "create_ambiguous")
+
+    def test_sigterm_child_reaped_before_confirmed_cleanup(self):
+        captured = []
+        drop_reaped = []
+        original_popen = b.subprocess.Popen
+        def popen(*args, **kwargs):
+            child = original_popen(*args, **kwargs)
+            captured.append(child)
+            # Deliberately interrupt before Popen returns to the caller. The
+            # deferred signal must leave a handle available for stop/wait.
+            os.kill(os.getpid(), b.signal.SIGTERM)
+            return child
+        class Native(b.NativeMySQL):
+            def preflight(inner): return FakeMySQL().preflight()
+            def dump(inner, database, path, *, coordinates=True): b.write_private(path, DUMP)
+            def query(inner, sql):
+                if sql == "SELECT @@GLOBAL.partial_revokes;": return [["0"]]
+                if sql.startswith("DROP"):
+                    drop_reaped.append(bool(captured) and captured[0].poll() is not None)
+                return []
+            def execute(inner, args, **kwargs):
+                return b.run_process([sys.executable, "-c", "import time; time.sleep(30)"], timeout=10)
+        service = b.BackupService(self.cfg, Native(self.cfg), self.storage, self.encryption)
+        with mock.patch.object(b.subprocess, "Popen", side_effect=popen), self.assertRaises(b.BackupCancelled):
+            service.run()
+        self.assertEqual(drop_reaped, [True, True])
+        self.assertIsNotNone(captured[0].returncode)
+        self.assertEqual(list(self.cfg.work_root.iterdir()), [])
+        self.assertFalse((self.cfg.state_root / b.ScratchJournal.FILENAME).exists())
+        self.assertEqual(self.storage.objects, {})
+
+    def test_real_child_timeout_reaped(self):
+        captured = []
+        original_popen = b.subprocess.Popen
+        def popen(*args, **kwargs):
+            child = original_popen(*args, **kwargs)
+            captured.append(child)
+            return child
+        with mock.patch.object(b.subprocess, "Popen", side_effect=popen), self.assertRaises(b.BackupError):
+            b.run_process([sys.executable, "-c", "import time; time.sleep(30)"], timeout=0.02)
+        self.assertEqual(len(captured), 1)
+        self.assertIsNotNone(captured[0].poll())
+        self.assertIsNotNone(captured[0].returncode)
+
+
+class GrantScopeTests(Base):
+    native = NativeTests.native
+    def test_grant_names_follow_both_partial_revokes_modes(self):
+        for setting in ("0", "1"):
+            native, calls = self.native(partial_revokes=setting)
+            dump = self.dump()
+            native.verify_restore(dump, b.inspect_dump(dump), self.native_work, {"character_set": "utf8mb4", "collation": "utf8mb4_0900_ai_ci"})
+            create = next(call for call in calls if isinstance(call, str) and call.startswith("CREATE DATABASE"))
+            grant = next(call for call in calls if isinstance(call, str) and call.startswith("GRANT"))
+            target = create.split("`")[1]
+            expected = target.replace("_", "\\_") if setting == "0" else target
+            self.assertIn("ON `" + expected + "`.*", grant)
+            self.assertNotIn("\\_", create)
+            drop = next(call for call in calls if isinstance(call, str) and call.startswith("DROP DATABASE"))
+            self.assertEqual(drop, "DROP DATABASE `" + target + "`;")
+
+    def test_unknown_partial_revokes_fails_before_create(self):
+        native, calls = self.native(partial_revokes="unknown")
+        dump = self.dump()
+        with self.assertRaises(b.BackupError):
+            native.verify_restore(dump, b.inspect_dump(dump), self.native_work, {"character_set": "utf8mb4", "collation": "utf8mb4_0900_ai_ci"})
+        self.assertFalse(any(isinstance(call, str) and call.startswith("CREATE") for call in calls))
+
+
+class StorageCredentialIsolationTests(Base):
+    def make_storage(self, image_result):
+        storage = b.R2Storage.__new__(b.R2Storage)
+        storage.bucket = self.cfg.r2_bucket
+        storage.image_bucket = self.cfg.image_bucket
+        def head_bucket(*, Bucket):
+            if Bucket == storage.bucket:
+                return {}
+            if isinstance(image_result, Exception):
+                raise image_result
+            return image_result
+        storage.client = mock.Mock()
+        storage.client.head_bucket.side_effect = head_bucket
+        return storage
+
+    def error(self, status, code):
+        error = Exception("raw secret should not be exposed")
+        error.response = {"ResponseMetadata": {"HTTPStatusCode": status}, "Error": {"Code": code}}
+        return error
+
+    def test_bucket_only_credential_passes_forbidden_image(self):
+        storage = self.make_storage(self.error(403, "AccessDenied"))
+        storage.preflight()
+        self.assertEqual(storage.client.head_bucket.call_args_list, [mock.call(Bucket=self.cfg.r2_bucket), mock.call(Bucket=self.cfg.image_bucket)])
+
+    def test_all_buckets_credential_fails(self):
+        with self.assertRaises(b.BackupError) as captured:
+            self.make_storage({}).preflight()
+        self.assertNotIn("secret", str(captured.exception))
+
+    def test_missing_bucket_network_and_unexpected403_fail_closed(self):
+        for error in (self.error(404, "NoSuchBucket"), Exception("network secret"), self.error(403, "RateLimited")):
+            with self.subTest(error=type(error).__name__), self.assertRaises(b.BackupError) as captured:
+                self.make_storage(error).preflight()
+            self.assertNotIn("secret", str(captured.exception))
 
 
 if __name__ == "__main__":
