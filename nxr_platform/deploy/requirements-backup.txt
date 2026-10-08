@@ -1,0 +1,2 @@
+# S3-compatible transport only; cryptography uses the installed official age CLI.
+boto3>=1.35,<2
