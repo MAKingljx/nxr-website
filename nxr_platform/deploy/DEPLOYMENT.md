@@ -251,3 +251,7 @@ disable and stop both `nxr-java-stage@blue` and `nxr-java-stage@green`, stop
 `nxr-java-redis`, remove only the Java Nginx include, run `nginx -t`, and reload
 Nginx. Never remove the MySQL database during an ordinary rollback; database
 deletion requires a separate explicit authorization.
+
+### Card-business account administration
+
+Apply `29_nxr_user_session_version.sql` before starting a release that checks credential versions. The empty table preserves existing sessions; password resets and status changes through card-operator management advance only the selected operator's version in the same transaction. Apply `30_nxr_card_operator_management.sql` after the matching admin assets are available. It requires the existing active, unique `nxr_card_manager` role and the current card directory, rejects conflicting menu/role identities, and adds only the bounded `nxr_card_super_manager` role and card-personnel permissions. Provision the initial business manager separately with a private password. This role can create, enable, disable and reset pure card operators; it cannot assign arbitrary roles or manage platform, agent, customer or finance accounts. Verify a full recoverable backup before production migration. Older Java releases ignore the additive table and scoped role, so application rollback does not require restoring existing business records.

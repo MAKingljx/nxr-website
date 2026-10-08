@@ -14,6 +14,8 @@ import com.ruoyi.common.constant.UserConstants;
 import com.ruoyi.common.core.domain.entity.SysUser;
 import com.ruoyi.system.service.AuthorizationCacheService;
 import com.ruoyi.system.service.ISysUserService;
+import com.ruoyi.system.service.UserSessionVersionService;
+import com.ruoyi.common.exception.ServiceException;
 import com.ruoyi.common.core.domain.model.LoginUser;
 import com.ruoyi.common.core.redis.RedisCache;
 import com.ruoyi.common.utils.ServletUtils;
@@ -71,6 +73,9 @@ public class TokenService
     @Autowired
     private SysPermissionService permissionService;
 
+    @Autowired
+    private UserSessionVersionService sessionVersions;
+
     /**
      * 获取用户身份信息
      * 
@@ -94,6 +99,11 @@ public class TokenService
                     return null;
                 }
                 if (user.getExpireTime() == null || user.getExpireTime() <= System.currentTimeMillis())
+                {
+                    delLoginUser(uuid);
+                    return null;
+                }
+                if (!currentCredentialVersion(user))
                 {
                     delLoginUser(uuid);
                     return null;
@@ -122,6 +132,12 @@ public class TokenService
                     }
                     int remainingSeconds = (int) Math.min(Integer.MAX_VALUE, (remainingMillis + 999) / 1000);
                     redisCache.setCacheObject(userKey, user, remainingSeconds, TimeUnit.SECONDS);
+                }
+                // A reset may commit while an authorization snapshot is being reloaded.
+                if (!currentCredentialVersion(user))
+                {
+                    delLoginUser(uuid);
+                    return null;
                 }
                 return user;
             }
@@ -169,6 +185,18 @@ public class TokenService
 
     public String createToken(LoginUser loginUser, boolean rememberMe)
     {
+        // Legacy callers cannot promote an old principal to a newer credential epoch.
+        return createToken(loginUser, rememberMe, credentialVersion(loginUser));
+    }
+
+    /** The version must have been captured before credentials were authenticated. */
+    public String createToken(LoginUser loginUser, boolean rememberMe, long authenticatedVersion)
+    {
+        if (authenticatedVersion < 0 || authenticatedVersion != sessionVersions.currentVersion(loginUser.getUserId()))
+        {
+            throw expiredSession();
+        }
+        loginUser.setCredentialVersion(authenticatedVersion);
         String token = IdUtils.fastUUID();
         loginUser.setToken(token);
         loginUser.setRememberMe(rememberMe);
@@ -205,12 +233,40 @@ public class TokenService
      */
     public void refreshToken(LoginUser loginUser)
     {
+        requireCurrentCredentialVersion(loginUser);
         int lifetimeMinutes = loginUser.isRememberMe() ? rememberExpireTime : expireTime;
         loginUser.setLoginTime(System.currentTimeMillis());
         loginUser.setExpireTime(loginUser.getLoginTime() + lifetimeMinutes * MILLIS_MINUTE);
         // 根据uuid将loginUser缓存
         String userKey = getTokenKey(loginUser.getToken());
         redisCache.setCacheObject(userKey, loginUser, lifetimeMinutes, TimeUnit.MINUTES);
+        // Guard a reset committing between the preflight read and this Redis write.
+        requireCurrentCredentialVersion(loginUser);
+    }
+
+    private long credentialVersion(LoginUser loginUser)
+    {
+        return loginUser.getCredentialVersion() == null ? 0L : loginUser.getCredentialVersion();
+    }
+
+    private boolean currentCredentialVersion(LoginUser loginUser)
+    {
+        long version = credentialVersion(loginUser);
+        return version >= 0 && version == sessionVersions.currentVersion(loginUser.getUserId());
+    }
+
+    private void requireCurrentCredentialVersion(LoginUser loginUser)
+    {
+        if (!currentCredentialVersion(loginUser))
+        {
+            delLoginUser(loginUser.getToken());
+            throw expiredSession();
+        }
+    }
+
+    private ServiceException expiredSession()
+    {
+        return new ServiceException("Session expired. Please sign in again.", 401);
     }
 
     /**

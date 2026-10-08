@@ -42,6 +42,7 @@ scripts=(
   "$PLATFORM_ROOT/nxr-sql/ruoyi/13_nxr_order_fulfillment.sql"
   "$PLATFORM_ROOT/nxr-sql/ruoyi/14_nxr_two_module_navigation.sql"
   "$PLATFORM_ROOT/nxr-sql/ruoyi/15_nxr_python_feature_parity.sql"
+  "$PLATFORM_ROOT/nxr-sql/ruoyi/29_nxr_user_session_version.sql"
 )
 
 for script in "${scripts[@]}"; do

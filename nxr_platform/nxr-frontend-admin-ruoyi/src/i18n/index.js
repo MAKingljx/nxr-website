@@ -6,8 +6,9 @@ import workspaceZhCN from './partner-workspace-zh-CN'
 import partnerZhCN from './partner-management-zh-CN'
 import overviewZhCN from './workspace-overview-zh-CN'
 import enterpriseWalletZhCN from './enterprise-wallet-zh-CN'
+import cardOperatorsZhCN from './card-operators-zh-CN'
 
-const literalZhCN = { ...baseLiteralZhCN, ...workspaceZhCN, ...partnerZhCN, ...overviewZhCN, ...enterpriseWalletZhCN }
+const literalZhCN = { ...baseLiteralZhCN, ...workspaceZhCN, ...partnerZhCN, ...overviewZhCN, ...enterpriseWalletZhCN, ...cardOperatorsZhCN }
 export const allowLocaleSelection = ['development', 'java-stage'].includes(import.meta.env.VITE_APP_ENV)
 
 export const supportedLocales = [

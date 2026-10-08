@@ -5,6 +5,8 @@ const ROLE_LABELS = {
   '普通角色': 'General Role',
   'NXR管理员': 'NXR Administrator',
   'NXR审核员': 'NXR Reviewer',
+  'NXR卡片管理员': 'NXR Card Operator',
+  '超级卡片管理员': 'Super Card Administrator',
   '子代理操作员': 'Partner Operator'
 }
 
@@ -59,6 +61,10 @@ const MENU_LABELS = {
   '待审核': 'Pending Review',
   '已批准': 'Approved',
   '卡图上传': 'Card Image Upload',
+  '卡片人员管理': 'Card Operators',
+  '卡片人员新增': 'Add Card Operators',
+  '卡片人员状态': 'Change Card Operator Status',
+  '卡片人员密码重置': 'Reset Card Operator Passwords',
   '数据导出': 'Data Export',
   'Excel 导出': 'Excel Export',
   '品牌设置': 'Brand Settings',

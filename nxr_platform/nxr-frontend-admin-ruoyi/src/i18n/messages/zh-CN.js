@@ -94,6 +94,7 @@ export default {
   nav: {
     nxrAdmin: 'NXR 后台',
     cardManagement: '卡片管理',
+    cardOperators: '卡片人员管理',
     newCard: '新建卡牌',
     newEntry: '新建录入',
     cardEntries: '录入管理',

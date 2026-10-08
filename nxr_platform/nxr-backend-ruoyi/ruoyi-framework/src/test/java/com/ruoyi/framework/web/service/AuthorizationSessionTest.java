@@ -1,6 +1,7 @@
 package com.ruoyi.framework.web.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.io.InputStream;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
@@ -19,6 +20,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.mock.web.MockHttpServletRequest;
@@ -35,6 +38,8 @@ import com.ruoyi.common.core.redis.RedisCache;
 import com.ruoyi.system.domain.SysUserRole;
 import com.ruoyi.system.mapper.*;
 import com.ruoyi.system.service.AuthorizationCacheService;
+import com.ruoyi.system.service.UserSessionVersionService;
+import com.ruoyi.common.exception.ServiceException;
 import com.ruoyi.system.service.impl.SysMenuServiceImpl;
 import com.ruoyi.system.service.impl.SysRoleServiceImpl;
 import com.ruoyi.system.service.impl.SysUserServiceImpl;
@@ -46,6 +51,8 @@ public class AuthorizationSessionTest
     private static final String PERMISSION = "nxr:brand:list";
     private static final String SECRET = "session-test-secret";
     private JdbcTemplate jdbc;
+    private TransactionTemplate transaction;
+    private UserSessionVersionService versions;
     private SqlSession session;
     private MemoryRedis redis;
     private AuthorizationCacheService authorizationCache;
@@ -63,7 +70,10 @@ public class AuthorizationSessionTest
         JdbcDataSource ds = new JdbcDataSource();
         ds.setURL("jdbc:h2:mem:auth_" + UUID.randomUUID() + ";MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE");
         jdbc = new JdbcTemplate(ds);
+        transaction = new TransactionTemplate(new DataSourceTransactionManager(ds));
+        versions = new UserSessionVersionService(jdbc);
         jdbc.execute("CREATE TABLE sys_user(user_id BIGINT PRIMARY KEY,dept_id BIGINT,user_name VARCHAR(30),nick_name VARCHAR(30),email VARCHAR(50),avatar VARCHAR(100),phonenumber VARCHAR(11),password VARCHAR(100),sex VARCHAR(1),status VARCHAR(1),del_flag VARCHAR(1),login_ip VARCHAR(50),login_date TIMESTAMP,pwd_update_date TIMESTAMP,create_by VARCHAR(30),create_time TIMESTAMP,update_by VARCHAR(30),update_time TIMESTAMP,remark VARCHAR(200))");
+        jdbc.execute("CREATE TABLE sys_user_session_version(user_id BIGINT PRIMARY KEY,version BIGINT NOT NULL DEFAULT 0,updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,FOREIGN KEY(user_id) REFERENCES sys_user(user_id))");
         jdbc.execute("CREATE TABLE sys_dept(dept_id BIGINT PRIMARY KEY,parent_id BIGINT,ancestors VARCHAR(100),dept_name VARCHAR(30),order_num INT,leader VARCHAR(30),status VARCHAR(1),del_flag VARCHAR(1))");
         jdbc.execute("CREATE TABLE sys_role(role_id BIGINT PRIMARY KEY,role_name VARCHAR(30),role_key VARCHAR(100),role_sort INT,data_scope VARCHAR(1),status VARCHAR(1),del_flag VARCHAR(1),menu_check_strictly BOOLEAN,dept_check_strictly BOOLEAN,create_by VARCHAR(30),create_time TIMESTAMP,update_by VARCHAR(30),update_time TIMESTAMP,remark VARCHAR(200))");
         jdbc.execute("CREATE TABLE sys_menu(menu_id BIGINT PRIMARY KEY,menu_name VARCHAR(30),parent_id BIGINT,order_num INT,path VARCHAR(100),component VARCHAR(100),`query` VARCHAR(100),route_name VARCHAR(100),is_frame VARCHAR(1),is_cache VARCHAR(1),menu_type VARCHAR(1),visible VARCHAR(1),status VARCHAR(1),perms VARCHAR(100),icon VARCHAR(30),create_time TIMESTAMP,update_time TIMESTAMP,create_by VARCHAR(30),update_by VARCHAR(30),remark VARCHAR(200))");
@@ -114,6 +124,7 @@ public class AuthorizationSessionTest
         ReflectionTestUtils.setField(permissions, "menuService", menus);
         tokens = new TokenService();
         ReflectionTestUtils.setField(tokens, "redisCache", redis);
+        ReflectionTestUtils.setField(tokens, "sessionVersions", versions);
         ReflectionTestUtils.setField(tokens, "authorizationCache", authorizationCache);
         ReflectionTestUtils.setField(tokens, "userService", users);
         ReflectionTestUtils.setField(tokens, "permissionService", permissions);
@@ -340,12 +351,138 @@ public class AuthorizationSessionTest
         assertThat(tokens.getLoginUser(request)).isNull();
     }
 
+    @Test
+    void legacyVersionZeroTokensStayValidUntilTheirOwnCredentialEpochChanges()
+    {
+        assertThat(login.getCredentialVersion()).isNull();
+        assertThat(versions.currentVersion(42L)).isZero();
+        assertThat(tokens.getLoginUser(request)).isSameAs(login);
+        transaction.executeWithoutResult(status -> versions.increment(42));
+        assertThat(versions.currentVersion(42L)).isEqualTo(1);
+        assertThat(tokens.getLoginUser(request)).isNull();
+        assertThat(redis.values).doesNotContainKey(CacheConstants.LOGIN_TOKEN_KEY + login.getToken());
+    }
+
+    @Test
+    void normalAndRememberedOldTokensCannotSurviveDisableThenImmediateReenable()
+    {
+        for (boolean remember : new boolean[]{false, true})
+        {
+            jdbc.update("DELETE FROM sys_user_session_version WHERE user_id=42");
+            login.setCredentialVersion(0L);
+            login.setRememberMe(remember);
+            login.setExpireTime(System.currentTimeMillis() + TimeUnit.DAYS.toMillis(29));
+            redis.values.put(CacheConstants.LOGIN_TOKEN_KEY + login.getToken(), login);
+            transaction.executeWithoutResult(status -> {
+                jdbc.update("UPDATE sys_user SET status='1' WHERE user_id=42");
+                versions.increment(42);
+                authorizationCache.invalidate();
+            });
+            transaction.executeWithoutResult(status -> {
+                jdbc.update("UPDATE sys_user SET status='0' WHERE user_id=42");
+                versions.increment(42);
+                authorizationCache.invalidate();
+            });
+            assertThat(tokens.getLoginUser(request)).isNull();
+        }
+    }
+
+    @Test
+    void revocationSurvivesRedisEvictionAndReinsertedStaleSession()
+    {
+        tokens.getLoginUser(request);
+        transaction.executeWithoutResult(status -> versions.increment(42));
+        redis.values.clear();
+        redis.values.put(CacheConstants.LOGIN_TOKEN_KEY + login.getToken(), login);
+        assertThat(tokens.getLoginUser(request)).isNull();
+        assertThat(versions.currentVersion(42L)).isEqualTo(1);
+    }
+
+    @Test
+    void inFlightRefreshCannotWriteOrRenewARevokedCredentialEpoch()
+    {
+        tokens.getLoginUser(request);
+        long expiry = login.getExpireTime();
+        int writes = redis.sessionWrites;
+        transaction.executeWithoutResult(status -> versions.increment(42));
+        assertThatThrownBy(() -> tokens.refreshToken(login)).isInstanceOf(ServiceException.class)
+            .satisfies(error -> assertThat(((ServiceException) error).getCode()).isEqualTo(401));
+        assertThat(login.getExpireTime()).isEqualTo(expiry);
+        assertThat(redis.sessionWrites).isEqualTo(writes);
+        assertThat(redis.values).doesNotContainKey(CacheConstants.LOGIN_TOKEN_KEY + login.getToken());
+    }
+
+    @Test
+    void resetCommittingDuringRedisRefreshWriteCannotResurrectTheToken()
+    {
+        tokens.getLoginUser(request);
+        redis.nextSessionWrite = () -> transaction.executeWithoutResult(status -> versions.increment(42));
+        assertThatThrownBy(() -> tokens.refreshToken(login)).isInstanceOf(ServiceException.class);
+        assertThat(redis.values).doesNotContainKey(CacheConstants.LOGIN_TOKEN_KEY + login.getToken());
+        assertThat(tokens.getLoginUser(request)).isNull();
+    }
+
+    @Test
+    void tokenCreationCannotAdoptANewerEpochForAnAlreadyAuthenticatedPrincipal()
+    {
+        transaction.executeWithoutResult(status -> versions.increment(42));
+        int writes = redis.sessionWrites;
+        assertThatThrownBy(() -> tokens.createToken(login, true, 0L)).isInstanceOf(ServiceException.class);
+        assertThatThrownBy(() -> tokens.createToken(login, false)).isInstanceOf(ServiceException.class);
+        assertThat(redis.sessionWrites).isEqualTo(writes);
+        tokens.createToken(login, true, 1L);
+        assertThat(login.getCredentialVersion()).isEqualTo(1);
+        assertThat(redis.lastTimeout).isEqualTo(43200);
+    }
+
+    @Test
+    void rolledBackResetLeavesOldCredentialEpochAndSessionValid()
+    {
+        transaction.executeWithoutResult(status -> {
+            versions.increment(42);
+            authorizationCache.invalidate();
+            status.setRollbackOnly();
+        });
+        assertThat(versions.currentVersion(42L)).isZero();
+        assertThat(tokens.getLoginUser(request)).isSameAs(login);
+    }
+
+    @Test
+    void resettingAnotherUserDoesNotChangeThisUsersTokenOrRemainingLifetime()
+    {
+        jdbc.update("INSERT INTO sys_user(user_id,user_name,status,del_flag) VALUES(99,'other-user','0','0')");
+        tokens.getLoginUser(request);
+        long expiry = login.getExpireTime();
+        transaction.executeWithoutResult(status -> {
+            versions.increment(99);
+            authorizationCache.invalidate();
+        });
+        assertThat(tokens.getLoginUser(request)).isSameAs(login);
+        assertThat(login.getExpireTime()).isEqualTo(expiry);
+        assertThat(login.getCredentialVersion()).isNull();
+        assertThat(versions.currentVersion(42L)).isZero();
+    }
+
+    @Test
+    void redisSerializationPreservesCredentialVersionAndLegacyDocumentsHaveVersionZero()
+    {
+        login.setCredentialVersion(3L);
+        String document = com.alibaba.fastjson2.JSON.toJSONString(login);
+        LoginUser restored = com.alibaba.fastjson2.JSON.parseObject(document, LoginUser.class);
+        assertThat(restored.getCredentialVersion()).isEqualTo(3L);
+        assertThat(restored.getUserId()).isEqualTo(42L);
+        assertThat(restored.getToken()).isEqualTo(login.getToken());
+        LoginUser legacy = com.alibaba.fastjson2.JSON.parseObject("{\"userId\":42,\"token\":\"legacy\"}", LoginUser.class);
+        assertThat(legacy.getCredentialVersion()).isNull();
+    }
+
     static class MemoryRedis extends RedisCache
     {
         final Map<String, Object> values = new HashMap<>();
         int lastTimeout;
         int sessionWrites;
         TimeUnit lastTimeoutUnit;
+        Runnable nextSessionWrite;
         @Override @SuppressWarnings("unchecked")
         public <T> T getCacheObject(String key) { return (T) values.get(key); }
         @Override
@@ -357,6 +494,7 @@ public class AuthorizationSessionTest
             lastTimeout = timeout;
             lastTimeoutUnit = unit;
             sessionWrites++;
+            if (nextSessionWrite != null) { Runnable action = nextSessionWrite; nextSessionWrite = null; action.run(); }
         }
         @Override
         public boolean deleteObject(String key) { return values.remove(key) != null; }

@@ -27,6 +27,8 @@ import com.ruoyi.framework.manager.factory.AsyncFactory;
 import com.ruoyi.framework.security.context.AuthenticationContextHolder;
 import com.ruoyi.system.service.ISysConfigService;
 import com.ruoyi.system.service.ISysUserService;
+import com.ruoyi.system.service.UserSessionVersionService;
+import com.ruoyi.common.core.domain.entity.SysUser;
 
 /**
  * 登录校验方法
@@ -47,6 +49,9 @@ public class SysLoginService
     
     @Autowired
     private ISysUserService userService;
+
+    @Autowired
+    private UserSessionVersionService sessionVersions;
 
     @Autowired
     private ISysConfigService configService;
@@ -74,6 +79,10 @@ public class SysLoginService
         validateCaptcha(username, code, uuid);
         // 登录前置校验
         loginPreCheck(username, password);
+        // Bind authentication to the epoch that existed before password verification.
+        SysUser pendingUser = userService.selectUserByUserName(username);
+        Long authenticatedUserId = pendingUser == null ? null : pendingUser.getUserId();
+        long authenticatedVersion = authenticatedUserId == null ? 0L : sessionVersions.currentVersion(authenticatedUserId);
         // 用户验证
         Authentication authentication = null;
         try
@@ -100,11 +109,17 @@ public class SysLoginService
         {
             AuthenticationContextHolder.clearContext();
         }
-        AsyncManager.me().execute(AsyncFactory.recordLogininfor(username, Constants.LOGIN_SUCCESS, MessageUtils.message("user.login.success")));
         LoginUser loginUser = (LoginUser) authentication.getPrincipal();
+        if (authenticatedUserId == null || !authenticatedUserId.equals(loginUser.getUserId())
+                || authenticatedVersion != sessionVersions.currentVersion(authenticatedUserId))
+        {
+            throw new ServiceException("Session expired. Please sign in again.", 401);
+        }
         recordLoginInfo(loginUser.getUserId());
-        // 生成token
-        return tokenService.createToken(loginUser, rememberMe);
+        // Token creation rechecks the captured epoch; it never adopts a post-reset epoch.
+        String token = tokenService.createToken(loginUser, rememberMe, authenticatedVersion);
+        AsyncManager.me().execute(AsyncFactory.recordLogininfor(username, Constants.LOGIN_SUCCESS, MessageUtils.message("user.login.success")));
+        return token;
     }
 
     /**

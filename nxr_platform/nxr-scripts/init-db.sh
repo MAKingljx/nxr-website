@@ -31,6 +31,7 @@ $MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/12_nxr_menu_domain_separat
 $MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/14_nxr_two_module_navigation.sql"
 $MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/15_nxr_python_feature_parity.sql"
 $MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/16_nxr_customer_wallet.sql"
+$MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/29_nxr_user_session_version.sql"
 $MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/17_nxr_payment_channels.sql"
 $MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/18_nxr_customer_notifications.sql"
 $MYSQL_ROOT nxr_ruoyi < "$PLATFORM_ROOT/nxr-sql/ruoyi/19_nxr_order_admission.sql"

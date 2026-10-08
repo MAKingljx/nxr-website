@@ -8,6 +8,7 @@ const MENU_TITLE_KEYS = new Map([
   ['NXR管理', 'nav.nxrAdmin'],
   ['卡片管理', 'nav.cardManagement'],
   ['卡牌管理', 'nav.cardManagement'],
+  ['卡片人员管理', 'nav.cardOperators'],
   ['新建卡牌', 'nav.newCard'],
   ['新建录入', 'nav.newEntry'],
   ['卡牌列表', 'nav.cardEntries'],

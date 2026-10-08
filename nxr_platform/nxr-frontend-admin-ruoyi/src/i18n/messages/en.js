@@ -94,6 +94,7 @@ export default {
   nav: {
     nxrAdmin: 'NXR Admin',
     cardManagement: 'Card Management',
+    cardOperators: 'Card Operators',
     newCard: 'New Card',
     newEntry: 'New Entry',
     cardEntries: 'Card Entries',

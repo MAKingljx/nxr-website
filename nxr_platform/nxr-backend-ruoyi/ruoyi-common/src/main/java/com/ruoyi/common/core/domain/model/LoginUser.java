@@ -74,6 +74,9 @@ public class LoginUser implements UserDetails
     /** Null on legacy sessions, forcing an authoritative reload on their next request. */
     private String authorizationRevision;
 
+    /** DB-backed credential epoch; missing on pre-upgrade sessions means version zero. */
+    private Long credentialVersion;
+
     /**
      * 用户信息
      */
@@ -274,6 +277,16 @@ public class LoginUser implements UserDetails
     public void setAuthorizationRevision(String authorizationRevision)
     {
         this.authorizationRevision = authorizationRevision;
+    }
+
+    public Long getCredentialVersion()
+    {
+        return credentialVersion;
+    }
+
+    public void setCredentialVersion(Long credentialVersion)
+    {
+        this.credentialVersion = credentialVersion;
     }
 
     public SysUser getUser()
