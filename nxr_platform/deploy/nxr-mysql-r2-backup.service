@@ -1,0 +1,19 @@
+[Unit]
+Description=NXR encrypted MySQL backup to private R2
+Wants=network-online.target
+After=network-online.target mysql.service nxr-python-java-sync.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+EnvironmentFile=/etc/nxr-java/mysql-backup.env
+ExecStartPre=/usr/bin/python3 /opt/nxr-mysql-backup/current/wait_for_python_java_sync.py --deadline-seconds 7200
+ExecStart=/usr/bin/python3 /opt/nxr-mysql-backup/current/mysql_r2_backup.py --env-file /etc/nxr-java/mysql-backup.env run
+TimeoutStartSec=4h
+TimeoutStopSec=180s
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+NoNewPrivileges=true
