@@ -545,7 +545,7 @@ class NativeTests(Base):
         args = native.client("mysql")
         self.assertNotIn("private-password", repr(args))
         self.assertIn("--protocol=SOCKET", args)
-        self.assertIn("--no-login-paths", args)
+        self.assertNotIn("--no-login-paths", args)
         self.assertEqual(args[1], "--defaults-file=" + str(credentials))
 
 
@@ -571,6 +571,31 @@ class CryptoTests(Base):
         source.write_bytes(b"source")
         with mock.patch.object(b.subprocess, "run", return_value=mock.Mock(returncode=1)), self.assertRaises(b.BackupError):
             b.AgeEncryptor(self.cfg).encrypt(source, self.root / "encrypted.age")
+
+
+
+class CompatibilityRegressionTests(Base):
+    def test_snapshot_timestamp_is_captured_once_before_long_backup(self):
+        real_datetime=b.dt.datetime
+        class AdvancingClock(real_datetime):
+            calls=0
+            @classmethod
+            def now(cls,tz=None):
+                cls.calls+=1
+                return real_datetime(2026,10,8,1,0,tzinfo=b.dt.timezone.utc)+b.dt.timedelta(seconds=(cls.calls-1)*60)
+        with mock.patch.object(b.dt,'datetime',AdvancingClock):
+            result=self.service.run()
+        self.assertEqual(result['backup_id'][:16],'20261008T010000Z')
+        self.assertEqual(result['created_at'],'2026-10-08T01:00:00+00:00')
+        self.assertEqual(AdvancingClock.calls,1)
+    def test_mysql8_client_does_not_use_mysql9_only_login_flag(self):
+        mysql=b.NativeMySQL(self.cfg)
+        self.assertNotIn('--no-login-paths',mysql.client('mysql'))
+        result=type('R',(),{'returncode':0,'stdout':b''})()
+        with mock.patch.object(b.subprocess,'run',return_value=result) as run:
+            mysql.execute(['mysql'])
+        self.assertEqual(run.call_args.kwargs['env']['MYSQL_TEST_LOGIN_FILE'],os.devnull)
+        self.assertNotIn('MYSQL_PWD',run.call_args.kwargs['env'])
 
 
 if __name__ == "__main__":

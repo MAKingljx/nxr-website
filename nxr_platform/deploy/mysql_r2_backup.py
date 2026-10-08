@@ -206,10 +206,13 @@ class NativeMySQL:
     def client(self, binary: str, defaults: Path | None = None, user: str | None = None) -> list[str]:
         defaults = defaults or self.cfg.mysql_defaults_file
         settings = ["--defaults-file=" + str(defaults)] if defaults else ["--no-defaults"]
-        return [binary, *settings, "--no-login-paths", "--protocol=SOCKET", "--socket=" + self.cfg.mysql_socket, "--user=" + (user or self.cfg.mysql_user)]
+        return [binary, *settings, "--protocol=SOCKET", "--socket=" + self.cfg.mysql_socket, "--user=" + (user or self.cfg.mysql_user)]
 
     def execute(self, args: list[str], *, input_data: bytes | None = None, output: Any = subprocess.PIPE, stdin: Any = None) -> bytes:
         env = {key: value for key, value in os.environ.items() if key not in {"MYSQL_PWD", "MYSQL_TEST_LOGIN_FILE"}}
+        # MySQL8 lacks --no-login-paths. Pin its documented login-file override
+        # to the empty OS device so a personal .mylogin.cnf cannot override the importer.
+        env["MYSQL_TEST_LOGIN_FILE"] = os.devnull
         try:
             result = subprocess.run(args, input=input_data, stdin=stdin, stdout=output, stderr=subprocess.DEVNULL, env=env, timeout=self.cfg.process_timeout, check=False)
         except (OSError, subprocess.TimeoutExpired):
@@ -579,14 +582,15 @@ class BackupService:
         with self.lock():
             preflight = self.preflight()
             root = private_dir(self.cfg.work_root)
-            backup_id = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ-") + secrets.token_hex(8)
+            created_at = dt.datetime.now(dt.timezone.utc)
+            backup_id = created_at.strftime("%Y%m%dT%H%M%SZ-") + secrets.token_hex(8)
             with tempfile.TemporaryDirectory(prefix=backup_id + "-", dir=root) as temporary:
                 work = Path(temporary)
                 sql = work / "database.sql"
                 self.mysql.dump(self.cfg.source_database, sql)
                 snapshot = inspect_dump(sql)
                 restored = self.mysql.verify_restore(sql, snapshot, work, preflight["source"])
-                metadata = {"tool": TOOL, "version": VERSION, "backup_id": backup_id, "source_database": self.cfg.source_database, "created_at": dt.datetime.now(dt.timezone.utc).isoformat(), "dump_sha256": sha_file(sql), "native_options": ["single-transaction", "source-data=2", "set-gtid-purged=OFF", "no-tablespaces", "hex-blob", "order-by-primary", "skip-extended-insert"], "source": preflight["source"], "snapshot": snapshot, "isolated_restore": restored}
+                metadata = {"tool": TOOL, "version": VERSION, "backup_id": backup_id, "source_database": self.cfg.source_database, "created_at": created_at.isoformat(), "dump_sha256": sha_file(sql), "native_options": ["single-transaction", "source-data=2", "set-gtid-purged=OFF", "no-tablespaces", "hex-blob", "order-by-primary", "skip-extended-insert"], "source": preflight["source"], "snapshot": snapshot, "isolated_restore": restored}
                 package = create_package(sql, metadata, work)
                 encrypted = work / "backup.tar.age"
                 self.encryption.encrypt(package, encrypted)
