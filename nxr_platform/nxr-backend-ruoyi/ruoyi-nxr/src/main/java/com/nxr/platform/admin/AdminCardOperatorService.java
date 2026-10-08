@@ -38,7 +38,9 @@ public class AdminCardOperatorService {
     private static final Set<String> ACCOUNT_PERMISSIONS = Set.of(
         "nxr:card-user:list", "nxr:card-user:add", "nxr:card-user:edit", "nxr:card-user:resetPwd"
     );
-    private static final String SUMMARY = "SELECT u.user_id,u.user_name,u.nick_name,u.status,u.create_time AS created_at,u.update_time AS updated_at FROM sys_user u";
+    // Interpret DATETIME in its database session zone, then emit an unambiguous browser instant.
+    // Decimal scaling also avoids a 32-bit intermediate when a SQL engine returns integer seconds.
+    private static final String SUMMARY = "SELECT u.user_id,u.user_name,u.nick_name,u.status,UNIX_TIMESTAMP(u.create_time)*1000.0 AS created_at,UNIX_TIMESTAMP(u.update_time)*1000.0 AS updated_at FROM sys_user u";
     private static final String NO_BUSINESS_BINDINGS = """
         AND NOT EXISTS(SELECT 1 FROM agent_operator_binding b WHERE b.sys_user_id=u.user_id)
         AND NOT EXISTS(SELECT 1 FROM commerce_staff_business_line b WHERE b.user_id=u.user_id)
@@ -61,7 +63,7 @@ public class AdminCardOperatorService {
     }
 
     public record Operator(long userId, String userName, String nickName, String status,
-                           LocalDateTime createdAt, LocalDateTime updatedAt) { }
+                           Long createdAt, Long updatedAt) { }
     public record OperatorPage(List<Operator> items, long total, int page, int pageSize) { }
     public record PasswordReset(long userId, boolean passwordReset) { }
     public record CreateRequest(String username, String nickName,

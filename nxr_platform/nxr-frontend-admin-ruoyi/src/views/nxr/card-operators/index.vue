@@ -1,14 +1,11 @@
 <template>
   <main class="nxr-workspace card-operators">
-    <nxr-page-header :kicker="$tx('CARD OPERATIONS')" :title="$tx('Card Operators')"
-      :summary="$tx('Manage card-upload staff accounts and their sign-in access')">
+    <nxr-page-header :kicker="$tx('CARD OPERATIONS')" :title="$tx('Card Operators')">
       <template #actions>
         <el-button type="primary" plain icon="Plus" v-hasPermi="['nxr:card-user:add']" @click="openCreate">{{ $tx('Add Card Operator') }}</el-button>
       </template>
     </nxr-page-header>
 
-    <el-alert class="scope-note" type="info" :closable="false"
-      :title="$tx('New staff receive the fixed card operator role. Platform and other business accounts are managed separately.')" />
     <el-form class="operator-search" :inline="true" @submit.prevent="search">
       <el-form-item :label="$tx('Username or display name')">
         <el-input v-model="query.query" clearable :placeholder="$tx('Search card operators')" @keyup.enter="search" />
@@ -40,9 +37,9 @@
       </el-table-column>
       <el-table-column :label="$tx('Actions')" min-width="240">
         <template #default="scope">
-          <el-button link :type="scope.row.status === '0' ? 'warning' : 'primary'" :disabled="busyUser === scope.row.userId"
+          <el-button link :type="scope.row.status === '0' ? 'warning' : 'primary'" :disabled="busyUsers.has(scope.row.userId)"
             v-hasPermi="['nxr:card-user:edit']" @click="changeStatus(scope.row)">{{ $tx(scope.row.status === '0' ? 'Disable' : 'Enable') }}</el-button>
-          <el-button link type="primary" :disabled="busyUser === scope.row.userId"
+          <el-button link type="primary" :disabled="busyUsers.has(scope.row.userId)"
             v-hasPermi="['nxr:card-user:resetPwd']" @click="openReset(scope.row)">{{ $tx('Reset Password') }}</el-button>
         </template>
       </el-table-column>
@@ -103,7 +100,7 @@ const total = ref(0)
 const loading = ref(false)
 const loadError = ref(false)
 let requestNumber = 0
-const busyUser = ref(null)
+const busyUsers = reactive(new Set())
 const createOpen = ref(false)
 const submitting = ref(false)
 const createRef = ref()
@@ -160,15 +157,17 @@ async function submitCreate() {
 }
 
 async function changeStatus(row) {
+  if (busyUsers.has(row.userId)) return
   const status = row.status === '0' ? '1' : '0'
   const message = status === '1' ? tx('Disable {name}? Existing sessions will be signed out.', { name: row.userName }) : tx('Enable {name}? The operator will need to sign in again.', { name: row.userName })
   try { await proxy.$modal.confirm(message) } catch { return }
-  busyUser.value = row.userId
+  if (busyUsers.has(row.userId)) return
+  busyUsers.add(row.userId)
   try {
     await changeCardOperatorStatus(row.userId, status)
     proxy.$modal.msgSuccess(tx('Operator status updated'))
     await getList()
-  } finally { busyUser.value = null }
+  } finally { busyUsers.delete(row.userId) }
 }
 
 function openReset(row) { resetTarget.value = row; resetForm.password = ''; resetOpen.value = true }
@@ -188,7 +187,7 @@ getList()
 </script>
 
 <style scoped>
-.scope-note, .load-error { margin-bottom: 16px; }
+.load-error { margin-bottom: 16px; }
 .operator-search { display: flex; flex-wrap: wrap; gap: 0 12px; margin-top: 18px; }
 .operator-search :deep(.el-input), .operator-search :deep(.el-select) { width: 230px; }
 .form-note { color: var(--el-text-color-secondary); line-height: 1.7; }

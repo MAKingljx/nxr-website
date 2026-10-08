@@ -39,3 +39,6 @@ INSERT INTO commerce_staff_business_line VALUES(206,1);
 INSERT INTO commerce_staff_work_center VALUES(207,1);
 -- The same numeric ID in the independent customer identity namespace is not a backend binding.
 INSERT INTO customer_account VALUES(101,'separate@example.test');
+
+-- UTC production-style DATETIME values; response tests assert epoch semantics.
+UPDATE sys_user SET create_time=TIMESTAMP '2026-10-08 10:30:00',update_time=TIMESTAMP '2026-10-08 10:45:30' WHERE user_id=101;

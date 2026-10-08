@@ -39,7 +39,7 @@ class AdminCardOperatorServiceTest {
     @BeforeEach void setup() throws Exception {
         JdbcDataSource ds = new JdbcDataSource();
         dataSource = ds;
-        ds.setURL("jdbc:h2:mem:card_operator_" + UUID.randomUUID() + ";MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1;LOCK_TIMEOUT=10000");
+        ds.setURL("jdbc:h2:mem:card_operator_" + UUID.randomUUID() + ";MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1;LOCK_TIMEOUT=10000;INIT=SET TIME ZONE 'UTC'");
         jdbc = new JdbcTemplate(ds);
         try (Connection connection = ds.getConnection()) { ScriptUtils.executeSqlScript(connection, new ClassPathResource("card_operator_h2.sql")); }
         transaction = new TransactionTemplate(new DataSourceTransactionManager(ds));
@@ -62,6 +62,30 @@ class AdminCardOperatorServiceTest {
         assertThat(page.items()).extracting(AdminCardOperatorService.Operator::userId).containsExactly(102L, 101L);
         assertThat(page.items()).extracting(AdminCardOperatorService.Operator::status).containsExactly("1", "0");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM customer_account WHERE id=101", Long.class)).isEqualTo(1);
+    }
+    @Test void timestampsAreNumericEpochMillisAndRenderInTheViewerTimeZone() throws Exception {
+        var operator=service.list(50,1,20,"nxr_card_admin_01",null).items().get(0);
+        long created=java.time.Instant.parse("2026-10-08T10:30:00Z").toEpochMilli();
+        long updated=java.time.Instant.parse("2026-10-08T10:45:30Z").toEpochMilli();
+        assertThat(operator.createdAt()).isEqualTo(created);
+        assertThat(operator.updatedAt()).isEqualTo(updated);
+        var response=json.readTree(json.writeValueAsString(operator));
+        assertThat(response.get("createdAt").isNumber()).isTrue();
+        assertThat(response.get("createdAt").longValue()).isEqualTo(created);
+        assertThat(response.get("updatedAt").longValue()).isEqualTo(updated);
+        assertThat(java.time.Instant.ofEpochMilli(operator.createdAt()).atZone(java.time.ZoneId.of("Asia/Shanghai")).toLocalDateTime())
+            .isEqualTo(java.time.LocalDateTime.of(2026,10,8,18,30));
+        assertThat(jdbc.queryForObject("SELECT CAST(create_time AS VARCHAR) FROM sys_user WHERE user_id=101",String.class))
+            .isEqualTo("2026-10-08 10:30:00");
+    }
+    @Test void absentLegacyTimestampsRemainNullInsteadOfAnInventedDate() throws Exception {
+        jdbc.update("UPDATE sys_user SET create_time=NULL,update_time=NULL WHERE user_id=102");
+        var operator=service.list(50,1,20,"nxr_card_admin_02",null).items().get(0);
+        assertThat(operator.createdAt()).isNull();
+        assertThat(operator.updatedAt()).isNull();
+        var response=json.readTree(json.writeValueAsString(operator));
+        assertThat(response.get("createdAt").isNull()).isTrue();
+        assertThat(response.get("updatedAt").isNull()).isTrue();
     }
     @Test void paginationStatusAndLiteralSearchAreBounded() {
         assertThat(service.list(50, 1, 1, "NXr_CARD", null).items()).extracting(AdminCardOperatorService.Operator::userId).containsExactly(102L);
