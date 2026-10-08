@@ -254,6 +254,26 @@ class DumpTests(Base):
         changed = b.inspect_dump(self.dump(DUMP.replace(b"varchar(255)", b"varchar(300)")))
         self.assertNotEqual(original["ddl_signatures"], changed["ddl_signatures"])
 
+    def test_restore_redundant_column_charset_is_equivalent(self):
+        original = DUMP.replace(b"varchar(255) DEFAULT", b"varchar(255) COLLATE utf8mb4_unicode_ci DEFAULT")
+        explicit = original.replace(b"varchar(255) COLLATE", b"varchar(255) CHARACTER SET utf8mb4 COLLATE")
+        self.assertEqual(b.inspect_dump(self.dump(original)), b.inspect_dump(self.dump(explicit)))
+
+    def test_real_collation_and_charset_changes_still_fail(self):
+        original = DUMP.replace(b"varchar(255) DEFAULT", b"varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci DEFAULT")
+        expected = b.inspect_dump(self.dump(original))["ddl_signatures"]
+        for changed in (original.replace(b"utf8mb4_unicode_ci", b"utf8mb4_bin"),
+                        original.replace(b"CHARACTER SET utf8mb4", b"CHARACTER SET latin1"),
+                        original.replace(b"DEFAULT NULL", b"DEFAULT 'CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'")):
+            with self.subTest(changed=changed[:10]):
+                self.assertNotEqual(expected, b.inspect_dump(self.dump(changed))["ddl_signatures"])
+
+    def test_charset_canonicalization_never_edits_literals_or_unspecified_collations(self):
+        for line in (b"  `title` varchar(255) CHARACTER SET utf8mb4 DEFAULT NULL,",
+                     b"  `title` varchar(255) DEFAULT 'CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',",
+                     b"  `title` varchar(255) COLLATE utf8mb4_unicode_ci COMMENT 'CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci',"):
+            self.assertEqual(line, b.canonical_ddl_line(line))
+
     def test_archive_exact_members_only_and_private(self):
         sql = self.dump()
         package = b.create_package(sql, {"safe": True}, self.root)
@@ -467,6 +487,7 @@ class NativeTests(Base):
         self.assertTrue(any(arg.startswith("--user=nxr_bv_") for arg in imports[0]))
         self.assertTrue(imports[0][-1].startswith("nxr_backup_verify_"))
         self.assertTrue(any(arg.startswith("--defaults-file=") for arg in imports[0]))
+        self.assertIn("--init-command=SET SESSION autocommit=0", imports[0])
         self.assertFalse(any(arg.startswith("-p") for arg in imports[0]))
         self.assertFalse((self.native_work / "importer.cnf").exists())
 
@@ -490,8 +511,12 @@ class NativeTests(Base):
     def test_mismatched_restore_data_fails_and_cleans_up(self):
         native, calls = self.native(changed=True)
         dump = self.dump()
-        with self.assertRaises(b.BackupError):
+        with self.assertRaises(b.BackupError) as failure:
             native.verify_restore(dump, b.inspect_dump(dump), self.native_work, {"character_set": "utf8mb4", "collation": "utf8mb4_0900_ai_ci"})
+        self.assertIn("data tables (1): cards", str(failure.exception))
+        self.assertNotIn("changed", str(failure.exception))
+        self.assertNotIn("INSERT", str(failure.exception))
+        self.assertNotIn("schema tables", str(failure.exception))
         self.assertEqual(len([call for call in calls if isinstance(call, str) and call.startswith("DROP")]), 2)
 
     def test_changed_dump_before_import_fails_without_sql(self):

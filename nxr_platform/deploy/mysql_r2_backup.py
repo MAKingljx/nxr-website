@@ -541,12 +541,23 @@ class NativeMySQL:
                 journal.transition(kind, "confirmed")
             self.query("GRANT SELECT, INSERT, CREATE, DROP, ALTER, INDEX, LOCK TABLES, REFERENCES ON `" + target_grant + "`.* TO '" + importer + "'@'localhost';")
             with dump.open("rb") as handle:
-                self.execute(self.client(self.cfg.mysql_bin, credential, importer) + ["--binary-mode", "--skip-reconnect", "--local-infile=0", "--skip-auto-rehash", "--default-character-set=utf8mb4", target], stdin=handle)
+                # Batch only the restricted scratch import. Native LOCK/UNLOCK
+                # TABLES commits each table; no source/global setting is changed.
+                self.execute(self.client(self.cfg.mysql_bin, credential, importer) + ["--binary-mode", "--skip-reconnect", "--local-infile=0", "--skip-auto-rehash", "--default-character-set=utf8mb4", "--init-command=SET SESSION autocommit=0", target], stdin=handle)
             restored = work / "restored.sql"
             self.dump(target, restored, coordinates=False)
             verified = inspect_dump(restored, require_coordinates=False)
             if verified["tables"] != original["tables"] or verified["data_signatures"] != original["data_signatures"] or verified["ddl_signatures"] != original["ddl_signatures"]:
-                raise BackupError("restored table data does not match the snapshot")
+                # Table names and change categories are sufficient for diagnosis;
+                # never include SQL statements, row values or credentials in logs.
+                differences = []
+                for key, label in (("data_signatures", "data"), ("ddl_signatures", "schema")):
+                    changed = sorted(name for name in set(original[key]) | set(verified[key])
+                                     if original[key].get(name) != verified[key].get(name))
+                    if changed:
+                        names = [re.sub(r"[^A-Za-z0-9_-]", "?", name) for name in changed[:10]]
+                        differences.append(label + " tables (" + str(len(changed)) + "): " + ", ".join(names))
+                raise BackupError("restored table data does not match the snapshot; " + "; ".join(differences))
             checks = self.query("CHECK TABLE " + ",".join("`" + target + "`." + table_sql(name) for name in original["tables"]) + ";")
             if len(checks) != len(original["tables"]) or any(len(row) != 4 or row[2:] != ["status", "OK"] for row in checks):
                 raise BackupError("restored table integrity check failed")
@@ -557,6 +568,22 @@ class NativeMySQL:
                     self.cleanup_journal(journal)
                 finally:
                     credential.unlink(missing_ok=True)
+
+
+REDUNDANT_COLUMN_CHARSET = re.compile(
+    rb"^(\s*`(?:``|[^`])+`\s+(?:char|varchar|tinytext|text|mediumtext|longtext)(?:\(\d+\))? )"
+    rb"CHARACTER SET ([A-Za-z0-9_]+) (COLLATE ([A-Za-z0-9_]+))(?=\s|$)"
+)
+
+
+def canonical_ddl_line(line: bytes) -> bytes:
+    # COLLATE explicitly determines its character set. MySQL can add the
+    # redundant CHARACTER SET clause when recreating an older table. Normalize
+    # only that column/type prefix, never defaults, comments or real differences.
+    matched = REDUNDANT_COLUMN_CHARSET.match(line)
+    if matched and matched[4].startswith(matched[2] + b"_"):
+        return matched[1] + matched[3] + line[matched.end():]
+    return line
 
 
 def inspect_dump(path: Path, *, require_coordinates: bool = True) -> dict[str, Any]:
@@ -624,7 +651,7 @@ def inspect_dump(path: Path, *, require_coordinates: bool = True) -> dict[str, A
             # An importer with only scratch-schema grants is the final SQL
             # boundary; this parser also rejects obvious escape statements.
             if in_create and stripped.startswith((b"`", b"PRIMARY KEY", b"UNIQUE KEY", b"KEY ", b"CONSTRAINT ", b"CHECK ", b"FULLTEXT KEY ", b"SPATIAL KEY ")):
-                ddl_digests[ddl_name].update(line.rstrip(b"\r\n") + b"\n")
+                ddl_digests[ddl_name].update(canonical_ddl_line(line.rstrip(b"\r\n")) + b"\n")
                 continue
             if in_create and re.fullmatch(rb"\) ENGINE=InnoDB [^\r\n]*;", stripped):
                 ddl_digests[ddl_name].update(line.rstrip(b"\r\n") + b"\n")

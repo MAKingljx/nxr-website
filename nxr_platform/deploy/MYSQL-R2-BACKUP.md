@@ -4,6 +4,8 @@ This tool backs up the Java MySQL database. It does not change the Java release,
 
 A native consistent SQL snapshot records its binary-log file and position. The tool restores this snapshot into a newly created verification schema using an importer restricted to that schema, compares table definitions and row statements, and removes only that run's scratch schema and importer. The validated SQL and metadata are encrypted with an age public recipient. The source server receives no recovery identity. Its backup token must be denied access to the public card bucket; a broader token is rejected before any dump. A verified R2 upload must download with the identical ciphertext hash before it becomes a retained backup.
 
+Schema comparison normalizes only a redundant column `CHARACTER SET` immediately before the matching explicit `COLLATE`; [MySQL specifies that the collation determines its character set](https://dev.mysql.com/doc/refman/8.0/en/charset-column.html). Types, defaults, indexes, foreign keys, collations and auto-increment counters still require a match. Row hashes remain exact. Scratch imports batch transactions per native dump table, without changing source or global MySQL settings.
+
 The backup bucket is private and separate from card images. The configuration and working files are private. Credentials, private recovery keys and runtime database files must never be included in source control or the tooling release. The recovery identity is held in the operator's local Keychain; maintain a separate approved recovery copy before relying on encrypted backups as the sole recovery source.
 
 ## Daily operation
