@@ -1,6 +1,7 @@
 import os
 import re
 import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
@@ -19,6 +20,7 @@ IMAGE_FORMAT_EXTENSIONS = {
     'WEBP': {'.webp'},
 }
 SAFE_UPLOAD_FAILURE_DETAIL = 'Upload failed during server finalization'
+SAFE_INTERRUPTED_UPLOAD_DETAIL = 'Previous upload was interrupted by a server restart. Retry is safe.'
 
 
 def positive_int_env(name, default):
@@ -43,6 +45,42 @@ MAX_IMAGE_IMPORT_PIXELS = positive_int_env(
     'NXR_IMAGE_IMPORT_MAX_PIXELS',
     100_000_000,
 )
+STALE_UPLOAD_TIMEOUT_SECONDS = positive_int_env(
+    'NXR_UPLOAD_STALE_TIMEOUT_SECONDS',
+    15 * 60,
+)
+
+
+def recover_stale_upload_claims(conn, now=None):
+    """Release expired upload claims while preserving their queued images.
+
+    A process restart can happen after ``uploading`` is committed but before
+    completion or failure reconciliation runs. Fresh claims remain locked;
+    expired claims become retryable. The cutoff stays in the UPDATE so a
+    concurrent new owner cannot be overwritten after this function starts.
+    """
+    recovered_at = now or datetime.now()
+    cutoff = recovered_at - timedelta(seconds=STALE_UPLOAD_TIMEOUT_SECONDS)
+    cursor = conn.execute(
+        '''
+            UPDATE temp_cards
+            SET upload_status = 'failed',
+                upload_completed = ?,
+                upload_error = ?
+            WHERE status = 'approved'
+              AND upload_status = 'uploading'
+              AND COALESCE(upload_started, '') != ''
+              AND julianday(upload_started) <= julianday(?)
+        ''',
+        (
+            recovered_at.isoformat(),
+            SAFE_INTERRUPTED_UPLOAD_DETAIL,
+            cutoff.isoformat(),
+        ),
+    )
+    if cursor.rowcount:
+        conn.commit()
+    return cursor.rowcount
 
 
 def normalize_import_side(raw_side):
@@ -385,6 +423,11 @@ def upload_manager():
         image_status_filter = ''
 
     conn = get_temp_db_connection()
+    try:
+        recover_stale_upload_claims(conn)
+    except Exception:
+        safe_rollback(conn, 'stale upload recovery')
+        app.logger.exception('Could not recover interrupted upload claims')
     stats = get_upload_stats(conn)
 
     query = '''
@@ -666,6 +709,7 @@ def api_upload_entry(entry_id):
 
     try:
         conn_temp = get_temp_db_connection()
+        recover_stale_upload_claims(conn_temp)
         entry = conn_temp.execute(
             '''
                 SELECT *

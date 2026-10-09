@@ -4,6 +4,7 @@ import sqlite3
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -593,6 +594,7 @@ class FolderImageImportTransactionTests(unittest.TestCase):
         connection = UploadConflictConnection(row)
         with (
             patch.object(routes_uploads, "get_temp_db_connection", return_value=connection),
+            patch.object(routes_uploads, "recover_stale_upload_claims", return_value=0),
             patch.object(routes_uploads, "get_main_db_connection") as main_connection,
             admin_core.app.test_request_context(method="POST"),
         ):
@@ -609,6 +611,121 @@ class FolderImageImportTransactionTests(unittest.TestCase):
         self.assertIn("COALESCE(back_image, '') = ?", update_statement)
         self.assertTrue((self.upload_dir / "front.jpg").is_file())
         self.assertTrue((self.upload_dir / "back.jpg").is_file())
+
+    def test_expired_upload_claim_is_released_without_removing_images(self):
+        now = datetime(2026, 10, 9, 15, 0, 0)
+        connection = self._connect()
+        connection.execute(
+            '''
+                UPDATE temp_cards
+                SET front_image = 'front.jpg',
+                    back_image = 'back.jpg',
+                    upload_status = 'uploading',
+                    upload_started = ?,
+                    upload_error = NULL
+                WHERE id = 1
+            ''',
+            ((now - timedelta(minutes=16)).isoformat(),),
+        )
+        connection.commit()
+        (self.upload_dir / 'front.jpg').write_bytes(b'front')
+        (self.upload_dir / 'back.jpg').write_bytes(b'back')
+
+        recovered = routes_uploads.recover_stale_upload_claims(connection, now=now)
+        row = connection.execute(
+            '''
+                SELECT upload_status, upload_started, upload_completed,
+                       upload_error, front_image, back_image
+                FROM temp_cards WHERE id = 1
+            '''
+        ).fetchone()
+        connection.close()
+
+        self.assertEqual(recovered, 1)
+        self.assertEqual(row['upload_status'], 'failed')
+        self.assertEqual(row['upload_completed'], now.isoformat())
+        self.assertEqual(row['upload_error'], routes_uploads.SAFE_INTERRUPTED_UPLOAD_DETAIL)
+        self.assertEqual(row['front_image'], 'front.jpg')
+        self.assertEqual(row['back_image'], 'back.jpg')
+        self.assertTrue((self.upload_dir / 'front.jpg').is_file())
+        self.assertTrue((self.upload_dir / 'back.jpg').is_file())
+
+    def test_fresh_upload_claim_is_not_recovered(self):
+        now = datetime(2026, 10, 9, 15, 0, 0)
+        started = (now - timedelta(minutes=14)).isoformat()
+        connection = self._connect()
+        connection.execute(
+            '''
+                UPDATE temp_cards
+                SET upload_status = 'uploading', upload_started = ?
+                WHERE id = 1
+            ''',
+            (started,),
+        )
+        connection.commit()
+
+        recovered = routes_uploads.recover_stale_upload_claims(connection, now=now)
+        row = connection.execute(
+            'SELECT upload_status, upload_started, upload_completed, upload_error FROM temp_cards WHERE id = 1'
+        ).fetchone()
+        connection.close()
+
+        self.assertEqual(recovered, 0)
+        self.assertEqual(row['upload_status'], 'uploading')
+        self.assertEqual(row['upload_started'], started)
+        self.assertIsNone(row['upload_completed'])
+        self.assertIsNone(row['upload_error'])
+
+    def test_direct_retry_recovers_expired_claim_and_completes_upload(self):
+        connection = self._connect()
+        connection.execute(
+            '''
+                UPDATE temp_cards
+                SET front_image = 'front.jpg',
+                    back_image = 'back.jpg',
+                    upload_status = 'uploading',
+                    upload_started = '2026-01-01T00:00:00'
+                WHERE id = 1
+            '''
+        )
+        connection.commit()
+        connection.close()
+        (self.upload_dir / 'front.jpg').write_bytes(b'front')
+        (self.upload_dir / 'back.jpg').write_bytes(b'back')
+
+        with (
+            patch.object(routes_uploads, 'get_temp_db_connection', side_effect=self._connect),
+            patch.object(routes_uploads, 'get_main_db_connection', return_value=RecordingMainConnection()),
+            patch.object(
+                routes_uploads,
+                'upsert_main_card',
+                return_value={
+                    'action': 'inserted',
+                    'front_image': '/static/front.jpg',
+                    'back_image': '/static/back.jpg',
+                },
+            ),
+            admin_core.app.test_request_context(method='POST'),
+        ):
+            response = routes_uploads.api_upload_entry.__wrapped__(1)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()['success'])
+        connection = self._connect()
+        row = connection.execute(
+            '''
+                SELECT upload_status, front_image, back_image,
+                       published_front_image, published_back_image, upload_error
+                FROM temp_cards WHERE id = 1
+            '''
+        ).fetchone()
+        connection.close()
+        self.assertEqual(row['upload_status'], 'uploaded')
+        self.assertEqual(row['front_image'], '')
+        self.assertEqual(row['back_image'], '')
+        self.assertEqual(row['published_front_image'], '/static/front.jpg')
+        self.assertEqual(row['published_back_image'], '/static/back.jpg')
+        self.assertIsNone(row['upload_error'])
 
     def test_single_upload_recovers_when_completion_commit_was_applied(self):
         connection = self._connect()
