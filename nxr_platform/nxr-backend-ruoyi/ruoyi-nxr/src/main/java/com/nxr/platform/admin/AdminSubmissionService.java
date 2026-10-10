@@ -26,6 +26,8 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class AdminSubmissionService {
 
+    private static final int MAX_PAGE_SIZE = 500;
+
     private static final String DEFAULT_PRODUCT_TYPE = ProductTypePolicy.GRADED_CARD;
     private static final String MERCH_PRODUCT_TYPE = ProductTypePolicy.MERCH_PRODUCT;
     private static final String VINTAGE_PRODUCT_TYPE = ProductTypePolicy.VINTAGE_PRODUCT;
@@ -157,9 +159,10 @@ public class AdminSubmissionService {
     ) {
         SubmissionListFilter resolvedFilter = filter == null ? SubmissionListFilter.empty() : filter;
         int resolvedPage = Math.max(resolvedFilter.page(), 1);
-        int resolvedPageSize = Math.min(Math.max(resolvedFilter.pageSize(), 1), 50);
+        int resolvedPageSize = Math.min(Math.max(resolvedFilter.pageSize(), 1), MAX_PAGE_SIZE);
         int offset = (resolvedPage - 1) * resolvedPageSize;
         String normalizedStatus = normalizeFilter(resolvedFilter.status());
+        boolean approvedHistory = "approved_history".equals(normalizedStatus);
         String normalizedQuery = normalizeFilter(resolvedFilter.query());
         String normalizedCertId = normalizeFilter(resolvedFilter.certId());
         String normalizedCardName = normalizeFilter(resolvedFilter.cardName());
@@ -172,7 +175,8 @@ public class AdminSubmissionService {
         String normalizedEnteredBy = normalizeFilter(resolvedFilter.enteredBy());
 
         Map<String, Object> params = new LinkedHashMap<>();
-        params.put("status", normalizedStatus);
+        params.put("status", approvedHistory ? null : normalizedStatus);
+        params.put("approvedHistory", approvedHistory ? 1 : 0);
         params.put("query", normalizedQuery == null ? null : "%" + normalizedQuery.toUpperCase(Locale.ROOT) + "%");
         params.put("certId", likeFilter(normalizedCertId));
         params.put("cardName", likeFilter(normalizedCardName));
@@ -188,7 +192,10 @@ public class AdminSubmissionService {
         params.put("offset", offset);
 
         String whereClause = """
-            WHERE (:status IS NULL OR s.status_code = :status)
+            WHERE (
+                (:approvedHistory = 1 AND s.status_code IN ('approved', 'published'))
+                OR (:approvedHistory = 0 AND (:status IS NULL OR s.status_code = :status))
+              )
               AND (
                 :query IS NULL
                 OR UPPER(s.cert_id) LIKE :query
@@ -1263,7 +1270,9 @@ public class AdminSubmissionService {
             case "final_grade" -> "g.final_grade_value";
             case "set_name" -> "s.set_name";
             case "language" -> "s.language_code";
-            default -> "approved".equals(status) ? "COALESCE(s.approved_at, s.created_at)" : "s.created_at";
+            default -> ("approved".equals(status) || "approved_history".equals(status))
+                ? "COALESCE(s.approved_at, s.published_at, s.created_at)"
+                : "s.created_at";
         };
     }
 

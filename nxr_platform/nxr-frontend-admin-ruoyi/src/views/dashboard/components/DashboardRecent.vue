@@ -32,7 +32,7 @@
         </el-table>
       </el-tab-pane>
 
-      <el-tab-pane :label="$tx('Orders')" name="orders">
+      <el-tab-pane v-if="showOrders" :label="$tx('Orders')" name="orders">
         <el-table v-loading="loading" :data="orders" class="recent-table" height="300">
           <el-table-column :label="$tx('Order No.')" min-width="180">
             <template #default="scope"><span class="reference-id">{{ scope.row.orderNo }}</span></template>
@@ -82,6 +82,7 @@ defineProps({
   entries: { type: Array, default: () => [] },
   orders: { type: Array, default: () => [] },
   published: { type: Array, default: () => [] },
+  showOrders: { type: Boolean, default: true },
   loading: { type: Boolean, default: false }
 })
 

@@ -124,6 +124,7 @@
     <pagination
       v-show="total > 0"
       :total="total"
+      :page-sizes="[10, 20, 30, 50, 200, 500]"
       v-model:page="queryParams.page"
       v-model:limit="queryParams.pageSize"
       @pagination="getList"
@@ -482,6 +483,7 @@ function validateScore(label) {
 const statusOptions = [
   { value: 'pending', label: t('entries.pending') },
   { value: 'approved', label: t('entries.approved') },
+  { value: 'approved_history', label: t('entries.approvedHistory') },
   { value: 'published', label: t('entries.published') }
 ]
 const gradeFilterOptions = ['8', '8.5', '9', '9.5', '10', 'Pristine 10']

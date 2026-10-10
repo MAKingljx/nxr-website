@@ -3,6 +3,7 @@ package com.nxr.platform.admin;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.nio.file.Path;
 import com.nxr.platform.admin.storage.LocalMediaStorageProvider;
 import com.nxr.platform.admin.storage.MediaStorageRegistry;
@@ -73,6 +74,8 @@ class AdminDashboardServiceTest {
         assertThat(dashboard.totalSubmissions()).isEqualTo(3);
         assertThat(dashboard.pendingReview()).isOne();
         assertThat(dashboard.approvedReady()).isOne();
+        assertThat(dashboard.approvedEntries()).isEqualTo(2);
+        assertThat(dashboard.todayEntries()).isEqualTo(3);
         assertThat(dashboard.publishedCertificates()).isOne();
         assertThat(dashboard.waitlistCount()).isOne();
 
@@ -105,10 +108,18 @@ class AdminDashboardServiceTest {
 
         assertThat(dashboard.activityTrend()).hasSize(30);
         assertThat(dashboard.activityTrend().get(29)).satisfies(today -> {
-            assertThat(today.date()).isEqualTo(LocalDate.now());
+            assertThat(today.date()).isEqualTo(LocalDate.now(ZoneId.of("Asia/Shanghai")));
             assertThat(today.created()).isEqualTo(3);
             assertThat(today.published()).isOne();
         });
+
+        AdminDashboardService.AdminDashboardResponse cardOnly = service.loadDashboard(false, false, false, false);
+        assertThat(cardOnly.orderPipeline()).isEmpty();
+        assertThat(cardOnly.recentOrders()).isEmpty();
+        assertThat(cardOnly.waitlistCount()).isZero();
+        assertThat(cardOnly.actionItems()).extracting(AdminDashboardService.ActionItem::kind)
+            .contains("review", "publication")
+            .doesNotContain("order", "payment", "support", "finance");
     }
 
     private void createSchema() {

@@ -286,6 +286,7 @@ export default {
     finalGradeCalculation: '最终评级计算：',
     pending: '待审核',
     approved: '已批准',
+    approvedHistory: '已批准及已发布',
     published: '已发布',
     gradedCard: '评级卡',
     merchProduct: '周边商品',

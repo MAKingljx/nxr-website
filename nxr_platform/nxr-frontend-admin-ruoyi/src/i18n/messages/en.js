@@ -286,6 +286,7 @@ export default {
     finalGradeCalculation: 'Final Grade Calculation:',
     pending: 'Pending',
     approved: 'Approved',
+    approvedHistory: 'Approved & Published',
     published: 'Published',
     gradedCard: 'Graded Card',
     merchProduct: 'Merch Product',

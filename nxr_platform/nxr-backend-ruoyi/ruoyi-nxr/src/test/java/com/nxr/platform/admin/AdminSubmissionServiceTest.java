@@ -309,6 +309,27 @@ class AdminSubmissionServiceTest {
         });
     }
 
+    @Test
+    void entryListSupportsFiveHundredRowsAndApprovedHistory() {
+        service.createSubmission(request("5703018301", "graded_card", null, "sports_card", new BigDecimal("9.0")));
+        service.createSubmission(request("5703018302", "graded_card", null, "sports_card", new BigDecimal("9.0")));
+        service.createSubmission(request("5703018303", "graded_card", null, "sports_card", new BigDecimal("9.0")));
+        jdbcTemplate.update("UPDATE grading_submission SET status_code='approved', approved_at=CURRENT_TIMESTAMP WHERE cert_id='5703018301'");
+        jdbcTemplate.update("UPDATE grading_submission SET status_code='published', approved_at=CURRENT_TIMESTAMP, published_at=CURRENT_TIMESTAMP WHERE cert_id='5703018302'");
+
+        AdminSubmissionService.SubmissionListResponse result = service.listSubmissions(
+            new AdminSubmissionService.SubmissionListFilter(
+                1, 999, "approved_history", null, null, null, null, null,
+                null, null, null, null, null, "entry_date", "desc"
+            )
+        );
+
+        assertThat(result.pageSize()).isEqualTo(500);
+        assertThat(result.total()).isEqualTo(2);
+        assertThat(result.items()).extracting(AdminSubmissionService.SubmissionListItem::statusCode)
+            .containsExactlyInAnyOrder("approved", "published");
+    }
+
     private AdminSubmissionService.MutateSubmissionRequest request(
         String certId,
         String productType,

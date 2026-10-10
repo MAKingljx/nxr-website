@@ -39,7 +39,7 @@ public class AdminExportController {
     @PreAuthorize("@ss.hasPermi('nxr:export:list')")
     @PostMapping("/preview")
     public AjaxResult preview(@RequestBody AdminExportService.ExportRequest request) {
-        accessScopeService.requireUnrestricted(SecurityUtils.getUserId(), "Global card export");
+        accessScopeService.requireUnrestrictedCardAccess(SecurityUtils.getUserId(), "Global card export");
         return AjaxResult.success(adminExportService.preview(request));
     }
 
@@ -47,7 +47,7 @@ public class AdminExportController {
     @Log(title = "Excel导出", businessType = BusinessType.EXPORT)
     @PostMapping("/generate")
     public AjaxResult generate(@RequestBody AdminExportService.ExportRequest request) {
-        accessScopeService.requireUnrestricted(SecurityUtils.getUserId(), "Global card export");
+        accessScopeService.requireUnrestrictedCardAccess(SecurityUtils.getUserId(), "Global card export");
         return AjaxResult.success(adminExportService.generate(request, SecurityUtils.getUserId()));
     }
 
@@ -57,14 +57,14 @@ public class AdminExportController {
         @RequestParam(defaultValue = "1") int page,
         @RequestParam(defaultValue = "20") int pageSize
     ) {
-        accessScopeService.requireUnrestricted(SecurityUtils.getUserId(), "Export history");
+        accessScopeService.requireUnrestrictedCardAccess(SecurityUtils.getUserId(), "Export history");
         return AjaxResult.success(adminExportService.listExports(page, pageSize));
     }
 
     @PreAuthorize("@ss.hasPermi('nxr:export:list')")
     @GetMapping("/{filename}/download")
     public ResponseEntity<org.springframework.core.io.Resource> download(@PathVariable String filename) {
-        accessScopeService.requireUnrestricted(SecurityUtils.getUserId(), "Export download");
+        accessScopeService.requireUnrestrictedCardAccess(SecurityUtils.getUserId(), "Export download");
         AdminExportService.DownloadableExport downloadableExport = adminExportService.resolveDownload(filename);
         return ResponseEntity.ok()
             .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + downloadableExport.filename() + "\"")
@@ -76,7 +76,7 @@ public class AdminExportController {
     @Log(title = "Excel导出", businessType = BusinessType.DELETE)
     @DeleteMapping("/{filename}")
     public AjaxResult delete(@PathVariable String filename) {
-        accessScopeService.requireUnrestricted(SecurityUtils.getUserId(), "Export deletion");
+        accessScopeService.requireUnrestrictedCardAccess(SecurityUtils.getUserId(), "Export deletion");
         return AjaxResult.success(adminExportService.deleteExport(filename));
     }
 }

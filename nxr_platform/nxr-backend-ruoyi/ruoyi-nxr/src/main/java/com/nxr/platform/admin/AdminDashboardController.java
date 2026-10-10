@@ -29,10 +29,12 @@ public class AdminDashboardController {
     @GetMapping("/dashboard")
     @PreAuthorize("@ss.hasPermi('nxr:dashboard:view')")
     public AjaxResult dashboard() {
-        accessScopeService.requireUnrestricted(SecurityUtils.getUserId(), "Global dashboard aggregates");
+        accessScopeService.requireUnrestrictedCardAccess(SecurityUtils.getUserId(), "Global card dashboard aggregates");
         return AjaxResult.success(adminDashboardService.loadDashboard(
+            SecurityUtils.hasPermi("nxr:order:list") || SecurityUtils.hasPermi("nxr:order:manage"),
             SecurityUtils.hasPermi("nxr:order:manage") || SecurityUtils.hasPermi("nxr:order:support"),
-            SecurityUtils.hasPermi("nxr:order:payment") || SecurityUtils.hasPermi("nxr:customer:finance")
+            SecurityUtils.hasPermi("nxr:order:payment") || SecurityUtils.hasPermi("nxr:customer:finance"),
+            SecurityUtils.hasPermi("nxr:waitlist:list")
         ));
     }
 }
