@@ -51,7 +51,7 @@ public class AdminDashboardService {
         boolean financeAccess,
         boolean waitlistAccess
     ) {
-        boolean includeOrders = orderAccess || supportAccess || financeAccess;
+        boolean includeOrders = orderAccess;
         Integer totalSubmissions = jdbcClient.sql("SELECT COUNT(*) FROM grading_submission")
             .query(Integer.class)
             .single();
@@ -85,6 +85,7 @@ public class AdminDashboardService {
             approvedReady,
             approvedEntries,
             todayEntries,
+            activityTrend.get(activityTrend.size() - 1).date(),
             publishedCertificates,
             waitlistCount,
             activityTrend,
@@ -334,7 +335,7 @@ public class AdminDashboardService {
                 rs.getString("card_name"),
                 rs.getString("status_code"),
                 rs.getObject("created_at", LocalDateTime.class),
-                "/nxr/cards/pending-review?status=pending&certId=" + queryValue(rs.getString("cert_id"))
+                "/nxr/cards/pending-review?status=pending_review&certId=" + queryValue(rs.getString("cert_id"))
             ))
             .list());
 
@@ -570,6 +571,7 @@ public class AdminDashboardService {
         int approvedReady,
         int approvedEntries,
         int todayEntries,
+        LocalDate businessDate,
         int publishedCertificates,
         int waitlistCount,
         List<DailyActivity> activityTrend,

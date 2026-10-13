@@ -13,6 +13,8 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.math.BigDecimal;
+import java.time.LocalDate;
+import org.springframework.format.annotation.DateTimeFormat;
 import java.util.List;
 import org.springframework.http.HttpStatus;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -61,7 +63,8 @@ public class AdminSubmissionController {
         @RequestParam(required = false) String language,
         @RequestParam(required = false) String enteredBy,
         @RequestParam(defaultValue = "entry_date") String sortBy,
-        @RequestParam(defaultValue = "desc") String sortOrder
+        @RequestParam(defaultValue = "desc") String sortOrder,
+        @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate createdDate
     ) {
         return AjaxResult.success(adminSubmissionService.listSubmissions(
             new AdminSubmissionService.SubmissionListFilter(
@@ -80,7 +83,7 @@ public class AdminSubmissionController {
                 enteredBy,
                 sortBy,
                 sortOrder
-            ), accessScopeService.cardScopeForUser(SecurityUtils.getUserId())
+            ), accessScopeService.cardScopeForUser(SecurityUtils.getUserId()), createdDate
         ));
     }
 

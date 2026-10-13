@@ -38,7 +38,7 @@
           :detail="$tx('Awaiting reviewer action')"
           :icon="DocumentChecked"
           interactive
-          @activate="navigate('/nxr/cards/pending-review?status=pending')"
+          @activate="navigate('/nxr/cards/pending-review?status=pending_review')"
         />
         <dashboard-metric-card
           :label="$tx('Approved')"
@@ -53,8 +53,8 @@
           :value="dashboard.todayEntries"
           :detail="$tx('Created today')"
           :icon="Calendar"
-          interactive
-          @activate="navigate('/nxr/cards/entries')"
+          :interactive="Boolean(dashboard.businessDate)"
+          @activate="navigate('/nxr/cards/entries?createdDate=' + dashboard.businessDate)"
         />
       </section>
 
@@ -172,6 +172,7 @@ function emptyDashboard() {
     approvedReady: 0,
     approvedEntries: 0,
     todayEntries: 0,
+    businessDate: '',
     publishedCertificates: 0,
     waitlistCount: 0,
     activityTrend: [],

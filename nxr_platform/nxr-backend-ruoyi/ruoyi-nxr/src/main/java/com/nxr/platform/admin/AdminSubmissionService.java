@@ -8,6 +8,7 @@ import com.nxr.platform.shared.ProductTypePolicy;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -157,12 +158,19 @@ public class AdminSubmissionService {
     public SubmissionListResponse listSubmissions(
         SubmissionListFilter filter, OrderAccessScopeService.AccessScope accessScope
     ) {
+        return listSubmissions(filter, accessScope, null);
+    }
+
+    public SubmissionListResponse listSubmissions(
+        SubmissionListFilter filter, OrderAccessScopeService.AccessScope accessScope, LocalDate createdDate
+    ) {
         SubmissionListFilter resolvedFilter = filter == null ? SubmissionListFilter.empty() : filter;
         int resolvedPage = Math.max(resolvedFilter.page(), 1);
         int resolvedPageSize = Math.min(Math.max(resolvedFilter.pageSize(), 1), MAX_PAGE_SIZE);
         int offset = (resolvedPage - 1) * resolvedPageSize;
         String normalizedStatus = normalizeFilter(resolvedFilter.status());
         boolean approvedHistory = "approved_history".equals(normalizedStatus);
+        boolean pendingReview = "pending_review".equals(normalizedStatus);
         String normalizedQuery = normalizeFilter(resolvedFilter.query());
         String normalizedCertId = normalizeFilter(resolvedFilter.certId());
         String normalizedCardName = normalizeFilter(resolvedFilter.cardName());
@@ -175,8 +183,9 @@ public class AdminSubmissionService {
         String normalizedEnteredBy = normalizeFilter(resolvedFilter.enteredBy());
 
         Map<String, Object> params = new LinkedHashMap<>();
-        params.put("status", approvedHistory ? null : normalizedStatus);
+        params.put("status", approvedHistory || pendingReview ? null : normalizedStatus);
         params.put("approvedHistory", approvedHistory ? 1 : 0);
+        params.put("pendingReview", pendingReview ? 1 : 0);
         params.put("query", normalizedQuery == null ? null : "%" + normalizedQuery.toUpperCase(Locale.ROOT) + "%");
         params.put("certId", likeFilter(normalizedCertId));
         params.put("cardName", likeFilter(normalizedCardName));
@@ -194,7 +203,8 @@ public class AdminSubmissionService {
         String whereClause = """
             WHERE (
                 (:approvedHistory = 1 AND s.status_code IN ('approved', 'published'))
-                OR (:approvedHistory = 0 AND (:status IS NULL OR s.status_code = :status))
+                OR (:pendingReview = 1 AND s.status_code IN ('pending', 'review'))
+                OR (:approvedHistory = 0 AND :pendingReview = 0 AND (:status IS NULL OR s.status_code = :status))
               )
               AND (
                 :query IS NULL
@@ -225,6 +235,11 @@ public class AdminSubmissionService {
                 OR UPPER(COALESCE(u.nick_name, '')) LIKE :enteredBy
               )
             """.formatted(ProductTypePolicy.canonicalSql("s.product_type_code"), CANONICAL_GRADE_SQL);
+        if (createdDate != null) {
+            params.put("createdFrom", createdDate.atStartOfDay());
+            params.put("createdUntil", createdDate.plusDays(1).atStartOfDay());
+            whereClause += " AND s.created_at >= :createdFrom AND s.created_at < :createdUntil";
+        }
         if (accessScope != null && !accessScope.unrestricted()) {
             params.put("scopeLineIds", accessScope.safeBusinessLineIds());
             params.put("scopeCenterIds", accessScope.safeWorkCenterIds());

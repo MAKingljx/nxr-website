@@ -15,6 +15,7 @@ SELECT IF(
     AND (SELECT COUNT(*) FROM sys_menu WHERE menu_id = 2032 AND parent_id = 2003 AND perms = 'nxr:export:remove' AND status = '0') = 1
     AND (SELECT COUNT(*) FROM sys_menu WHERE menu_id = 2081 AND parent_id = 2000 AND perms = 'nxr:dashboard:view' AND status = '0') = 1
     AND (SELECT COUNT(*) FROM sys_menu WHERE menu_id = 2084 AND parent_id = 2000 AND component = 'nxr/entries/index' AND status = '0') = 1
+    AND (SELECT COUNT(*) FROM sys_menu WHERE menu_id = 2083 AND parent_id = 2000 AND component = 'nxr/entries/index' AND status = '0') = 1
     AND (SELECT COUNT(*) FROM sys_menu WHERE menu_id = 2160 AND parent_id = 2000 AND perms = 'nxr:card:global' AND status = '0') = 1
     AND NOT EXISTS (
         SELECT 1 FROM sys_role
@@ -37,6 +38,13 @@ SET query = '{"status":"approved_history"}',
     update_by = 'admin',
     update_time = CURRENT_TIMESTAMP
 WHERE menu_id = 2084;
+
+UPDATE sys_menu
+SET query = '{"status":"pending_review"}',
+    remark = '待审核及审核中录入快捷视图',
+    update_by = 'admin',
+    update_time = CURRENT_TIMESTAMP
+WHERE menu_id = 2083;
 
 -- Card operators can view card-only dashboard data, generate exports, and
 -- download their shared export history. Deletion remains a supervisor action.

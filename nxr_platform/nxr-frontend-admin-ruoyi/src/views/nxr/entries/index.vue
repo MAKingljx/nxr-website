@@ -63,6 +63,9 @@
             <el-option v-for="s in statusOptions" :key="s.value" :label="s.label" :value="s.value" />
           </el-select>
         </el-form-item>
+        <el-form-item :label="t('entries.entryDate')" prop="createdDate">
+          <el-date-picker v-model="queryParams.createdDate" type="date" value-format="YYYY-MM-DD" clearable />
+        </el-form-item>
         <el-form-item :label="t('entries.sortBy')" prop="sortBy">
           <el-select v-model="queryParams.sortBy">
             <el-option v-for="option in sortOptions" :key="option.value" :label="option.label" :value="option.value" />
@@ -481,6 +484,7 @@ function validateScore(label) {
 }
 
 const statusOptions = [
+  { value: 'pending_review', label: proxy.$tx('Awaiting Review') },
   { value: 'pending', label: t('entries.pending') },
   { value: 'approved', label: t('entries.approved') },
   { value: 'approved_history', label: t('entries.approvedHistory') },
@@ -515,6 +519,7 @@ const data = reactive({
     setName: undefined,
     language: undefined,
     enteredBy: undefined,
+    createdDate: undefined,
     sortBy: 'entry_date',
     sortOrder: 'desc'
   },
@@ -706,6 +711,7 @@ function applyMenuRoute() {
   queryParams.value.query = undefined
   queryParams.value.status = menuStatus()
   queryParams.value.certId = routeQueryValue('certId') || undefined
+  queryParams.value.createdDate = routeQueryValue('createdDate') || undefined
   getList()
 
   if (routeQueryValue('mode') === 'create') {

@@ -45,7 +45,7 @@ class AdminDashboardServiceTest {
         assertThat(service.loadDashboard(false, false).actionItems()).extracting(AdminDashboardService.ActionItem::kind)
             .doesNotContain("support", "finance");
         assertThat(items).filteredOn(item -> "review".equals(item.kind())).singleElement()
-            .satisfies(item -> assertThat(item.targetPath()).isEqualTo("/nxr/cards/pending-review?status=pending&certId=CARD001"));
+            .satisfies(item -> assertThat(item.targetPath()).isEqualTo("/nxr/cards/pending-review?status=pending_review&certId=CARD001"));
         jdbcTemplate.update("UPDATE support_ticket SET status_code='resolved' WHERE id=1");
         jdbcTemplate.update("UPDATE payment_finance_exception SET resolution_status_code='resolved' WHERE id=1");
         assertThat(service.loadDashboard().actionItems()).extracting(AdminDashboardService.ActionItem::kind)

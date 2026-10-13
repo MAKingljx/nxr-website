@@ -129,6 +129,7 @@ export default {
   "Card Dashboard": "卡片概览",
   "Created today": "今日新增",
   "Today's Entries": "今日录入",
+  "Awaiting Review": "待审核汇总",
   "{count} awaiting publication": "{count} 条待发布",
   "April": "四月",
   "Architecture": "系统架构",

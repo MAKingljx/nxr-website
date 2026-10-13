@@ -56,6 +56,16 @@ class AdminCardOperatorServiceTest {
     }
     @AfterEach void close() { validators.close(); }
 
+    @Test void dashboardAndExportGrantsKeepCardOperatorManagementAvailable() {
+        jdbc.update("INSERT INTO sys_menu VALUES(20,'nxr:dashboard:view','0'),(21,'nxr:export:list','0'),(22,'nxr:export:generate','0'),(23,'nxr:export:remove','0')");
+        jdbc.update("INSERT INTO sys_role_menu VALUES(107,20),(107,21),(107,22),(108,20),(108,21),(108,22),(108,23)");
+        assertThat(service.list(50,1,20,null,null).total()).isEqualTo(2);
+        var created = create(50, new AdminCardOperatorService.CreateRequest("export_card_01","Card uploader","UploadPass1"));
+        assertThat(jdbc.queryForList("SELECT role_id FROM sys_user_role WHERE user_id=?",Long.class,created.userId())).containsExactly(107L);
+        jdbc.update("INSERT INTO sys_role_menu VALUES(107,9)");
+        assertThatThrownBy(() -> service.list(50,1,20,null,null)).isInstanceOf(ResponseStatusException.class);
+    }
+
     @Test void onlyPureOperatorsAppearIncludingExistingAdminCreatedAccounts() {
         var page = service.list(50, 1, 20, null, null);
         assertThat(page.total()).isEqualTo(2);

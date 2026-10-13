@@ -330,6 +330,23 @@ class AdminSubmissionServiceTest {
             .containsExactlyInAnyOrder("approved", "published");
     }
 
+    @Test
+    void dashboardDrilldownsMatchDateBoundsAndBothPendingStates() {
+        service.createSubmission(request("5703018401", "merch_product", null, "trading_card", null));
+        service.createSubmission(request("5703018402", "merch_product", null, "trading_card", null));
+        service.createSubmission(request("5703018403", "merch_product", null, "trading_card", null));
+        jdbcTemplate.update("UPDATE grading_submission SET created_at='2026-10-13 00:00:00' WHERE cert_id='5703018401'");
+        jdbcTemplate.update("UPDATE grading_submission SET created_at='2026-10-13 23:59:59',status_code='review' WHERE cert_id='5703018402'");
+        jdbcTemplate.update("UPDATE grading_submission SET created_at='2026-10-14 00:00:00' WHERE cert_id='5703018403'");
+        var filter = new AdminSubmissionService.SubmissionListFilter(1,200,"pending_review",null,null,null,null,null,
+            null,null,null,null,null,"cert_id","asc");
+        var result = service.listSubmissions(filter, null, java.time.LocalDate.of(2026,10,13));
+        assertThat(result.pageSize()).isEqualTo(200);
+        assertThat(result.items()).extracting(AdminSubmissionService.SubmissionListItem::certId)
+            .containsExactly("5703018401","5703018402");
+        assertThat(result.total()).isEqualTo(2);
+    }
+
     private AdminSubmissionService.MutateSubmissionRequest request(
         String certId,
         String productType,
