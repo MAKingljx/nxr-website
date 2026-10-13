@@ -14,6 +14,7 @@ import requests
 from flask import Flask, Response, jsonify, redirect, render_template, request, send_from_directory, stream_with_context
 from nxr_common import db
 from nxr_site import collector
+from nxr_site.java_cards import JavaCardLookupUnavailable, published_card_redirect
 
 SITE_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SITE_DIR.parent
@@ -881,6 +882,10 @@ def about():
 @app.route("/card/<cert_id>")
 def card_page(cert_id):
     card = get_card(cert_id)
+    if card is None:
+        fallback = java_card_fallback(cert_id)
+        if fallback is not None:
+            return fallback
     status_code = 200 if card else 404
     collector_context = collector_service.get_card_collectors(card["cert_id"]) if card else {}
     return render_template(
@@ -894,6 +899,26 @@ def card_page(cert_id):
     ), status_code
 
 
+def java_card_fallback(cert_id):
+    try:
+        destination = published_card_redirect(cert_id)
+    except JavaCardLookupUnavailable:
+        app.logger.warning("Java published certificate lookup temporarily unavailable")
+        return Response(
+            render_template(
+                "verify.html", cert_id=cert_id,
+                error="Certificate lookup is temporarily unavailable. Please try again shortly.",
+            ),
+            status=503,
+            headers={"Retry-After": "10", "Cache-Control": "no-store"},
+        )
+    if destination:
+        response = redirect(destination, code=302)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    return None
+
+
 @app.route("/verify", methods=["GET", "POST"])
 def verify():
     if request.method == "POST":
@@ -902,7 +927,10 @@ def verify():
             return render_template("verify.html", error="Please enter a Certificate ID")
         card = get_card(cert_id)
         if not card:
-            return render_template("verify.html", error="Certificate ID not found")
+            fallback = java_card_fallback(cert_id)
+            if fallback is not None:
+                return fallback
+            return render_template("verify.html", error="Certificate ID not found", cert_id=cert_id)
         return redirect(f"/card/{cert_id}")
     return render_template("verify.html")
 
