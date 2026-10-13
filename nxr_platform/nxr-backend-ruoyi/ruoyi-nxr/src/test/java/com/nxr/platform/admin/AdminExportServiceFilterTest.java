@@ -6,7 +6,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.io.ByteArrayInputStream;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.zip.ZipFile;
+import javax.xml.parsers.DocumentBuilderFactory;
+import org.w3c.dom.Element;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -76,7 +81,7 @@ class AdminExportServiceFilterTest {
     }
 
     @Test
-    void generatedWorkbookContainsFullPythonFieldsAndNeverCollides() throws Exception {
+    void generatedWorkbookMatchesLivePythonColumnsAndNeverCollides() throws Exception {
         jdbcTemplate.update(
             "UPDATE grading_submission SET entry_by_label='Python Operator', entry_notes='Intake note' WHERE id=1"
         );
@@ -100,11 +105,11 @@ class AdminExportServiceFilterTest {
         );
         jdbcTemplate.update(
             """
-            INSERT INTO submission_media (submission_id, media_stage_code, media_side_code, public_url)
-            VALUES (1, 'staged', 'front', '/staged/front.webp'),
-                   (1, 'staged', 'back', '/staged/back.webp'),
-                   (1, 'published', 'front', 'https://r2.example/front.webp'),
-                   (1, 'published', 'back', 'https://r2.example/back.webp')
+            INSERT INTO submission_media (submission_id, media_stage_code, media_side_code, public_url, storage_key)
+            VALUES (1, 'staged', 'front', '/staged/front.webp', 'front.webp'),
+                   (1, 'staged', 'back', '/staged/back.webp', 'back.webp'),
+                   (1, 'published', 'front', 'https://r2.example/front.webp', 'front.webp'),
+                   (1, 'published', 'back', 'https://r2.example/back.webp', 'back.webp')
             """
         );
 
@@ -121,14 +126,85 @@ class AdminExportServiceFilterTest {
                 StandardCharsets.UTF_8
             );
             assertThat(sheet)
-                .contains("<t>ai_centering</t>")
+                .doesNotContain("<t>ai_centering</t>")
                 .contains("<t>server_response</t>")
                 .contains("<t>Python Operator</t>")
+                .contains("<t>front.webp</t>")
+                .doesNotContain("<t>/staged/front.webp</t>")
                 .contains("<t>R2 timeout</t>")
                 .contains("<t>{\"ok\":false}</t>");
+            // Golden order from Python's actual SELECT * export, including appended columns.
+            assertThat(cells(first.filename(), 1, 1)).containsExactly(
+                "id", "cert_id", "card_name", "year", "brand", "variety", "pop", "language", "set_name", "card_number",
+                "centering", "edges", "corners", "surface", "final_grade", "final_grade_text", "front_image", "back_image",
+                "entry_notes", "entry_by", "entry_date", "status", "created_at", "updated_at", "upload_status",
+                "upload_started", "upload_completed", "upload_error", "server_response", "published_front_image",
+                "published_back_image", "approved_at", "approval_sequence", "card_category", "movie_name", "release_year",
+                "production_company", "film_type", "sports_type", "group_name", "product_type", "vintage_classification",
+                "merch_description", "landing_page_url"
+            );
         }
         try (var files = Files.list(exportRoot)) {
             assertThat(files.filter(path -> path.getFileName().toString().endsWith(".part"))).isEmpty();
+        }
+    }
+
+    @Test
+    void workbookUsesPythonSummaryStatisticsAndUnscoredProductRules() throws Exception {
+        jdbcTemplate.update("UPDATE grading_submission SET approved_at='2026-10-12 09:00:00' WHERE id<>2");
+        jdbcTemplate.update("UPDATE grading_submission SET approved_at=NULL, updated_at='2026-10-13 12:00:00' WHERE id=2");
+        jdbcTemplate.update("UPDATE grading_score SET final_grade_value=9.25 WHERE submission_id=1");
+        jdbcTemplate.update("INSERT INTO grading_score (submission_id, final_grade_value, final_grade_label, centering_score) VALUES (2,9.5,'9.5',9.5),(3,9.5,'9.5',9.5)");
+        var job = service.generate(new AdminExportService.ExportRequest("all", null, ""), 1L);
+        try (ZipFile workbook = new ZipFile(exportRoot.resolve(job.filename()).toFile())) {
+            String book = new String(workbook.getInputStream(workbook.getEntry("xl/workbook.xml")).readAllBytes(), StandardCharsets.UTF_8);
+            assertThat(book).contains("name=\"Approved Cards\"", "name=\"导出汇总\"", "name=\"评分统计\"");
+        }
+        assertThat(cells(job.filename(), 2, 1)).containsExactly("导出时间", "总记录数", "筛选条件", "数据范围", "包含字段数", "文件名称");
+        assertThat(cells(job.filename(), 2, 2).subList(1, 5)).containsExactly("6", "All Approved Products", "2026-10-12 至 2026-10-12", "44");
+        assertThat(cells(job.filename(), 3, 1)).containsExactly("评分等级", "数量", "占比");
+        assertThat(cells(job.filename(), 3, 2)).containsExactly("9.5", "1", "16.7%");
+        // Merch comes first via the timestamp fallback; its stale scores are not exported.
+        assertThat(cells(job.filename(), 1, 2).subList(10, 16)).containsExactly("", "", "", "", "", "");
+        assertThat(cells(job.filename(), 1, 3).get(14)).isEqualTo("9.2");
+        var merch = service.generate(new AdminExportService.ExportRequest("merch_product", null, ""), 1L);
+        assertThat(cells(merch.filename(), 3, 2)).isEmpty();
+    }
+
+    @Test
+    void exportOrderPreservesApprovalSequenceAndFinalIdTieBreak() {
+        jdbcTemplate.update("UPDATE grading_submission SET approved_at='2026-10-12 09:00:00', approval_sequence=NULL");
+        jdbcTemplate.update("UPDATE grading_submission SET approval_sequence=1 WHERE id IN(3,6)");
+        jdbcTemplate.update("UPDATE grading_submission SET approval_sequence=2, created_at='2026-10-13 15:00:00' WHERE id=1");
+        assertThat(service.preview(new AdminExportService.ExportRequest("all", null, "")).rows())
+            .extracting(AdminExportService.ExportRow::submissionId).containsExactly(3L,6L,1L,2L,4L,5L);
+    }
+
+    @Test
+    void certificateFilterUsesPythonTenDigitContractWithoutChangingAllRecords() {
+        var valid = service.preview(new AdminExportService.ExportRequest("all", null, "9000000001，9000000001;9000000002"));
+        assertThat(valid.certIds()).containsExactly("9000000001", "9000000002");
+        assertThat(valid.totalCount()).isEqualTo(2);
+        var invalid = service.preview(new AdminExportService.ExportRequest("all", null, "VRA003 123 12345678901"));
+        assertThat(invalid.canExport()).isFalse();
+        assertThat(invalid.invalidCertIds()).containsExactly("VRA003", "123", "12345678901");
+        assertThatThrownBy(() -> service.generate(new AdminExportService.ExportRequest("all", null, "VRA003"), 1L))
+            .isInstanceOf(ResponseStatusException.class);
+        assertThat(service.preview(new AdminExportService.ExportRequest("", "9.5", "")).totalCount()).isEqualTo(6);
+    }
+
+    private List<String> cells(String filename, int sheet, int row) throws Exception {
+        try (ZipFile workbook = new ZipFile(exportRoot.resolve(filename).toFile())) {
+            var bytes = workbook.getInputStream(workbook.getEntry("xl/worksheets/sheet" + sheet + ".xml")).readAllBytes();
+            var factory = DocumentBuilderFactory.newInstance();
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            var doc = factory.newDocumentBuilder().parse(new ByteArrayInputStream(bytes));
+            var rows = doc.getElementsByTagName("row");
+            if (row > rows.getLength()) return List.of();
+            var nodes = ((Element) rows.item(row - 1)).getElementsByTagName("c");
+            List<String> result = new ArrayList<>();
+            for (int i=0; i<nodes.getLength(); i++) result.add(nodes.item(i).getTextContent());
+            return result;
         }
     }
 
@@ -206,7 +282,7 @@ class AdminExportServiceFilterTest {
             """
             CREATE TABLE grading_score (
                 submission_id BIGINT PRIMARY KEY,
-                final_grade_value DECIMAL(4,1),
+                final_grade_value DECIMAL(4,2),
                 final_grade_label VARCHAR(64),
                 centering_score DECIMAL(4,1),
                 edges_score DECIMAL(4,1),
@@ -236,7 +312,7 @@ class AdminExportServiceFilterTest {
             """
             CREATE TABLE submission_media (
                 id BIGINT PRIMARY KEY AUTO_INCREMENT, submission_id BIGINT, media_stage_code VARCHAR(16),
-                media_side_code VARCHAR(16), public_url VARCHAR(255), is_active TINYINT DEFAULT 1
+                media_side_code VARCHAR(16), public_url VARCHAR(255), storage_key VARCHAR(255), is_active TINYINT DEFAULT 1
             )
             """
         );

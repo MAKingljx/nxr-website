@@ -1,7 +1,6 @@
 package com.nxr.platform.admin;
 
 import com.nxr.platform.shared.ProductTypePolicy;
-import com.nxr.platform.shared.GradeLabelResolver;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.file.Files;
@@ -11,10 +10,12 @@ import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,8 +29,24 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class AdminExportService {
 
-    private static final Pattern CERT_ID_PATTERN = Pattern.compile("^[A-Za-z0-9_-]{3,64}$");
+    private static final Pattern CERT_ID_PATTERN = Pattern.compile("^[0-9]{10}$");
     private static final DateTimeFormatter FILENAME_TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS");
+    private static final DateTimeFormatter SUMMARY_TIMESTAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static final DateTimeFormatter ROW_TIMESTAMP = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss");
+    // Python exports SELECT * in its live table's historical column order.
+    // Keep the workbook contract explicit; Java-only fields stay out of this legacy format.
+    static final List<String> PYTHON_EXPORT_COLUMNS = List.of(
+        "id", "cert_id", "card_name", "year", "brand", "variety", "pop", "language", "set_name", "card_number",
+        "centering", "edges", "corners", "surface", "final_grade", "final_grade_text", "front_image", "back_image",
+        "entry_notes", "entry_by", "entry_date", "status", "created_at", "updated_at", "upload_status",
+        "upload_started", "upload_completed", "upload_error", "server_response", "published_front_image",
+        "published_back_image", "approved_at", "approval_sequence", "card_category", "movie_name", "release_year",
+        "production_company", "film_type", "sports_type", "group_name", "product_type", "vintage_classification",
+        "merch_description", "landing_page_url"
+    );
+    private static final Set<String> SCORE_COLUMNS = Set.of(
+        "centering", "edges", "corners", "surface", "final_grade", "final_grade_text"
+    );
     private static final String EXPORT_FILTER_ALL = "all";
     private static final String EXPORT_FILTER_GRADE_PREFIX = "grade:";
     private static final String EXPORT_FILTER_MERCH = ProductTypePolicy.MERCH_PRODUCT;
@@ -44,7 +61,6 @@ public class AdminExportService {
 
     private final JdbcClient jdbcClient;
     private final Path exportRoot;
-    private final GradeLabelResolver gradeLabelResolver = new GradeLabelResolver();
 
     public AdminExportService(
         JdbcClient jdbcClient,
@@ -194,61 +210,93 @@ public class AdminExportService {
 
     private List<SimpleXlsxWriter.Sheet> buildSheets(List<ExportRow> rows, ExportFilter filter, String filename) {
         List<List<?>> approvedRows = new ArrayList<>();
-        approvedRows.add(List.of(
-            "id", "cert_id", "card_name", "product_type", "vintage_classification", "merch_description",
-            "card_category", "movie_name", "release_year", "production_company", "film_type", "sports_type",
-            "group_name", "year", "brand", "player", "variety", "pop", "language", "set_name", "card_number",
-            "centering", "edges", "corners", "surface", "final_grade", "final_grade_text", "ai_grade",
-            "ai_centering", "ai_edges", "ai_corners", "ai_surface", "ai_confidence", "decision_method",
-            "decision_notes", "grading_phase", "front_image", "back_image", "published_front_image",
-            "published_back_image", "entry_notes", "entry_by", "entry_date", "approved_at", "approval_sequence",
-            "status", "created_at", "updated_at", "upload_status", "upload_started", "upload_completed",
-            "upload_error", "server_response", "landing_page_url"
-        ));
+        approvedRows.add(PYTHON_EXPORT_COLUMNS);
+        Map<Object, Integer> gradeCounts = new LinkedHashMap<>();
         for (ExportRow row : rows) {
+            Object grade = exportGradeLabel(row);
             approvedRows.add(List.of(
-                row.submissionId(), row.certId(), row.cardName(), row.productType(), cell(row.vintageClassification()),
-                cell(row.merchDescription()), row.cardCategory(), cell(row.movieName()), cell(row.releaseYear()),
-                cell(row.productionCompany()), cell(row.filmType()), cell(row.sportsType()), cell(row.groupName()),
-                cell(row.yearLabel()), row.brandName(), cell(row.playerName()), cell(row.varietyName()),
-                row.populationValue(), row.languageCode(), row.setName(), row.cardNumber(), cell(row.centeringScore()),
-                cell(row.edgesScore()), cell(row.cornersScore()), cell(row.surfaceScore()), cell(row.finalGradeValue()),
-                cell(row.finalGradeLabel()), cell(row.aiGradeValue()), cell(row.aiCenteringScore()),
-                cell(row.aiEdgesScore()), cell(row.aiCornersScore()), cell(row.aiSurfaceScore()),
-                cell(row.aiConfidenceValue()), cell(row.decisionMethod()), cell(row.decisionNotes()),
-                cell(row.gradingPhase()), cell(row.stagedFrontUrl()), cell(row.stagedBackUrl()),
-                cell(row.publishedFrontUrl()), cell(row.publishedBackUrl()), cell(row.entryNotes()),
-                cell(row.enteredBy()), cell(row.entryDate()), cell(row.approvedAt()), cell(row.approvalSequence()),
-                row.statusCode(), cell(row.createdAt()), cell(row.updatedAt()), row.uploadStatus(),
-                cell(row.uploadStartedAt()), cell(row.uploadCompletedAt()), cell(row.uploadError()),
-                cell(row.serverResponse()),
-                "nxrgrading.com/card/" + row.certId()
+                row.submissionId(), row.certId(), cell(row.cardName()), cell(row.yearLabel()), cell(row.brandName()),
+                cell(row.varietyName()), String.valueOf(row.populationValue()), cell(row.languageCode()),
+                cell(row.setName()), cell(row.cardNumber()), exportScore(row, row.centeringScore()),
+                exportScore(row, row.edgesScore()), exportScore(row, row.cornersScore()), exportScore(row, row.surfaceScore()),
+                exportScore(row, row.finalGradeValue()), grade, cell(row.stagedFrontKey()), cell(row.stagedBackKey()),
+                cell(row.entryNotes()), cell(row.enteredBy()), exportTimestamp(row.entryDate()),
+                // Python publication changes upload_status while retaining status=approved.
+                "approved", exportTimestamp(row.createdAt()), exportTimestamp(row.updatedAt()), cell(row.uploadStatus()),
+                exportTimestamp(row.uploadStartedAt()), exportTimestamp(row.uploadCompletedAt()), cell(row.uploadError()),
+                cell(row.serverResponse()), cell(row.publishedFrontUrl()), cell(row.publishedBackUrl()),
+                exportTimestamp(row.approvedAt()), cell(row.approvalSequence()), cell(row.cardCategory()),
+                cell(row.movieName()), cell(row.releaseYear()), cell(row.productionCompany()), cell(row.filmType()),
+                cell(row.sportsType()), cell(row.groupName()), row.productType(), cell(row.vintageClassification()),
+                cell(row.merchDescription()), "nxrgrading.com/card/" + row.certId().trim()
             ));
-        }
-
-        List<List<?>> summaryRows = new ArrayList<>();
-        summaryRows.add(List.of("Export Time", LocalDateTime.now().toString()));
-        summaryRows.add(List.of("Record Count", rows.size()));
-        summaryRows.add(List.of("Filter", filterLabel(filter)));
-        summaryRows.add(List.of("Filename", filename));
-
-        Map<String, Integer> gradeStats = new LinkedHashMap<>();
-        for (ExportRow row : rows) {
-            if (ProductTypePolicy.GRADED_CARD.equals(row.productType())) {
-                gradeStats.merge(row.finalGradeLabel() == null ? "Not graded" : row.finalGradeLabel(), 1, Integer::sum);
+            if (!"".equals(grade)) {
+                gradeCounts.merge(grade, 1, Integer::sum);
             }
         }
+
+        List<List<?>> summaryRows = List.of(
+            List.of("导出时间", "总记录数", "筛选条件", "数据范围", "包含字段数", "文件名称"),
+            List.of(LocalDateTime.now().format(SUMMARY_TIMESTAMP), rows.size(), filterLabel(filter),
+                exportDateRange(rows), PYTHON_EXPORT_COLUMNS.size(), filename)
+        );
         List<List<?>> gradeRows = new ArrayList<>();
-        gradeRows.add(List.of("Grade", "Count", "Percent"));
-        for (Map.Entry<String, Integer> entry : gradeStats.entrySet()) {
-            gradeRows.add(List.of(entry.getKey(), entry.getValue(), Math.round((entry.getValue() * 1000.0 / rows.size())) / 10.0 + "%"));
-        }
+        gradeRows.add(List.of("评分等级", "数量", "占比"));
+        // pandas value_counts orders by frequency, retaining first appearance for ties.
+        gradeCounts.entrySet().stream()
+            .sorted(Map.Entry.<Object, Integer>comparingByValue(Comparator.reverseOrder()))
+            .forEach(entry -> gradeRows.add(List.of(entry.getKey(), entry.getValue(),
+                roundScore(BigDecimal.valueOf(entry.getValue() * 100.0d / rows.size())).toPlainString() + "%")));
 
         return List.of(
-            new SimpleXlsxWriter.Sheet("Approved Cards", approvedRows),
-            new SimpleXlsxWriter.Sheet("Summary", summaryRows),
-            new SimpleXlsxWriter.Sheet("Grade Stats", gradeRows)
+            new SimpleXlsxWriter.Sheet("Approved Cards", approvedRows, SCORE_COLUMNS),
+            new SimpleXlsxWriter.Sheet("导出汇总", summaryRows),
+            new SimpleXlsxWriter.Sheet("评分统计", gradeRows, Set.of("评分等级"))
         );
+    }
+
+    private Object exportScore(ExportRow row, BigDecimal score) {
+        return ProductTypePolicy.GRADED_CARD.equals(row.productType()) && score != null ? roundScore(score) : "";
+    }
+
+    private Object exportGradeLabel(ExportRow row) {
+        if (!ProductTypePolicy.GRADED_CARD.equals(row.productType()) || row.finalGradeLabel() == null) return "";
+        String canonical = normalizeGrade(row.finalGradeLabel());
+        String label = canonical == null ? row.finalGradeLabel() : canonical;
+        try {
+            return roundScore(new BigDecimal(label));
+        } catch (NumberFormatException ignored) {
+            return label;
+        }
+    }
+
+    private BigDecimal roundScore(BigDecimal value) {
+        // pandas/NumPy round(1) uses binary64 multiplication and ties-to-even.
+        return BigDecimal.valueOf(Math.rint(value.doubleValue() * 10.0d) / 10.0d).setScale(1);
+    }
+
+    private String exportTimestamp(LocalDateTime value) {
+        if (value == null) return "";
+        String timestamp = value.format(ROW_TIMESTAMP);
+        int micros = value.getNano() / 1000;
+        return micros == 0 ? timestamp : timestamp + String.format(Locale.ROOT, ".%06d", micros);
+    }
+
+    private String exportDateRange(List<ExportRow> rows) {
+        // Python chooses the first non-empty whole column, not a per-row fallback.
+        List<List<LocalDateTime>> candidates = List.of(
+            rows.stream().map(ExportRow::approvedAt).filter(java.util.Objects::nonNull).toList(),
+            rows.stream().map(ExportRow::entryDate).filter(java.util.Objects::nonNull).toList(),
+            rows.stream().map(ExportRow::createdAt).filter(java.util.Objects::nonNull).toList(),
+            rows.stream().map(ExportRow::updatedAt).filter(java.util.Objects::nonNull).toList()
+        );
+        for (List<LocalDateTime> values : candidates) {
+            if (!values.isEmpty()) {
+                return values.stream().min(Comparator.naturalOrder()).orElseThrow().toLocalDate()
+                    + " 至 " + values.stream().max(Comparator.naturalOrder()).orElseThrow().toLocalDate();
+            }
+        }
+        return "无数据";
     }
 
     private int countRows(ExportFilter filter) {
@@ -316,7 +364,9 @@ public class AdminExportService {
                     us.error_message AS upload_error,
                     us.response_payload_json AS server_response,
                     (SELECT sm.public_url FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='staged' AND sm.media_side_code='front' AND sm.is_active=1 LIMIT 1) AS staged_front_url,
+                    (SELECT sm.storage_key FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='staged' AND sm.media_side_code='front' AND sm.is_active=1 LIMIT 1) AS staged_front_key,
                     (SELECT sm.public_url FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='staged' AND sm.media_side_code='back' AND sm.is_active=1 LIMIT 1) AS staged_back_url,
+                    (SELECT sm.storage_key FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='staged' AND sm.media_side_code='back' AND sm.is_active=1 LIMIT 1) AS staged_back_key,
                     (SELECT sm.public_url FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='published' AND sm.media_side_code='front' AND sm.is_active=1 LIMIT 1) AS published_front_url,
                     (SELECT sm.public_url FROM submission_media sm WHERE sm.submission_id=s.id AND sm.media_stage_code='published' AND sm.media_side_code='back' AND sm.is_active=1 LIMIT 1) AS published_back_url
                 FROM grading_submission s
@@ -324,7 +374,8 @@ public class AdminExportService {
                 LEFT JOIN sys_user u ON u.user_id=s.entry_by_user_id
                 LEFT JOIN submission_upload_state us ON us.submission_id=s.id
                 """ + queryParts.whereClause() + """
-                ORDER BY s.approved_at DESC, s.created_at DESC, s.cert_id ASC
+                ORDER BY COALESCE(s.approved_at, s.updated_at, s.created_at) DESC,
+                         COALESCE(s.approval_sequence, 9223372036854775807) ASC, s.id ASC
                 LIMIT :limit
                 """
             )
@@ -353,7 +404,7 @@ public class AdminExportService {
                 rs.getInt("population_value"),
                 rs.getString("status_code"),
                 rs.getBigDecimal("final_grade_value"),
-                gradeLabelResolver.canonicalOrOriginal(rs.getString("final_grade_label")),
+                rs.getString("final_grade_label"),
                 rs.getBigDecimal("centering_score"),
                 rs.getBigDecimal("edges_score"),
                 rs.getBigDecimal("corners_score"),
@@ -382,7 +433,9 @@ public class AdminExportService {
                 rs.getObject("upload_started_at", LocalDateTime.class),
                 rs.getObject("upload_completed_at", LocalDateTime.class),
                 rs.getString("upload_error"),
-                rs.getString("server_response")
+                rs.getString("server_response"),
+                rs.getString("staged_front_key"),
+                rs.getString("staged_back_key")
             ))
             .list();
     }
@@ -407,7 +460,7 @@ public class AdminExportService {
         switch (filter.kind()) {
             case GRADED -> {
                 where.append(" AND ").append(PRODUCT_TYPE_SQL).append(" = 'graded_card'");
-                where.append(" AND ").append(GradeLabelResolver.canonicalSql("g.final_grade_label"))
+                where.append(" AND ").append(canonicalExportGradeSql("g.final_grade_label"))
                     .append(" = :gradeFilter");
                 params.put("gradeFilter", filter.gradeFilter());
             }
@@ -460,12 +513,14 @@ public class AdminExportService {
     }
 
     private ExportSelection parseSelection(ExportRequest request) {
-        String rawSelection = request == null ? "" : firstNonBlank(request.exportFilter(), request.gradeFilter());
-        if (rawSelection == null || rawSelection.equalsIgnoreCase(EXPORT_FILTER_ALL)) {
+        String rawSelection = request == null ? ""
+            : request.exportFilter() != null ? request.exportFilter().trim()
+            : request.gradeFilter() == null ? "" : request.gradeFilter().trim();
+        if (rawSelection.isEmpty() || rawSelection.equals(EXPORT_FILTER_ALL)) {
             return new ExportSelection(EXPORT_FILTER_ALL, ExportFilterKind.ALL, null, null);
         }
 
-        if (rawSelection.regionMatches(true, 0, EXPORT_FILTER_GRADE_PREFIX, 0, EXPORT_FILTER_GRADE_PREFIX.length())) {
+        if (rawSelection.startsWith(EXPORT_FILTER_GRADE_PREFIX)) {
             String grade = normalizeGrade(rawSelection.substring(EXPORT_FILTER_GRADE_PREFIX.length()));
             if (grade == null) {
                 throw unsupportedFilter();
@@ -473,11 +528,11 @@ public class AdminExportService {
             return new ExportSelection(EXPORT_FILTER_GRADE_PREFIX + grade, ExportFilterKind.GRADED, grade, null);
         }
 
-        if (rawSelection.equalsIgnoreCase(EXPORT_FILTER_MERCH)) {
+        if (rawSelection.equals(EXPORT_FILTER_MERCH)) {
             return new ExportSelection(EXPORT_FILTER_MERCH, ExportFilterKind.MERCH, null, null);
         }
 
-        if (rawSelection.regionMatches(true, 0, EXPORT_FILTER_VINTAGE_PREFIX, 0, EXPORT_FILTER_VINTAGE_PREFIX.length())) {
+        if (rawSelection.startsWith(EXPORT_FILTER_VINTAGE_PREFIX)) {
             String requested = rawSelection.substring(EXPORT_FILTER_VINTAGE_PREFIX.length()).trim().toLowerCase(Locale.ROOT);
             String classification = VINTAGE_CLASSIFICATIONS.get(requested);
             if (classification == null) {
@@ -498,13 +553,6 @@ public class AdminExportService {
         throw unsupportedFilter();
     }
 
-    private String firstNonBlank(String primary, String fallback) {
-        if (primary != null && !primary.isBlank()) {
-            return primary.trim();
-        }
-        return fallback == null || fallback.isBlank() ? null : fallback.trim();
-    }
-
     private String normalizeGrade(String value) {
         String compact = value == null
             ? ""
@@ -517,6 +565,17 @@ public class AdminExportService {
             case "10", "10.0", "10.00" -> "10";
             default -> compact.contains("stine10") ? "Pristine 10" : null;
         };
+    }
+
+    private static String canonicalExportGradeSql(String column) {
+        String value = "TRIM(" + column + ")";
+        return "CASE WHEN " + value + " IN ('8','8.0','8.00') THEN '8' "
+            + "WHEN " + value + " IN ('8.5','8.50') THEN '8.5' "
+            + "WHEN " + value + " IN ('9','9.0','9.00') THEN '9' "
+            + "WHEN " + value + " IN ('9.5','9.50') THEN '9.5' "
+            + "WHEN " + value + " IN ('10','10.0','10.00') THEN '10' "
+            + "WHEN REPLACE(REPLACE(LOWER(" + value + "), ' ', ''), '-', '') LIKE '%stine10%' THEN 'Pristine 10' "
+            + "ELSE NULL END";
     }
 
     private ResponseStatusException unsupportedFilter() {
@@ -554,7 +613,13 @@ public class AdminExportService {
     }
 
     private String filenameFor(ExportFilter filter) {
-        String grade = filter.selection().replaceAll("[^A-Za-z0-9_-]", "_");
+        String suffix = switch (filter.kind()) {
+            case ALL -> "all";
+            case GRADED -> filter.gradeFilter();
+            case MERCH -> EXPORT_FILTER_MERCH;
+            case VINTAGE -> "vintage_" + filter.vintageClassification();
+        };
+        String grade = suffix.replaceAll("[^A-Za-z0-9_.-]", "_");
         String ids = filter.certIds().isEmpty() ? "" : "_ids_" + filter.certIds().size();
         String nonce = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
         return "approved_cards_" + grade + ids + "_" + LocalDateTime.now().format(FILENAME_TIMESTAMP) + "_" + nonce + ".xlsx";
@@ -654,7 +719,9 @@ public class AdminExportService {
         LocalDateTime uploadStartedAt,
         LocalDateTime uploadCompletedAt,
         String uploadError,
-        String serverResponse
+        String serverResponse,
+        String stagedFrontKey,
+        String stagedBackKey
     ) {
     }
 
