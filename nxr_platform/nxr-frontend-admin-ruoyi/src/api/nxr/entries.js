@@ -94,6 +94,7 @@ export function matchCard(data) {
 export function fetchDashboard() {
   return request({
     url: '/api/admin/dashboard',
-    method: 'get'
+    method: 'get',
+    timeout: 30000
   })
 }
