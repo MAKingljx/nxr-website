@@ -27,7 +27,8 @@ class AdminSubmissionControllerSecurityTest {
             String.class,
             String.class,
             String.class,
-            String.class
+            String.class,
+            java.time.LocalDate.class
         );
 
         assertThat(list.getAnnotation(PreAuthorize.class).value())

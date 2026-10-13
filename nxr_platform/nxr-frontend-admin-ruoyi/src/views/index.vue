@@ -1,6 +1,6 @@
 <template>
   <main class="nxr-workspace nxr-dashboard">
-    <nxr-page-header :kicker="$tx('NXR OPERATIONS')" :title="$tx('Operations Dashboard')" :summary="workloadSummary">
+    <nxr-page-header :kicker="dashboardKicker" :title="dashboardTitle" :summary="workloadSummary">
       <template #actions>
         <span class="dashboard-date">{{ todayLabel }}</span>
         <el-tooltip v-if="canViewDashboard" :content="$tx('Refresh data')" placement="bottom">
@@ -29,24 +29,32 @@
           :value="dashboard.totalSubmissions"
           :detail="productMixSummary"
           :icon="Files"
+          interactive
+          @activate="navigate('/nxr/cards/entries')"
         />
         <dashboard-metric-card
           :label="$tx('Pending Review')"
           :value="dashboard.pendingReview"
           :detail="$tx('Awaiting reviewer action')"
           :icon="DocumentChecked"
+          interactive
+          @activate="navigate('/nxr/cards/pending-review?status=pending_review')"
         />
         <dashboard-metric-card
-          :label="$tx('Approved awaiting publication')"
-          :value="dashboard.approvedReady"
-          :detail="$tx('Approved certificates awaiting publication')"
-          :icon="UploadFilled"
-        />
-        <dashboard-metric-card
-          :label="$tx('Published Certificates')"
-          :value="dashboard.publishedCertificates"
-          :detail="$tx('Publication rate {rate}', { rate: publishedRate })"
+          :label="$tx('Approved')"
+          :value="dashboard.approvedEntries"
+          :detail="$tx('{count} awaiting publication', { count: formatNumber(dashboard.approvedReady) })"
           :icon="Medal"
+          interactive
+          @activate="navigate('/nxr/cards/approved-entries?status=approved_history')"
+        />
+        <dashboard-metric-card
+          :label="$tx(`Today's Entries`)"
+          :value="dashboard.todayEntries"
+          :detail="$tx('Created today')"
+          :icon="Calendar"
+          :interactive="Boolean(dashboard.businessDate)"
+          @activate="navigate('/nxr/cards/entries?createdDate=' + dashboard.businessDate)"
         />
       </section>
 
@@ -75,6 +83,7 @@
           :empty-text="$tx('No product data yet')"
         />
         <dashboard-chart
+          v-if="canViewOrders"
           :kicker="$tx('FULFILLMENT')"
           :title="$tx('Order Pipeline')"
           :meta="$tx('{count} orders', { count: formatNumber(orderTotal) })"
@@ -104,6 +113,7 @@
           :entries="dashboard.recentEntries"
           :orders="dashboard.recentOrders"
           :published="dashboard.recentPublished"
+          :show-orders="canViewOrders"
           :loading="loading"
           @navigate="navigate"
         />
@@ -124,7 +134,7 @@
 </template>
 
 <script setup name="Index">
-import { DocumentChecked, Files, Medal, Refresh, UploadFilled } from '@element-plus/icons-vue'
+import { Calendar, DocumentChecked, Files, Medal, Refresh } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import { fetchDashboard } from '@/api/nxr/entries'
 import auth from '@/plugins/auth'
@@ -139,6 +149,7 @@ import DashboardWorkflow from './dashboard/components/DashboardWorkflow.vue'
 const router = useRouter()
 const { locale } = useI18n()
 const canViewDashboard = auth.hasPermi('nxr:dashboard:view')
+const canViewOrders = auth.hasPermi('nxr:order:list') || auth.hasPermi('nxr:order:manage')
 const loading = ref(false)
 const loadError = ref(false)
 const updatedAt = ref('--:--')
@@ -159,6 +170,9 @@ function emptyDashboard() {
     totalSubmissions: 0,
     pendingReview: 0,
     approvedReady: 0,
+    approvedEntries: 0,
+    todayEntries: 0,
+    businessDate: '',
     publishedCertificates: 0,
     waitlistCount: 0,
     activityTrend: [],
@@ -173,12 +187,9 @@ function emptyDashboard() {
 }
 
 const dashboard = ref(emptyDashboard())
+const dashboardKicker = computed(() => (canViewOrders ? tx('NXR OPERATIONS') : tx('CARD MANAGEMENT')))
+const dashboardTitle = computed(() => (canViewOrders ? tx('Operations Dashboard') : tx('Card Dashboard')))
 const pendingWork = computed(() => dashboard.value.pendingReview + dashboard.value.approvedReady)
-const publishedRate = computed(() => {
-  if (!dashboard.value.totalSubmissions) return '0%'
-  const rate = Math.min(100, (dashboard.value.publishedCertificates / dashboard.value.totalSubmissions) * 100)
-  return `${rate.toFixed(1)}%`
-})
 const workloadSummary = computed(() => {
   if (!canViewDashboard) return tx('Use the navigation to open a feature available to this account')
   if (loadError.value) return tx('Operations data failed to load. Try again shortly.')

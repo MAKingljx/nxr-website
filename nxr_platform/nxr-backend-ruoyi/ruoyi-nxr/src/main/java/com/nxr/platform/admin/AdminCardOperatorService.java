@@ -33,7 +33,7 @@ public class AdminCardOperatorService {
         "nxr:entry:list", "nxr:entry:add", "nxr:entry:edit", "nxr:entry:approve",
         "nxr:media:list", "nxr:media:import", "nxr:media:publish",
         "nxr:brand:list", "nxr:brand:add", "nxr:brand:edit",
-        "nxr:export:list", "nxr:export:generate", "nxr:export:remove", "nxr:card:global"
+        "nxr:export:list", "nxr:export:generate", "nxr:export:remove", "nxr:card:global", "nxr:dashboard:view"
     );
     private static final Set<String> ACCOUNT_PERMISSIONS = Set.of(
         "nxr:card-user:list", "nxr:card-user:add", "nxr:card-user:edit", "nxr:card-user:resetPwd"

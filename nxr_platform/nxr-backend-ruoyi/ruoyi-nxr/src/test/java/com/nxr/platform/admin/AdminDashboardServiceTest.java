@@ -3,6 +3,7 @@ package com.nxr.platform.admin;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.nio.file.Path;
 import com.nxr.platform.admin.storage.LocalMediaStorageProvider;
 import com.nxr.platform.admin.storage.MediaStorageRegistry;
@@ -44,7 +45,7 @@ class AdminDashboardServiceTest {
         assertThat(service.loadDashboard(false, false).actionItems()).extracting(AdminDashboardService.ActionItem::kind)
             .doesNotContain("support", "finance");
         assertThat(items).filteredOn(item -> "review".equals(item.kind())).singleElement()
-            .satisfies(item -> assertThat(item.targetPath()).isEqualTo("/nxr/cards/pending-review?status=pending&certId=CARD001"));
+            .satisfies(item -> assertThat(item.targetPath()).isEqualTo("/nxr/cards/pending-review?status=pending_review&certId=CARD001"));
         jdbcTemplate.update("UPDATE support_ticket SET status_code='resolved' WHERE id=1");
         jdbcTemplate.update("UPDATE payment_finance_exception SET resolution_status_code='resolved' WHERE id=1");
         assertThat(service.loadDashboard().actionItems()).extracting(AdminDashboardService.ActionItem::kind)
@@ -73,6 +74,8 @@ class AdminDashboardServiceTest {
         assertThat(dashboard.totalSubmissions()).isEqualTo(3);
         assertThat(dashboard.pendingReview()).isOne();
         assertThat(dashboard.approvedReady()).isOne();
+        assertThat(dashboard.approvedEntries()).isEqualTo(2);
+        assertThat(dashboard.todayEntries()).isEqualTo(3);
         assertThat(dashboard.publishedCertificates()).isOne();
         assertThat(dashboard.waitlistCount()).isOne();
 
@@ -105,10 +108,18 @@ class AdminDashboardServiceTest {
 
         assertThat(dashboard.activityTrend()).hasSize(30);
         assertThat(dashboard.activityTrend().get(29)).satisfies(today -> {
-            assertThat(today.date()).isEqualTo(LocalDate.now());
+            assertThat(today.date()).isEqualTo(LocalDate.now(ZoneId.of("Asia/Shanghai")));
             assertThat(today.created()).isEqualTo(3);
             assertThat(today.published()).isOne();
         });
+
+        AdminDashboardService.AdminDashboardResponse cardOnly = service.loadDashboard(false, false, false, false);
+        assertThat(cardOnly.orderPipeline()).isEmpty();
+        assertThat(cardOnly.recentOrders()).isEmpty();
+        assertThat(cardOnly.waitlistCount()).isZero();
+        assertThat(cardOnly.actionItems()).extracting(AdminDashboardService.ActionItem::kind)
+            .contains("review", "publication")
+            .doesNotContain("order", "payment", "support", "finance");
     }
 
     private void createSchema() {

@@ -4,6 +4,7 @@ import com.nxr.platform.shared.ProductTypePolicy;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -21,6 +22,7 @@ public class AdminDashboardService {
     private static final int TREND_DAYS = 30;
     private static final int RECENT_LIMIT = 5;
     private static final int ACTION_LIMIT = 8;
+    private static final ZoneId BUSINESS_TIME_ZONE = ZoneId.of("Asia/Shanghai");
 
     private final JdbcClient jdbcClient;
     private final AdminMediaService mediaService;
@@ -36,10 +38,20 @@ public class AdminDashboardService {
     }
 
     public AdminDashboardResponse loadDashboard() {
-        return loadDashboard(true, true);
+        return loadDashboard(true, true, true, true);
     }
 
     public AdminDashboardResponse loadDashboard(boolean supportAccess, boolean financeAccess) {
+        return loadDashboard(true, supportAccess, financeAccess, true);
+    }
+
+    public AdminDashboardResponse loadDashboard(
+        boolean orderAccess,
+        boolean supportAccess,
+        boolean financeAccess,
+        boolean waitlistAccess
+    ) {
+        boolean includeOrders = orderAccess;
         Integer totalSubmissions = jdbcClient.sql("SELECT COUNT(*) FROM grading_submission")
             .query(Integer.class)
             .single();
@@ -53,32 +65,42 @@ public class AdminDashboardService {
             )
             .query(Integer.class)
             .single();
+        Integer approvedEntries = jdbcClient.sql(
+                "SELECT COUNT(*) FROM grading_submission WHERE status_code IN ('approved', 'published')"
+            )
+            .query(Integer.class)
+            .single();
         Integer publishedCertificates = jdbcClient.sql("SELECT COUNT(*) FROM published_certificate")
             .query(Integer.class)
             .single();
-        Integer waitlistCount = jdbcClient.sql("SELECT COUNT(*) FROM waitlist_email")
-            .query(Integer.class)
-            .single();
+        Integer waitlistCount = waitlistAccess
+            ? jdbcClient.sql("SELECT COUNT(*) FROM waitlist_email").query(Integer.class).single()
+            : 0;
+        List<DailyActivity> activityTrend = loadActivityTrend();
+        int todayEntries = activityTrend.isEmpty() ? 0 : activityTrend.get(activityTrend.size() - 1).created();
 
         return new AdminDashboardResponse(
             totalSubmissions,
             pendingReview,
             approvedReady,
+            approvedEntries,
+            todayEntries,
+            activityTrend.get(activityTrend.size() - 1).date(),
             publishedCertificates,
             waitlistCount,
-            loadActivityTrend(),
+            activityTrend,
             loadProductMix(),
-            loadOrderPipeline(),
+            includeOrders ? loadOrderPipeline() : List.of(),
             loadMediaStatus(),
-            loadActionItems(supportAccess, financeAccess),
+            loadActionItems(includeOrders, supportAccess, financeAccess),
             loadRecentEntries(),
-            loadRecentOrders(),
+            includeOrders ? loadRecentOrders() : List.of(),
             loadRecentPublished()
         );
     }
 
     private List<DailyActivity> loadActivityTrend() {
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.now(BUSINESS_TIME_ZONE);
         LocalDate firstDay = today.minusDays(TREND_DAYS - 1L);
         LocalDateTime fromDate = firstDay.atStartOfDay();
         Map<LocalDate, DailyActivityAccumulator> activityByDate = new LinkedHashMap<>();
@@ -294,7 +316,7 @@ public class AdminDashboardService {
             .list().stream().mapToInt(available -> available ? 1 : 0).sum();
     }
 
-    private List<ActionItem> loadActionItems(boolean supportAccess, boolean financeAccess) {
+    private List<ActionItem> loadActionItems(boolean orderAccess, boolean supportAccess, boolean financeAccess) {
         List<ActionItem> items = new ArrayList<>();
 
         items.addAll(jdbcClient.sql(
@@ -313,7 +335,7 @@ public class AdminDashboardService {
                 rs.getString("card_name"),
                 rs.getString("status_code"),
                 rs.getObject("created_at", LocalDateTime.class),
-                "/nxr/cards/pending-review?status=pending&certId=" + queryValue(rs.getString("cert_id"))
+                "/nxr/cards/pending-review?status=pending_review&certId=" + queryValue(rs.getString("cert_id"))
             ))
             .list());
 
@@ -376,25 +398,27 @@ public class AdminDashboardService {
             ))
             .list());
 
-        items.addAll(jdbcClient.sql(
-                """
-                SELECT id, order_no, status_code, created_at
-                FROM grading_order
-                WHERE status_code NOT IN ('delivered', 'cancelled')
-                ORDER BY created_at ASC, id ASC
-                LIMIT 5
-                """
-            )
-            .query((rs, rowNum) -> new ActionItem(
-                rs.getLong("id"),
-                isPaymentStatus(rs.getString("status_code")) ? "payment" : "order",
-                rs.getString("order_no"),
-                null,
-                rs.getString("status_code"),
-                rs.getObject("created_at", LocalDateTime.class),
-                "/nxr/submissions/orders?orderId=" + rs.getLong("id")
-            ))
-            .list());
+        if (orderAccess) {
+            items.addAll(jdbcClient.sql(
+                    """
+                    SELECT id, order_no, status_code, created_at
+                    FROM grading_order
+                    WHERE status_code NOT IN ('delivered', 'cancelled')
+                    ORDER BY created_at ASC, id ASC
+                    LIMIT 5
+                    """
+                )
+                .query((rs, rowNum) -> new ActionItem(
+                    rs.getLong("id"),
+                    isPaymentStatus(rs.getString("status_code")) ? "payment" : "order",
+                    rs.getString("order_no"),
+                    null,
+                    rs.getString("status_code"),
+                    rs.getObject("created_at", LocalDateTime.class),
+                    "/nxr/submissions/orders?orderId=" + rs.getLong("id")
+                ))
+                .list());
+        }
 
         if (supportAccess) items.addAll(jdbcClient.sql("""
                 SELECT t.id, t.order_id, t.ticket_no, t.subject, t.status_code, t.updated_at
@@ -545,6 +569,9 @@ public class AdminDashboardService {
         int totalSubmissions,
         int pendingReview,
         int approvedReady,
+        int approvedEntries,
+        int todayEntries,
+        LocalDate businessDate,
         int publishedCertificates,
         int waitlistCount,
         List<DailyActivity> activityTrend,
