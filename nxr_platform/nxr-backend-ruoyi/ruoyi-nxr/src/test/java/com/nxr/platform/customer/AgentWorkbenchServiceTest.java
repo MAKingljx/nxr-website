@@ -50,6 +50,7 @@ class AgentWorkbenchServiceTest {
     private MerchantBatchService batches;
     private CustomerOrderPhotoService photos;
     private OrderAdmissionService admission;
+    private AgentOrderService orders;
     private CustomerPortalService cancellationPortal;
     private final AtomicInteger sequence=new AtomicInteger(100);
 
@@ -89,6 +90,139 @@ class AgentWorkbenchServiceTest {
         photos=new CustomerOrderPhotoService(client,jdbc,new MediaCapacityService(0),directory.toString());
         admission=mock(OrderAdmissionService.class); when(admission.maxCardsPerOrder()).thenReturn(200);
         service=new AgentWorkbenchService(client,fulfillment,batches,photos,new ObjectMapper().findAndRegisterModules(),admission);
+        jdbc.execute("CREATE TABLE brand_settings(id BIGINT AUTO_INCREMENT PRIMARY KEY,name VARCHAR(128),sort_order INT,is_active INT)");
+        jdbc.execute("CREATE TABLE sys_dict_data(dict_code BIGINT AUTO_INCREMENT PRIMARY KEY,dict_type VARCHAR(100),dict_value VARCHAR(100),dict_label VARCHAR(100),status VARCHAR(1),dict_sort INT)");
+        jdbc.update("INSERT INTO brand_settings(name,sort_order,is_active) VALUES('Pokemon',1,1),('Inactive Brand',2,0)");
+        jdbc.update("INSERT INTO sys_dict_data(dict_type,dict_value,dict_label,status,dict_sort) VALUES('nxr_product_type','graded_card','Graded Card','0',1),('nxr_product_type','vintage_product','Vintage Card','0',2),('nxr_product_type','merch_product','Merch Product','0',3),('nxr_card_category','trading_card','Trading Card','0',1),('nxr_card_category','disabled_category','Disabled','1',2),('nxr_language','EN','English','0',1)");
+        var returns=mock(PartnerReturnService.class);
+        when(returns.progress(anyLong())).thenReturn(new PartnerReturnService.OrderReturnProgress(1,0,0,0,0));
+        orders=new AgentOrderService(client,jdbc,service,fulfillment,photos,admission,returns,new ObjectMapper().findAndRegisterModules());
+    }
+
+    @Test void completeCustomerOrderCreatesReadyInventoryWithPermanentNumberAndIndependentSnapshot() throws Exception {
+        var first=createOrder(1,orderRequest(1,"customer-order-1"));
+        var second=createOrder(1,orderRequest(1,"customer-order-2"));
+        assertThat(first.order().orderNo()).isEqualTo("NXR-"+String.format(java.util.Locale.ROOT,"%06d",first.order().id()));
+        assertThat(first.order().statusCode()).isEqualTo("ready");
+        assertThat(first.order().canSubmit()).isTrue(); assertThat(first.order().legacy()).isFalse();
+        assertThat(first.order().gradingOrderId()).isNull();
+        assertThat(first.cards()).singleElement().satisfies(card->{
+            assertThat(card.brandName()).isEqualTo("Pokemon"); assertThat(card.setName()).isEqualTo("Base Set");
+            assertThat(card.productType()).isEqualTo("graded_card"); assertThat(card.category()).isEqualTo("trading_card");
+            assertThat(card.officialCardNumber()).isEqualTo("001/102"); assertThat(card.statusCode()).isEqualTo("in_stock");
+            assertThat(card.checkedInAt()).isNotNull();
+        });
+        assertThat(first.cards().get(0).clientId()).isNotEqualTo(second.cards().get(0).clientId());
+        jdbc.update("UPDATE agent_client SET display_name='Later edit',phone='999',email='other@example.test' WHERE id=?",first.cards().get(0).clientId());
+        var reread=orders.detail(1,first.order().id());
+        assertThat(reread.order().clientName()).isEqualTo("Same customer");
+        assertThat(reread.order().phone()).isEqualTo("15550001111");
+        assertThat(reread.cards().get(0).clientName()).isEqualTo("Same customer");
+        assertThat(orders.list(1,1,20,first.order().orderNo(),"ready").items()).hasSize(1);
+        assertThat(orders.list(2,1,20,null,null).items()).isEmpty();
+        assertThatThrownBy(()->orders.detail(2,first.order().id())).hasMessageContaining("404");
+        assertThat(orders.options(1).productTypes()).extracting(AgentOrderService.Option::value)
+            .containsExactly("graded_card","vintage_product");
+    }
+
+    @Test void orderReplayIsAtomicAndRejectsConflictingPayloadBeforeReclaimingPhotos() throws Exception {
+        var request=orderRequest(1,"same-order-key");
+        var pool=Executors.newFixedThreadPool(2);
+        try {
+            Callable<AgentOrderService.Detail> call=()->createOrder(1,request);
+            var a=pool.submit(call); var b=pool.submit(call);
+            assertThat(a.get(15,TimeUnit.SECONDS).order().id()).isEqualTo(b.get(15,TimeUnit.SECONDS).order().id());
+        } finally {pool.shutdownNow();}
+        assertThat(count("agent_client")).isEqualTo(1); assertThat(count("agent_intake")).isEqualTo(1); assertThat(count("agent_card")).isEqualTo(1);
+        var changed=new AgentOrderService.CreateRequest("Different customer",request.phone(),request.email(),request.notes(),request.cards(),request.requestKey());
+        assertThatThrownBy(()->createOrder(1,changed)).hasMessageContaining("409");
+        assertThat(count("agent_intake")).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM customer_order_photo WHERE preserved_for_agent=1",Integer.class)).isEqualTo(2);
+        // Retrying a saved request must not fail because an option was later disabled.
+        jdbc.update("UPDATE brand_settings SET is_active=0");
+        assertThat(createOrder(1,request).order().id()).isEqualTo(1);
+    }
+
+    @Test void orderRequiresContactControlledFieldsAndDistinctOwnedPhotos() throws Exception {
+        var request=orderRequest(1,"invalid-order"); var card=request.cards().get(0);
+        assertThatThrownBy(()->createOrder(1,new AgentOrderService.CreateRequest("A",null,null,null,request.cards(),"no-contact")))
+            .hasMessageContaining("phone number or email");
+        assertThatThrownBy(()->createOrder(1,new AgentOrderService.CreateRequest("A",null,"invalid",null,request.cards(),"bad-email")))
+            .hasMessageContaining("valid email");
+        for(var invalid:List.of(
+            new AgentOrderService.CardInput(card.cardName(),"Inactive Brand",card.setName(),card.officialCardNumber(),"EN","graded_card","trading_card",card.frontPhotoId(),card.backPhotoId()),
+            new AgentOrderService.CardInput(card.cardName(),"Pokemon",card.setName(),card.officialCardNumber(),"EN","merch_product","trading_card",card.frontPhotoId(),card.backPhotoId()),
+            new AgentOrderService.CardInput(card.cardName(),"Pokemon",card.setName(),card.officialCardNumber(),"EN","graded_card","disabled_category",card.frontPhotoId(),card.backPhotoId()),
+            new AgentOrderService.CardInput(card.cardName(),"Pokemon","",card.officialCardNumber(),"EN","graded_card","trading_card",card.frontPhotoId(),card.backPhotoId()),
+            new AgentOrderService.CardInput(card.cardName(),"Pokemon",card.setName(),card.officialCardNumber(),"EN","graded_card","trading_card",card.frontPhotoId(),null),
+            new AgentOrderService.CardInput(card.cardName(),"Pokemon",card.setName(),card.officialCardNumber(),"EN","graded_card","trading_card",card.frontPhotoId(),card.frontPhotoId())
+        )) {
+            assertThatThrownBy(()->createOrder(1,new AgentOrderService.CreateRequest("A","1",null,null,List.of(invalid),UUID.randomUUID().toString())))
+                .isInstanceOf(ResponseStatusException.class);
+        }
+        long foreignPhoto=uploadStandalonePhoto(2);
+        var foreign=new AgentOrderService.CardInput(card.cardName(),"Pokemon",card.setName(),card.officialCardNumber(),"EN","graded_card","trading_card",card.frontPhotoId(),foreignPhoto);
+        assertThatThrownBy(()->createOrder(1,new AgentOrderService.CreateRequest("A","1",null,null,List.of(foreign),"foreign-photo")))
+            .hasMessageContaining("404");
+        assertThat(count("agent_intake")).isZero(); assertThat(count("agent_client")).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM customer_order_photo WHERE preserved_for_agent=1",Integer.class)).isZero();
+    }
+
+    @Test void failedCardInsertRollsBackCustomerOrderAndPhotoPreservation() throws Exception {
+        var request=orderRequest(1,"failed-insert");
+        jdbc.execute("ALTER TABLE agent_card ADD CONSTRAINT reject_fixture_set CHECK (set_name<>'Base Set')");
+        assertThatThrownBy(()->createOrder(1,request)).isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        for(String table:List.of("agent_client","agent_intake","agent_card","agent_event")) assertThat(count(table)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM customer_order_photo WHERE preserved_for_agent=1",Integer.class)).isZero();
+        for(var card:request.cards()) {photos.requireOwnedPhoto(1,card.frontPhotoId());photos.requireOwnedPhoto(1,card.backPhotoId());}
+    }
+
+    @Test void newOrderSubmissionCopiesCompleteMetadataAndKeepsExistingAdmissionFlow() throws Exception {
+        var created=createOrder(1,orderRequest(1,"full-order"));
+        var saved=submit(service.intakeDetail(1,created.order().id()),"full-submit");
+        var captor=org.mockito.ArgumentCaptor.forClass(CustomerPortalService.CreateOrderRequest.class);
+        verify(portal).createOrderWithBatchQuote(eq(1L),captor.capture(),any(),any());
+        assertThat(captor.getValue().items()).singleElement().satisfies(item->{
+            assertThat(item.brandName()).isEqualTo("Pokemon"); assertThat(item.setName()).isEqualTo("Base Set");
+            assertThat(item.productType()).isEqualTo("graded_card"); assertThat(item.category()).isEqualTo("trading_card");
+            assertThat(item.cardNumber()).isEqualTo("001/102");
+        });
+        var after=orders.detail(1,created.order().id());
+        assertThat(after.order().orderNo()).isEqualTo(created.order().orderNo());
+        assertThat(after.order().gradingOrderNo()).startsWith("NXR-TEST-");
+        assertThat(after.order().statusCode()).isEqualTo("admission_review"); assertThat(after.order().canSubmit()).isFalse();
+        assertThat(after.order().batchId()).isEqualTo(saved.batchId());
+        var card=after.cards().get(0);
+        assertThat(jdbc.queryForObject("SELECT front_photo_id FROM grading_order_item WHERE id=?",Long.class,card.orderItemId())).isEqualTo(card.frontPhotoId());
+        assertThat(jdbc.queryForObject("SELECT back_photo_id FROM grading_order_item WHERE id=?",Long.class,card.orderItemId())).isEqualTo(card.backPhotoId());
+        assertThat(photos.attachedOrderId(card.frontPhotoId())).isEqualTo(after.order().gradingOrderId());
+    }
+
+    @Test void missingNewOrderPhotoCannotBeSubmittedButLegacyIntakesKeepTheirOriginalContract() throws Exception {
+        var created=createOrder(1,orderRequest(1,"photo-required"));
+        jdbc.update("UPDATE agent_card SET back_photo_id=NULL WHERE intake_id=?",created.order().id());
+        assertThatThrownBy(()->submit(service.intakeDetail(1,created.order().id()),"missing-photo-submit"))
+            .hasMessageContaining("front and back photos");
+        assertThat(count("grading_order")).isZero(); assertThat(count("merchant_order_batch")).isZero();
+        Client client=createClient(1,"OLD"); var legacy=ready(client.id(),1,"old-intake");
+        String oldNo=legacy.intake().intakeNo();
+        assertThat(orders.detail(1,legacy.intake().id()).order().legacy()).isTrue();
+        assertThat(submit(legacy,"legacy-submit").batchNo()).isNotBlank();
+        assertThat(orders.detail(1,legacy.intake().id()).order().orderNo()).isEqualTo(oldNo);
+    }
+
+    private long uploadStandalonePhoto(long owner) throws Exception {
+        ByteArrayOutputStream bytes=new ByteArrayOutputStream();
+        ImageIO.write(new BufferedImage(20,30,BufferedImage.TYPE_INT_RGB),"png",bytes);
+        return tx.execute(s->photos.upload(owner,new MockMultipartFile("file","card.png","image/png",bytes.toByteArray()))).id();
+    }
+    private AgentOrderService.CreateRequest orderRequest(long owner,String key) throws Exception {
+        return new AgentOrderService.CreateRequest("Same customer","15550001111","same@example.test","Customer order",
+            List.of(new AgentOrderService.CardInput("Pikachu","Pokemon","Base Set","001/102","EN","graded_card","trading_card",
+                uploadStandalonePhoto(owner),uploadStandalonePhoto(owner))),key);
+    }
+    private AgentOrderService.Detail createOrder(long owner,AgentOrderService.CreateRequest request) {
+        return tx.execute(s->orders.create(owner,request));
     }
 
     @Test void tenantAndMerchantChecksApplyToEveryEntryAndClientArchivesRetainHistory() {

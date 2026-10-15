@@ -51,12 +51,12 @@
         <el-descriptions-item :label="$tx('Accepted version')">{{ admission.acceptedTermsVersion || '-' }}</el-descriptions-item>
         <el-descriptions-item :label="$tx('Confirmed At')">{{ formatTime(admission.termsAcceptedAt) }}</el-descriptions-item>
         <el-descriptions-item :label="$tx('Review note')" :span="3">{{ admission.decisionNote || '-' }}</el-descriptions-item>
-        <el-descriptions-item :label="$tx('Turnaround statement')" :span="3">{{ admission.turnaroundText || '-' }}</el-descriptions-item>
+        <el-descriptions-item :label="$tx('Turnaround statement')" :span="3">{{ localizeOrderTerms(admission.turnaroundText) || '-' }}</el-descriptions-item>
       </el-descriptions>
 
       <div v-if="admission.termsText" class="terms-block">
         <strong>{{ $tx('Approved terms snapshot') }}</strong>
-        <p>{{ admission.termsText }}</p>
+        <p>{{ localizeOrderTerms(admission.termsText) }}</p>
       </div>
 
       <div v-if="admission.supplementalPhotoIds?.length" class="supplemental-block">
@@ -122,8 +122,8 @@
             :timestamp="formatTime(event.createdAt)"
             placement="top"
           >
-            <div class="history-title">{{ event.title || statusLabel(event.eventCode) }}</div>
-            <p v-if="event.detail">{{ event.detail }}</p>
+            <div class="history-title">{{ event.title ? $tx(event.title) : statusLabel(event.eventCode) }}</div>
+            <p v-if="event.detail">{{ localizeOrderEventDetail(event) }}</p>
             <small>{{ actorLabel(event.actorType) }}</small>
           </el-timeline-item>
         </el-timeline>
@@ -163,6 +163,7 @@
 </template>
 
 <script setup>
+import { localizeOrderTerms, localizeOrderEventDetail } from '@/i18n'
 import { computed, getCurrentInstance, reactive, ref, watch } from 'vue'
 import { decideOrderAdmission, getOrderAdmission, getOrderAdmissionConfig, updateOrderAdmissionConfig } from '@/api/nxr/orderAdmission'
 import OrderApplicationPhoto from './OrderApplicationPhoto.vue'
@@ -195,7 +196,8 @@ function statusLabel(value) {
     submitted: proxy.$tx('Submitted'),
     resubmitted: proxy.$tx('Resubmitted'),
     information_requested: proxy.$tx('Information requested'),
-    terms_accepted: proxy.$tx('Terms confirmed')
+    terms_accepted: proxy.$tx('Terms confirmed'),
+    payment_expired: proxy.$tx('Payment deadline expired')
   }[value] || value || proxy.$tx('Not available')
 }
 
@@ -207,7 +209,7 @@ function statusType(value) {
 }
 
 function actorLabel(value) {
-  return value === 'customer' ? proxy.$tx('Customer') : value === 'admin' ? proxy.$tx('Staff') : value || '-'
+  return value === 'customer' ? proxy.$tx('Customer') : value === 'admin' ? proxy.$tx('Staff') : value === 'system' ? proxy.$tx('System') : value || '-'
 }
 
 function formatTime(value) {

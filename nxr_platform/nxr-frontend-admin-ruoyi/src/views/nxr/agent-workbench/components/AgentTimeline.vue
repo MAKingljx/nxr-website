@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { tx } from '@/i18n'
 import { useAgentApi } from '../lib/agentWorkbench'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { agentDateLabel, agentEventLabel, emptyAgentPage, type AgentEvent } from '../lib/agentWorkbench'
 import AgentPagination from './AgentPagination.vue'
 const api = useAgentApi()
@@ -35,8 +35,14 @@ async function load(page = 1) {
   finally { if (current === generation) loading.value = false }
 }
 function toggle(event: Event) { open.value = (event.target as HTMLDetailsElement).open; if (open.value && !loaded.value) load() }
-watch(() => [JSON.stringify(props.scope), props.events[0]?.id], () => { generation++; loaded.value = false; if (open.value) load() })
+// Parents create fresh scope objects while rendering. Only a real scope/event
+// change invalidates an in-flight request; otherwise loading can remain stuck.
+watch(() => JSON.stringify([props.scope, props.events[0]?.id]), () => {
+  generation++; loaded.value = false; loading.value = false; error.value = ''
+  if (open.value) void load()
+})
 onMounted(() => load())
+onBeforeUnmount(() => { generation++ })
 </script>
 <template>
   <details open class="agent-history" @toggle="toggle"><summary>{{ loaded ? $tx('Status history ({count})', { count: history.total }) : $tx('Status history') }}</summary>

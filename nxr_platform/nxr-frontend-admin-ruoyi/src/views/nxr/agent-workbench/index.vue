@@ -16,7 +16,7 @@ const management = shallowRef(createAgentApi()), activeApi = shallowRef<AgentApi
 const company = ref<Company | null>(null), platformManager = ref(false), companies = ref<Company[]>([])
 const selectedId = ref<number>(), loading = ref(true), searching = ref(false), error = ref('')
 const view = computed(() => resolveWorkspaceView(route))
-const titles: Record<string, string> = { clients:'Customer records', cards:'Card data', intakes:'Intakes and inventory', batches:'Submission batches', returns:'Customer returns', wallet:'Enterprise credits', addresses:'Return addresses' }
+const titles: Record<string, string> = { orders:'Order', clients:'Customer records', cards:'Card data', intakes:'Intakes and inventory', batches:'Submit', returns:'Customer returns', wallet:'Enterprise credits', addresses:'Return addresses' }
 const title = computed(() => tx(titles[view.value]))
 let generation = 0, searchGeneration = 0, initialization = 0, initializing = false, visible = true
 let scopeCompanyId: number | undefined
@@ -50,7 +50,7 @@ async function selectCompany(id?: number) {
 async function openRecord(row: AgentOverviewRow) {
   if (!row.companyActive) return
   const query: Record<string, string> = { company:String(row.companyId) }
-  if (['clients','intakes','returns'].includes(view.value)) query.record = String(row.id)
+  if (['orders','clients','intakes','returns'].includes(view.value)) query.record = String(row.id)
   if (view.value === 'batches') query.batch = row.reference
   if (view.value === 'wallet' && row.currencyCode) query.currency = row.currencyCode
   await router.push({ path:workspacePath(view.value), query })

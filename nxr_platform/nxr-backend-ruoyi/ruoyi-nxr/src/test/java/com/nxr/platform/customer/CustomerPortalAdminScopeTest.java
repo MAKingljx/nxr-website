@@ -23,6 +23,8 @@ class CustomerPortalAdminScopeTest {
             CREATE TABLE customer_account (
               id BIGINT PRIMARY KEY, email VARCHAR(191), display_name VARCHAR(191)
             );
+            CREATE TABLE merchant_order_batch(id BIGINT PRIMARY KEY,merchant_customer_id BIGINT,status_code VARCHAR(32),batch_no VARCHAR(48));
+            CREATE TABLE merchant_order_batch_item(id BIGINT PRIMARY KEY,batch_id BIGINT,order_id BIGINT UNIQUE,client_reference VARCHAR(128));
             CREATE TABLE commerce_business_line (id BIGINT PRIMARY KEY, is_active TINYINT NOT NULL);
             CREATE TABLE commerce_work_center (id BIGINT PRIMARY KEY, is_active TINYINT NOT NULL);
             CREATE TABLE grading_order (
@@ -42,6 +44,9 @@ class CustomerPortalAdminScopeTest {
         insertOrder(template, 103, 2, 10);
         insertOrder(template, 104, null, null);
 
+        template.update("INSERT INTO merchant_order_batch VALUES(1,7,'received','BATCH-1'),(2,99,'received','OTHER-OWNER')");
+        template.update("INSERT INTO merchant_order_batch_item VALUES(1,1,101,'NXR-000101'),(2,1,102,'NXR-000102'),(3,2,104,'NXR-PRIVATE')");
+
         CustomerPortalService service = new CustomerPortalService(JdbcClient.create(dataSource), template);
         OrderAccessScopeService.AccessScope scope = new OrderAccessScopeService.AccessScope(
             false, List.of(1L), List.of(10L)
@@ -50,6 +55,13 @@ class CustomerPortalAdminScopeTest {
         assertThat(visible.total()).isEqualTo(1);
         assertThat(visible.items()).extracting(CustomerPortalService.OrderListItem::id).containsExactly(101L);
 
+        assertThat(service.listAdminOrders(1,20,null,"nxr-000101",scope).total()).isEqualTo(1);
+        assertThat(service.listAdminOrders(1,20,null,"NXR-000101",scope).items())
+            .extracting(CustomerPortalService.OrderListItem::orderReference).containsExactly("NXR-000101");
+        assertThat(service.listAdminOrders(1,20,null,"NXR-000102",scope).total()).isZero();
+        assertThat(service.listAdminOrders(1,20,null,"NXR-101",scope).items())
+            .extracting(CustomerPortalService.OrderListItem::id).containsExactly(101L);
+        assertThat(service.listAdminOrders(1,20,null,"NXR-PRIVATE",new OrderAccessScopeService.AccessScope(true,List.of(),List.of())).total()).isZero();
         template.update("UPDATE commerce_work_center SET is_active=0 WHERE id=10");
         CustomerPortalService.OrderListResponse deactivated = service.listAdminOrders(1, 20, null, null, scope);
         assertThat(deactivated.total()).isZero();

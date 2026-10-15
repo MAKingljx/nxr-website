@@ -112,3 +112,5 @@ INSERT INTO grading_order_item (id, order_id, item_no, card_name, status_code, g
     (2001, 20, 1, 'Other order card', 'grading', 201),
     (3001, 40, 1, 'Sticker product', 'grading', 301),
     (3002, 40, 2, 'Vintage product', 'grading', 302);
+
+CREATE TABLE order_card_label_print(id BIGINT PRIMARY KEY AUTO_INCREMENT,order_id BIGINT,physical_item_id BIGINT,print_sequence INT,content_fingerprint CHAR(64), UNIQUE(physical_item_id,print_sequence));

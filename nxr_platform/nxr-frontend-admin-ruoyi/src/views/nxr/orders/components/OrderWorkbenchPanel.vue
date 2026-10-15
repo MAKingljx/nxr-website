@@ -6,7 +6,7 @@
       <el-tag v-else type="warning">{{ $tx('Locked by user') }} #{{ snapshot.activeSession.lockedByUserId }}</el-tag>
     </div>
     <NxrCardIdentityPanel :order-id="orderId" compact @loaded="loadIdentities" />
-    <el-alert v-if="snapshot?.workbenchRequired" :closable="false" type="info" show-icon :title="$tx('Return shipping is blocked until the order packing check passes.')" />
+    <el-alert v-if="snapshot?.workbenchRequired" :closable="false" type="info" show-icon :title="$tx(isPartnerOrder ? 'For partial returns, export and scan the selected cards, then finish their return checks.' : 'Return shipping is blocked until the order packing check passes.')" />
     <template v-if="snapshot?.activeSession">
       <el-form :inline="true" class="scan-row" @submit.prevent="scan">
         <el-form-item :label="$tx('Stage')"><el-select v-model="stage" style="width:140px"><el-option :label="$tx('Intake')" value="intake" /><el-option :label="$tx('Label')" value="label" /><el-option :label="$tx('Packing')" value="packing" /></el-select></el-form-item>
@@ -14,7 +14,8 @@
         <el-form-item><el-button type="primary" :loading="scanning" @click="scan">{{ $tx('Scan') }}</el-button></el-form-item>
       </el-form>
     </template>
-    <el-table v-if="snapshot?.items?.length" :data="snapshot.items" size="small" border class="mt12">
+    <el-table v-if="snapshot?.items?.length" :data="snapshot.items" size="small" border class="mt12" row-key="orderItemId" @selection-change="selectedLabelItems=$event">
+      <el-table-column v-if="isPartnerOrder" type="selection" width="48" :selectable="row=>['approved','published'].includes(row.gradingStatusCode)" />
       <el-table-column label="#" prop="itemNo" width="54" />
       <el-table-column :label="$tx('Intake code')" min-width="220"><template #default="scope"><code>{{identities[scope.row.orderItemId]?.receiptCode||scope.row.barcode}}</code></template></el-table-column>
       <el-table-column :label="$tx('Original customer')" min-width="150"><template #default="scope">{{identities[scope.row.orderItemId]?.ownerDisplayName||'—'}}<small v-if="identities[scope.row.orderItemId]?.clientReference"> · {{identities[scope.row.orderItemId].clientReference}}</small></template></el-table-column>
@@ -22,7 +23,7 @@
       <el-table-column :label="$tx('Current label barcode')" min-width="300"><template #default="scope"><template v-if="scope.row.labelBarcode"><code>{{ scope.row.labelBarcode }}</code><el-button link type="primary" @click="copyLabelBarcode(scope.row.labelBarcode)">{{ $tx('Copy') }}</el-button></template><span v-else>-</span></template></el-table-column>
       <el-table-column :label="$tx('Card')" prop="cardName" min-width="160" />
       <el-table-column :label="$tx('Result / Cert')" min-width="180"><template #default="scope">{{ scope.row.finalGradeLabel || scope.row.finalGradeValue || scope.row.vintageClassification || scope.row.merchDescription || scope.row.productType || '-' }} · {{ scope.row.certId || '-' }}</template></el-table-column>
-      <el-table-column :label="$tx('Grading Record')" width="150"><template #default="scope"><el-button v-if="!scope.row.gradingSubmissionId && ownsActiveSession && scope.row.intakeScannedAt" v-hasPermi="['nxr:order:grading']" link type="primary" @click="openSubmission(scope.row)">{{ $tx('Create for card') }}</el-button><span v-else-if="!scope.row.gradingSubmissionId">{{ $tx('Scan intake first') }}</span><el-button v-else-if="scope.row.gradingStatusCode === 'pending'" v-hasPermi="['nxr:entry:approve']" link type="warning" :loading="approvingSubmissionId === scope.row.gradingSubmissionId" @click="approve(scope.row)">{{ $tx('Approve result') }}</el-button><el-tag v-else :type="['approved','published'].includes(scope.row.gradingStatusCode) ? 'success' : 'info'">{{ scope.row.gradingStatusCode }}</el-tag></template></el-table-column>
+      <el-table-column :label="$tx('Grading Record')" width="150"><template #default="scope"><el-button v-if="!scope.row.gradingSubmissionId && ownsActiveSession && scope.row.intakeScannedAt" v-hasPermi="['nxr:order:grading']" link type="primary" @click="openSubmission(scope.row)">{{ $tx('Create for card') }}</el-button><span v-else-if="!scope.row.gradingSubmissionId">{{ $tx('Scan intake first') }}</span><el-button v-else-if="scope.row.gradingStatusCode === 'pending'" v-hasPermi="['nxr:entry:approve']" link type="warning" :loading="approvingSubmissionId === scope.row.gradingSubmissionId" @click="approve(scope.row)">{{ $tx('Approve result') }}</el-button><el-tag v-else :type="['approved','published'].includes(scope.row.gradingStatusCode) ? 'success' : 'info'">{{ $tx(({ pending: 'Pending', approved: 'Approved', published: 'Published', rejected: 'Rejected', draft: 'Draft', cancelled: 'Cancelled' })[scope.row.gradingStatusCode] || scope.row.gradingStatusCode) }}</el-tag></template></el-table-column>
       <el-table-column :label="$tx('Intake')" width="80" align="center"><template #default="scope"><el-icon :color="scope.row.intakeScannedAt ? '#16a34a' : '#9ca3af'"><CircleCheck /></el-icon></template></el-table-column>
       <el-table-column :label="$tx('Label')" width="80" align="center"><template #default="scope"><el-icon :color="scope.row.labelScannedAt ? '#16a34a' : '#9ca3af'"><CircleCheck /></el-icon></template></el-table-column>
       <el-table-column :label="$tx('Packing')" width="80" align="center"><template #default="scope"><el-icon :color="scope.row.packingScannedAt ? '#16a34a' : '#9ca3af'"><CircleCheck /></el-icon></template></el-table-column>
@@ -30,11 +31,12 @@
     <div class="panel-actions">
       <el-input v-model="reprintReason" clearable :placeholder="$tx('Reason required for every reprint')" />
       <el-button :loading="exporting === 'labels'" @click="download('labels')">{{ $tx('Export order labels') }}</el-button>
+      <el-button v-if="isPartnerOrder" :loading="exporting === 'selected-labels'" :disabled="!selectedLabelItems.length" @click="download('labels',true)">{{ $tx('Export selected card labels') }}</el-button>
       <el-button :loading="exporting === 'manifest'" @click="download('manifest')">{{ $tx('Export packing manifest') }}</el-button>
       <el-button v-if="snapshot?.activeSession" type="success" :loading="checking" @click="packingCheck">{{ $tx('Complete packing check') }}</el-button>
       <el-tag v-if="snapshot?.packingCheck?.statusCode === 'passed' && !snapshot.packingCheck.invalidatedAt" type="success">{{ $tx('Packing verified') }}</el-tag>
     </div>
-    <p v-if="snapshot?.printJobs?.length" class="print-history">{{ $tx('Recorded exports') }}: {{ snapshot.printJobs.length }} · {{ $tx('Latest') }} {{ snapshot.printJobs[0].exportTypeCode }} #{{ snapshot.printJobs[0].printSequence }}</p>
+    <p v-if="snapshot?.printJobs?.length" class="print-history">{{ $tx('Recorded exports') }}: {{ snapshot.printJobs.length }} · {{ $tx('Latest') }} {{ $tx(({ labels: 'Labels', manifest: 'Packing manifest' })[snapshot.printJobs[0].exportTypeCode] || snapshot.printJobs[0].exportTypeCode) }} #{{ snapshot.printJobs[0].printSequence }}</p>
 
     <el-dialog v-model="submissionOpen" :title="$tx('Create Grading Record for This Card')" width="min(720px, calc(100vw - 32px))" append-to-body>
       <el-alert type="info" :closable="false" show-icon :title="$tx('This record is created inside the locked order and cannot be linked to another order.')" />
@@ -71,7 +73,7 @@
 </template>
 
 <script setup>
-import { computed, getCurrentInstance, nextTick, ref, watch } from 'vue'
+import { computed, getCurrentInstance, nextTick, ref, watch, onDeactivated } from 'vue'
 import { saveAs } from 'file-saver'
 import NxrCardIdentityPanel from '@/components/NxrCardIdentityPanel.vue'
 import { ElMessage } from 'element-plus'
@@ -87,6 +89,8 @@ const { proxy } = getCurrentInstance()
 const { nxr_vintage_classification } = proxy.useDict('nxr_vintage_classification')
 const snapshot = ref(null)
 const identities = ref({})
+const selectedLabelItems = ref([])
+const isPartnerOrder = computed(() => Object.values(identities.value).some(card => card.sourceType === 'partner'))
 function loadIdentities(value) {
   identities.value = Object.fromEntries(value.items.map(card => [card.orderItemId, card]))
   if (value.items.every(card => card.physicalBarcode) && snapshot.value?.items?.length !== value.items.length) void load()
@@ -104,6 +108,7 @@ const checking = ref(false)
 const exporting = ref('')
 const submissionOpen = ref(false)
 const creatingSubmission = ref(false)
+onDeactivated(() => { submissionOpen.value = false })
 const approvingSubmissionId = ref(null)
 const activeWorkbenchItem = ref(null)
 const scoreFields = [{ key: 'centeringScore', label: 'Centering' }, { key: 'edgesScore', label: 'Edges' }, { key: 'cornersScore', label: 'Corners' }, { key: 'surfaceScore', label: 'Surface' }]
@@ -153,18 +158,19 @@ async function scan() {
 }
 async function copyLabelBarcode(value) {
   await navigator.clipboard.writeText(value)
-  ElMessage.success('Copied')
+  ElMessage.success(proxy.$tx('Copied'))
 }
 async function packingCheck() {
   if (!snapshot.value?.activeSession) return
   checking.value = true
   try { snapshot.value = (await completeOrderPackingCheck(props.orderId, { sessionId: snapshot.value.activeSession.id })).data } finally { checking.value = false }
 }
-async function download(type) {
-  exporting.value = type
+async function download(type, selectedOnly = false) {
+  if (selectedOnly && !selectedLabelItems.value.length) return
+  exporting.value = selectedOnly ? 'selected-labels' : type
   try {
     const call = type === 'labels' ? exportOrderLabels : exportOrderManifest
-    const blob = await call(props.orderId, { reprintReason: reprintReason.value })
+    const blob = await call(props.orderId, { reprintReason: reprintReason.value, ...(selectedOnly ? {orderItemIds:selectedLabelItems.value.map(item=>item.orderItemId)} : {}) })
     saveAs(new Blob([blob], { type: 'text/csv;charset=UTF-8' }), `nxr-order-${props.orderId}-${type}.csv`)
     reprintReason.value = ''
     await load()

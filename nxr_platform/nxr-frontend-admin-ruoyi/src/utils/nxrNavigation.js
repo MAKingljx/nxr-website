@@ -1,5 +1,5 @@
 import { i18n } from '@/i18n'
-import { groupSubmissionWorkspaceRoutes } from './submissionWorkspace.js'
+import { groupSubmissionWorkspaceRoutes, addPartnerFulfillmentRoute } from './submissionWorkspace.js'
 
 const HIDDEN_TOOL_COMPONENTS = new Set(['tool/build/index', 'tool/gen/index', 'tool/swagger/index'])
 
@@ -128,5 +128,5 @@ function normalizeRoute(route) {
 
 export function prepareNxrBusinessRoutes(routes = []) {
   const normalized = routes.map((route) => normalizeRoute(route)).filter(Boolean)
-  return groupSubmissionWorkspaceRoutes(normalized, key => i18n.global.t(key))
+  return addPartnerFulfillmentRoute(groupSubmissionWorkspaceRoutes(normalized, key => i18n.global.t(key)), key => i18n.global.t(key))
 }

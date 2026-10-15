@@ -36,6 +36,9 @@ public class OrderFulfillmentService {
     private static final Set<String> TICKET_STATUSES = Set.of("open", "assigned", "waiting_customer", "resolved", "closed");
     private static final Set<String> TRACKING_EVENTS = Set.of("label_created", "picked_up", "in_transit", "customs", "exception", "out_for_delivery", "delivered");
 
+    @Autowired(required = false)
+    private PartnerReturnService partnerReturnService;
+
     private final JdbcClient jdbcClient;
     private final SimpleJdbcInsert addressInsert;
     private final SimpleJdbcInsert intakeReceiptInsert;
@@ -450,20 +453,22 @@ public class OrderFulfillmentService {
     }
 
     public IntakeLookup lookupIntake(String intakeCode) {
-        String code = requireText(intakeCode, "Intake code", 64).toUpperCase(Locale.ROOT);
-        OrderRow order = jdbcClient.sql(
-                """
-                SELECT id, order_no, customer_id, status_code, total_card_count, currency_code,
-                       return_country, return_shipping_option_code, return_shipping_option_name,
-                       return_shipping_fee, intake_code, packing_slip_code, shipping_label_created_at
-                FROM grading_order WHERE UPPER(intake_code) = :intakeCode
-                """
-            )
-            .param("intakeCode", code)
-            .query((rs, rowNum) -> mapOrderRow(rs))
-            .optional()
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Intake order not found"));
-        return new IntakeLookup(order.id(), order.orderNo(), order.statusCode(), order.totalCardCount(), order.intakeCode());
+        String code = requireText(intakeCode, "Intake code or Order number", 64).toUpperCase(Locale.ROOT);
+        List<OrderRow> matches = jdbcClient.sql(orderRowSelect() + " WHERE UPPER(intake_code)=:code")
+            .param("code",code).query((rs,n)->mapOrderRow(rs)).list();
+        // Keep the established intake-code contract. Partner references are aliases only;
+        // the scanner still receives and submits the original immutable intake code.
+        if(matches.isEmpty()) {
+            matches=jdbcClient.sql(orderRowSelect() + """
+                WHERE id IN (SELECT ai.order_id FROM agent_intake ai
+                  JOIN grading_order alias_order ON alias_order.id=ai.order_id AND alias_order.customer_id=ai.merchant_customer_id
+                  WHERE UPPER(ai.intake_no)=:code)
+                """).param("code",code).query((rs,n)->mapOrderRow(rs)).list();
+        }
+        if(matches.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND,"Intake order not found");
+        if(matches.size()!=1) throw new ResponseStatusException(HttpStatus.CONFLICT,"Order reference is ambiguous; use the original intake code");
+        OrderRow order=matches.get(0);
+        return new IntakeLookup(order.id(),order.orderNo(),order.statusCode(),order.totalCardCount(),order.intakeCode());
     }
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
@@ -621,6 +626,9 @@ public class OrderFulfillmentService {
         String type = normalizeWorkTaskType(request.taskTypeCode());
         Long itemId = request.orderItemId();
         if (itemId != null) {
+            int dispatched=jdbcClient.sql("SELECT COUNT(*) FROM grading_order_item WHERE id=:id AND order_id=:orderId AND status_code IN ('return_shipped','delivered')")
+                .param("id",itemId).param("orderId",order.id()).query(Integer.class).single();
+            if(dispatched>0) throw new ResponseStatusException(HttpStatus.CONFLICT,"A shipped card cannot start a new work task");
             int count = jdbcClient.sql("SELECT COUNT(*) FROM grading_order_item WHERE id = :itemId AND order_id = :orderId")
                 .param("itemId", itemId)
                 .param("orderId", order.id())
@@ -705,7 +713,7 @@ public class OrderFulfillmentService {
             .update();
         String targetStatus = passed ? "completed" : "quality_hold";
         updateOrderStatus(order.id(), targetStatus);
-        jdbcClient.sql("UPDATE grading_order_item SET status_code = :status, updated_at = CURRENT_TIMESTAMP WHERE order_id = :orderId")
+        jdbcClient.sql("UPDATE grading_order_item SET status_code = :status, updated_at = CURRENT_TIMESTAMP WHERE order_id = :orderId AND status_code NOT IN ('return_shipped','delivered')")
             .param("status", passed ? "quality_passed" : "quality_hold")
             .param("orderId", order.id())
             .update();
@@ -1021,6 +1029,7 @@ public class OrderFulfillmentService {
     }
 
     public EffectiveShippingOption assertOutboundReady(long orderId) {
+        if (partnerReturnService != null) partnerReturnService.assertLegacyReturnAllowed(orderId);
         OrderRow order = requireOrder(orderId);
         if (!order.statusCode().equals("completed")) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Return shipment can be created after final quality check");
@@ -1045,6 +1054,7 @@ public class OrderFulfillmentService {
 
     /** Hook for every administrative status mutation, including the generic status endpoint. */
     public void assertManualStatusTransitionAllowed(long orderId, String targetStatus) {
+        if (partnerReturnService != null) partnerReturnService.assertManualTransition(orderId, targetStatus);
         if (orderWorkbenchService != null) {
             orderWorkbenchService.assertManualStatusTransitionAllowed(orderId, targetStatus);
         }
@@ -1174,7 +1184,7 @@ public class OrderFulfillmentService {
 
     private void completeReceipt(long orderId, long adminUserId) {
         updateOrderStatus(orderId, "received");
-        jdbcClient.sql("UPDATE grading_order_item SET status_code = 'received', updated_at = CURRENT_TIMESTAMP WHERE order_id = :orderId")
+        jdbcClient.sql("UPDATE grading_order_item SET status_code = 'received', updated_at = CURRENT_TIMESTAMP WHERE order_id = :orderId AND status_code NOT IN ('return_shipped','delivered')")
             .param("orderId", orderId)
             .update();
         ensureInitialWorkTasks(orderId);

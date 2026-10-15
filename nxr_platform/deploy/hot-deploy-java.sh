@@ -488,8 +488,28 @@ deploy_static_release() {
     "$active_slot" "$new_release"
 }
 
+assert_rollback_data_compatible() {
+  local target_release="$1" database schema_parts
+  if [[ -f "$target_release/RELEASE_CAPABILITIES" ]] &&
+     grep -Fxq 'partner-orders-card-returns-v1' "$target_release/RELEASE_CAPABILITIES"; then
+    return 0
+  fi
+  database="$(resolve_java_database)"
+  # A legacy binary must never resume writes against the newer card-return model.
+  schema_parts="$("$MYSQL_BIN" --batch --skip-column-names "$database" -e \
+    "SELECT (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='agent_intake' AND column_name='partner_order_version') + (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=DATABASE() AND table_name IN ('partner_return_card_check','partner_return_parcel','partner_return_item','order_card_label_print'));")" || \
+    die "Cannot verify rollback data compatibility; automatic rollback was blocked."
+  [[ "$schema_parts" =~ ^[0-9]+$ ]] || die "Invalid rollback schema check; automatic rollback was blocked."
+  (( schema_parts == 0 )) && return 0
+  (( schema_parts == 5 )) || die "Partner-order migration is incomplete; automatic rollback to a legacy binary was blocked."
+  # Even a zero row count races with requests accepted after the traffic switch.
+  # Abort before switching traffic back; a capable runtime or read-only recovery is required.
+  die "Partner-order schema is installed and the target is a legacy binary. Keep the current runtime and recover forward or enter read-only recovery; automatic rollback was blocked."
+}
+
 rollback_backend_switch() {
   local old_slot="$1" old_release="$2" candidate_unit="$3" old_unit="$4"
+  assert_rollback_data_compatible "$old_release"
   restore_active_config || true
   atomic_symlink "$old_release" "$SLOTS_ROOT/$old_slot" || true
   atomic_symlink "$old_release" "$CURRENT_LINK" || true

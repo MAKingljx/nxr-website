@@ -10,7 +10,20 @@ export const fetchMerchantBatches = () => customerRequest<{ items: MerchantBatch
 export const fetchMerchantBatch = (batchNo: string) => customerRequest<MerchantBatch>(`/api/customer/merchant/batches/${encodeURIComponent(batchNo)}`)
 export const rotateTrackingLink = (batchNo: string, orderNo: string) => customerRequest<{ trackingToken: string; trackingUrl: string }>(`/api/customer/merchant/batches/${encodeURIComponent(batchNo)}/orders/${encodeURIComponent(orderNo)}/tracking-token/rotate`, { method: 'POST' })
 export const addBatchInbound = (batchNo: string, carrierName: string, trackingNumber: string) => customerRequest(`/api/customer/merchant/batches/${encodeURIComponent(batchNo)}/inbound-shipment`, { method: 'POST', body: JSON.stringify({ direction: 'inbound', directionCode: 'inbound', carrierName, trackingNumber }) })
-export type PrivateOrderTracking = { orderNo: string; clientReference: string; admissionStatus?: string | null; statusCode: string; cardCount: number; totalCardCount?: number; timeline: Array<{ title: string; createdAt: string; statusCode?: string }>; shipments: Array<{ directionCode: string; carrierName: string; trackingNumber: string; statusCode: string; shippedAt?: string; deliveredAt?: string }> }
+export type PrivateReturnCard = { cardName: string; certId: string | null; statusCode: string }
+export type PrivateReturnParcel = {
+  parcelNo: string; carrierName: string; trackingNumber: string; statusCode: string;
+  shippedAt: string | null; deliveredAt: string | null; cards: PrivateReturnCard[];
+}
+export type PrivateOrderTracking = {
+  orderNo: string; clientReference: string; admissionStatus?: string | null; statusCode: string;
+  cardCount?: number; totalCardCount?: number;
+  timeline: Array<{ eventCode?: string; title: string; createdAt: string; statusCode?: string }>;
+  shipments: Array<{ directionCode: string; carrierName: string; trackingNumber: string; statusCode: string; shippedAt?: string; deliveredAt?: string }>;
+  // The public endpoint scopes each parcel's cards to this order, including a
+  // parcel that physically carries cards belonging to other orders.
+  returnParcels?: PrivateReturnParcel[];
+}
 export const fetchPrivateOrderTracking = (token: string) => customerRequest<PrivateOrderTracking>(`/api/public/merchant-order-tracking/${encodeURIComponent(token)}`, {}, false)
 export const localTrackingUrl = (token: string) => `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}/track/${encodeURIComponent(token)}`
 

@@ -18,9 +18,10 @@ const api = useAgentApi()
 const { fetchApplicationConfig } = api
 const { fetchAgentIntakes, fetchAgentIntake, createAgentIntake, receiveAgentIntake, checkInAgentCard, uploadAgentCardPhoto } = api
 
-const props = defineProps<{ initialClientId?: number; initialRecordId?: number }>()
+const props = defineProps<{ initialClientId?: number; initialRecordId?: number; initialBatchCreation?: boolean; legacyOnly?: boolean }>()
+const emit = defineEmits<{ closed: [] }>()
 const rows = ref(emptyAgentPage<AgentIntake>()), detail = ref<AgentIntakeDetail | null>(null)
-const loading = ref(false), detailLoading = ref(false), query = ref(''), statusCode = ref(''), clientFilter = ref(props.initialClientId || 0)
+const loading = ref(false), detailLoading = ref(false), query = ref(''), statusCode = ref(props.initialBatchCreation ? 'ready' : ''), clientFilter = ref(props.initialClientId || 0)
 const mode = ref<'detail' | 'new' | 'submission'>('detail'), selected = ref<Record<number, AgentIntake>>({}), createdSubmission = ref<AgentSubmission | null>(null)
 const form = reactive({ clientId: props.initialClientId || 0, carrierName: '', trackingNumber: '', expectedCardCount: 1, notes: '' })
 const cards = ref([{ localId: crypto.randomUUID(), cardName: '', officialCardNumber: '', languageCode: 'EN', notes: '' }]), maxCards = ref(200)
@@ -28,19 +29,20 @@ const scan = reactive({ inventoryCode: '', conditionNote: '', hasException: fals
 const { busy, error, success, run } = useAgentActions()
 const labelPrinter = createAgentIntakeLabelPrinter()
 const detailPanel = ref<HTMLElement | null>(null)
-const showDetails = computed(() => mode.value !== 'detail' || detailLoading.value || Boolean(detail.value))
+const showDetails = computed(() => mode.value !== 'detail' || detailLoading.value || Boolean(detail.value) || Boolean(props.legacyOnly && error.value))
 const dialogTitle = computed(() => tx(mode.value === 'new' ? 'Register customer intake' : mode.value === 'submission' ? 'Create submission batch' : 'Intake details'))
 let dialogTrigger: HTMLElement | null = null
 async function revealDetails() { dialogTrigger = document.activeElement instanceof HTMLElement ? document.activeElement : null; await nextTick() }
 function dialogOpened() { detailPanel.value?.focus({ preventScroll: true }) }
 function beforeDialogClose(done: () => void) { if (busy.value) return; closeDetails(); done() }
-function closeDetails() { if (busy.value) return; detailGeneration++; detailLoading.value = false; mode.value = 'detail'; detail.value = null; void nextTick(() => { if (dialogTrigger?.isConnected) dialogTrigger.focus({ preventScroll: true }) }) }
+function closeDetails() { if (busy.value) return; error.value = ''; emit('closed'); detailGeneration++; detailLoading.value = false; mode.value = 'detail'; detail.value = null; void nextTick(() => { if (dialogTrigger?.isConnected) dialogTrigger.focus({ preventScroll: true }) }) }
 function startSubmission() { if (busy.value || !selectedIntakes.value.length) return; detailGeneration++; detailLoading.value = false; mode.value = 'submission'; void revealDetails() }
 const selectedIntakes = computed(() => Object.values(selected.value))
 const editableCards = computed(() => detail.value && ['expected', 'received', 'exception', 'ready'].includes(detail.value.intake.statusCode))
 const canScan = computed(() => detail.value && ['received', 'exception', 'ready'].includes(detail.value.intake.statusCode))
 let listGeneration = 0, detailGeneration = 0
 async function load(page = 1) {
+  if (props.legacyOnly) return
   const current = ++listGeneration
   loading.value = true
   try {
@@ -106,16 +108,16 @@ function printLabels() {
   try { labelPrinter.open(detail.value.intake, detail.value.cards) }
   catch (e) { error.value = e instanceof Error ? e.message : tx('Unable to open the label preview. Please try again.') }
 }
-onMounted(async () => { const initialGeneration = detailGeneration; await load(); if (props.initialRecordId && initialGeneration === detailGeneration) await show(props.initialRecordId); try { maxCards.value = (await fetchApplicationConfig()).maxCardsPerOrder } catch (e) { error.value = e instanceof Error ? e.message : tx('Unable to load the card quantity limit.') } })
+onMounted(async () => { if (props.legacyOnly) { if (props.initialRecordId) await show(props.initialRecordId); return }; const initialGeneration = detailGeneration; await load(); if (props.initialRecordId && initialGeneration === detailGeneration) await show(props.initialRecordId); try { maxCards.value = (await fetchApplicationConfig()).maxCardsPerOrder } catch (e) { error.value = e instanceof Error ? e.message : tx('Unable to load the card quantity limit.') } })
 onBeforeUnmount(() => { listGeneration++; detailGeneration++; labelPrinter.close() })
 </script>
 
 <template>
   <div class="agent-panel" data-testid="agent-intakes-panel">
-    <p v-if="error" class="form-error" role="alert">{{ error }}</p><p v-if="success" class="agent-success" role="status">{{ success }}</p>
+    <p v-if="error && !legacyOnly" class="form-error" role="alert">{{ error }}</p><p v-if="success && !legacyOnly" class="agent-success" role="status">{{ success }}</p>
     <div v-if="createdSubmission" class="agent-success" role="status">{{ $tx('Submission batch created') }} <strong>{{ createdSubmission.batchNo }}</strong>. <router-link :to="{ path: '/nxr/submission-workbench', query: { tab: 'batches', batch: createdSubmission.batchNo, company: api.companyId } }" data-testid="agent-open-batch">{{ $tx('View batch orders') }}</router-link></div>
     <div class="agent-list-layout">
-      <section class="agent-list-section">
+      <section v-if="!legacyOnly" class="agent-list-section">
         <form class="agent-list-filters" data-testid="agent-intake-search" @submit.prevent="load()">
           <label class="agent-filter-field agent-filter-grow">{{ $tx('Search intakes') }}<input v-model="query" :placeholder="$tx('Intake or tracking number')" :disabled="busy" /></label>
           <label class="agent-filter-field">{{ $tx('Intake status') }}<select v-model="statusCode" :disabled="busy" @change="load()"><option value="">{{ $tx('All statuses') }}</option><option value="expected">{{ $tx('Awaiting receipt') }}</option><option value="received">{{ $tx('Awaiting inventory check') }}</option><option value="exception">{{ $tx('Exception') }}</option><option value="ready">{{ $tx('Intake complete') }}</option><option value="submitted">{{ $tx('Submitted for grading') }}</option></select></label>
@@ -123,12 +125,18 @@ onBeforeUnmount(() => { listGeneration++; detailGeneration++; labelPrinter.close
           <button v-if="clientFilter" type="button" class="text-button" :disabled="busy" @click="clientFilter = 0; load()">{{ $tx('Clear customer filter') }}</button>
           <div class="agent-list-actions"><button type="button" class="btn-primary" :disabled="busy" data-testid="agent-new-intake" @click="newIntake">{{ $tx('Register customer intake') }}</button></div>
         </form>
+        <p v-if="initialBatchCreation" class="muted-copy" data-testid="agent-batch-selection-help">{{ $tx('Select completed intakes, then create a submission batch.') }}</p>
+        <div v-if="initialBatchCreation || selectedIntakes.length" class="agent-selection-bar agent-batch-selection">
+          <span>{{ $tx('{p1} complete intakes selected', { p1: selectedIntakes.length }) }}</span>
+          <button type="button" class="btn-primary" :disabled="busy || !selectedIntakes.length" data-testid="agent-start-submission" @click="startSubmission">{{ $tx('Create submission batch') }}</button>
+          <button v-if="selectedIntakes.length" type="button" class="text-button" :disabled="busy" @click="selected = {}">{{ $tx('Clear selection') }}</button>
+        </div>
         <div class="agent-table-scroll" :aria-busy="loading" tabindex="0" :aria-label="$tx('Intakes and inventory')">
           <table class="agent-results-table" data-testid="agent-intake-table">
             <thead><tr><th scope="col" class="agent-select-column">{{ $tx('Select') }}</th><th scope="col">{{ $tx('Intake') }}</th><th scope="col">{{ $tx('Customer') }}</th><th scope="col">{{ $tx('Carrier / tracking number') }}</th><th scope="col">{{ $tx('Checked / expected') }}</th><th scope="col">{{ $tx('Status') }}</th><th scope="col">{{ $tx('Registered at') }}</th><th scope="col">{{ $tx('Actions') }}</th></tr></thead>
             <tbody>
               <tr v-if="loading"><td colspan="8" class="agent-table-empty" role="status">{{ $tx('Loading…') }}</td></tr>
-              <tr v-else-if="!rows.items.length"><td colspan="8" class="agent-table-empty">{{ $tx('No intakes yet.') }}</td></tr>
+              <tr v-else-if="!rows.items.length"><td colspan="8" class="agent-table-empty">{{ initialBatchCreation ? $tx('No completed intakes. Register and check in cards first.') : $tx('No intakes yet.') }}</td></tr>
               <tr v-for="intake in loading ? [] : rows.items" :key="intake.id" :class="{ 'agent-row-selected': detail?.intake.id === intake.id && mode === 'detail' }" :data-testid="`agent-intake-row-${intake.id}`">
                 <td class="agent-select-column"><input v-if="intake.statusCode === 'ready'" type="checkbox" :checked="Boolean(selected[intake.id])" :disabled="busy" :aria-label="$tx('Select intake {p1}', { p1: intake.intakeNo })" :data-testid="`agent-select-intake-${intake.id}`" @change="select(intake, $event)" /><span v-else>—</span></td>
                 <td class="agent-reference-cell"><button type="button" class="text-button" :disabled="busy" :data-testid="`agent-view-intake-${intake.id}`" @click="show(intake.id)">{{ intake.intakeNo }}</button></td>
@@ -140,10 +148,10 @@ onBeforeUnmount(() => { listGeneration++; detailGeneration++; labelPrinter.close
           </table>
         </div>
         <AgentPagination v-bind="rows" :disabled="loading || busy" @change="load" />
-        <div v-if="selectedIntakes.length" class="agent-selection-bar"><span>{{ $tx('{p1} complete intakes selected', { p1: selectedIntakes.length }) }}</span><button type="button" class="btn-primary" :disabled="busy" data-testid="agent-start-submission" @click="startSubmission">{{ $tx('Create submission batch') }}</button><button type="button" class="text-button" :disabled="busy" @click="selected = {}">{{ $tx('Clear selection') }}</button></div>
+
       </section>
-      <el-drawer :model-value="showDetails" :title="dialogTitle" class="agent-intake-dialog" size="min(1280px, 96vw)" direction="rtl" :append-to-body="true" :close-on-click-modal="false" :close-on-press-escape="!busy" :show-close="!busy" :before-close="beforeDialogClose" destroy-on-close data-testid="agent-intake-drawer" @opened="dialogOpened">
-      <section ref="detailPanel" class="agent-intake-dialog-body" tabindex="-1" :aria-label="$tx('Intake details')" data-testid="agent-intake-details">
+      <el-drawer :model-value="showDetails" :title="dialogTitle" class="agent-intake-dialog" size="min(1280px, 96vw)" direction="rtl" :append-to-body="false" :close-on-click-modal="false" :close-on-press-escape="!busy" :show-close="!busy" :before-close="beforeDialogClose" destroy-on-close data-testid="agent-intake-drawer" @opened="dialogOpened">
+      <section ref="detailPanel" class="agent-intake-dialog-body" tabindex="-1" :aria-label="$tx('Intake details')" data-testid="agent-intake-details"><el-alert v-if="legacyOnly && error" :title="error" type="error" :closable="false" /><el-alert v-if="legacyOnly && success" :title="success" type="success" :closable="false" />
         <form v-if="mode === 'new'" class="portal-form" data-testid="agent-intake-form" @submit.prevent="create"><div class="agent-toolbar"><h2>{{ $tx('Register customer intake') }}</h2><button type="button" class="text-button" :disabled="busy" @click="closeDetails">{{ $tx('Cancel') }}</button></div><fieldset :disabled="busy"><AgentClientPicker v-model="form.clientId" :disabled="busy" /><div class="form-grid"><label>{{ $tx('Carrier') }}<input v-model="form.carrierName" required maxlength="128" data-testid="agent-intake-carrier" /></label><label>{{ $tx('Tracking number') }}<input v-model="form.trackingNumber" required maxlength="255" data-testid="agent-intake-tracking" /></label><label>{{ $tx('Expected card count (up to {p1})', { p1: maxCards }) }}<input v-model.number="form.expectedCardCount" type="number" min="1" :max="maxCards" required data-testid="agent-intake-quantity" /></label><button type="button" class="btn-secondary agent-align-bottom" @click="fillExpected">{{ $tx('Add remaining card rows') }}</button></div><label>{{ $tx('Intake notes') }}<textarea v-model="form.notes" maxlength="2000" rows="2" /></label><div class="agent-toolbar"><h3>{{ $tx('Individual card registration · {p1} cards', { p1: cards.length }) }}</h3><button type="button" class="btn-secondary" :disabled="cards.length >= maxCards" data-testid="agent-add-card" @click="addCard">{{ $tx('Add card') }}</button></div><div v-for="(card, index) in cards" :key="card.localId" class="agent-card-entry"><div class="agent-toolbar"><strong>{{ $tx('Card {p1}', { p1: index + 1 }) }}</strong><button type="button" class="text-button" :disabled="cards.length <= 1" @click="cards.splice(index, 1)">{{ $tx('Remove') }}</button></div><div class="form-grid"><label>{{ $tx('Card name') }}<input v-model="card.cardName" required maxlength="255" :data-testid="`agent-card-name-${index}`" /></label><label>{{ $tx('Language') }}<input v-model="card.languageCode" required maxlength="32" placeholder="EN / ZH / JA" :data-testid="`agent-card-language-${index}`" /></label></div><label>{{ $tx('Card notes') }}<input v-model="card.notes" maxlength="2000" /></label></div></fieldset><p v-if="cards.length !== form.expectedCardCount" class="muted-copy">{{ $tx('The registered card count must match the expected {p1} cards.', { p1: form.expectedCardCount }) }}</p><button class="btn-primary" :disabled="busy || cards.length !== form.expectedCardCount || !form.clientId" data-testid="agent-create-intake">{{ busy ? $tx('Recording…') : $tx('Register and generate inventory codes') }}</button></form>
         <section v-if="mode === 'new'" class="agent-operation" data-testid="official-card-number-fields"><h3>{{ $tx('Official card number on front') }}</h3><div v-for="(card, index) in cards" :key="`official-${card.localId}`" class="form-grid"><label>{{ $tx('Card {p1}', { p1: index + 1 }) }}<input v-model="card.officialCardNumber" maxlength="128" :placeholder="$tx('Optional printed number')" /></label></div></section>
         <AgentSubmissionForm v-else-if="mode === 'submission'" :intakes="selectedIntakes" @created="submitted" @close="mode = 'detail'" />
@@ -151,7 +159,7 @@ onBeforeUnmount(() => { listGeneration++; detailGeneration++; labelPrinter.close
         <template v-else-if="detail"><div class="agent-toolbar"><div><h2>{{ detail.intake.intakeNo }}</h2><p class="muted-copy">{{ detail.intake.clientName }} · {{ agentStatusLabel(detail.intake.statusCode) }}</p></div><span class="status-pill">{{ $tx('{p1} / {p2} cards checked', { p1: detail.intake.checkedInCardCount, p2: detail.intake.expectedCardCount }) }}</span></div><dl class="agent-facts"><div><dt>{{ $tx('Customer intakes') }}</dt><dd>{{ detail.intake.carrierName }} · {{ detail.intake.trackingNumber }}</dd></div><div><dt>{{ $tx('Delivered at') }}</dt><dd>{{ agentDateLabel(detail.intake.receivedAt) }}</dd></div><div v-if="detail.intake.notes"><dt>{{ $tx('Notes') }}</dt><dd>{{ detail.intake.notes }}</dd></div><div v-if="detail.intake.orderNo"><dt>{{ $tx('Submission order') }}</dt><dd><router-link :to="{ path: '/nxr/submission-workbench', query: { tab: 'batches', order: detail.intake.orderNo, company: api.companyId } }">{{ detail.intake.orderNo }}</router-link> · <router-link :to="{ path: '/nxr/submission-workbench', query: { tab: 'batches', company: api.companyId } }">{{ detail.intake.batchNo }}</router-link></dd></div></dl>
           <form v-if="detail.intake.statusCode === 'expected'" class="portal-form agent-operation" @submit.prevent="receive"><label>{{ $tx('Receipt notes (optional)') }}<input v-model="receiveNote" maxlength="2000" :disabled="busy" /></label><button class="btn-primary" :disabled="busy" data-testid="agent-receive-intake">{{ $tx('Confirm intake receipt') }}</button></form>
           <form v-if="canScan" class="portal-form agent-operation" @submit.prevent="checkIn"><h3>{{ $tx('Check cards individually') }}</h3><label>{{ $tx('Scan or enter inventory code') }}<input ref="scanInput" v-model="scan.inventoryCode" required autocomplete="off" autocapitalize="off" spellcheck="false" :disabled="busy" :placeholder="$tx('Scan, then press Enter')" data-testid="agent-check-in-code" /></label><label class="agent-checkbox"><input v-model="scan.hasException" type="checkbox" :disabled="busy" data-testid="agent-check-in-exception" />{{ $tx('This card has an exception') }}</label><label>{{ scan.hasException ? $tx('Exception details') : $tx('Inventory notes (optional)') }}<input v-model="scan.conditionNote" maxlength="2000" :required="scan.hasException" :disabled="busy" data-testid="agent-check-in-note" /></label><button class="btn-primary" :disabled="busy" data-testid="agent-check-in-submit">{{ busy ? $tx('Checking…') : scan.hasException ? $tx('Record exception') : $tx('Check into inventory') }}</button><p v-if="detail.intake.exceptionCardCount" class="muted-copy">{{ $tx('{p1} cards have exceptions. Resolve them, clear the exception checkbox and scan again to recheck.', { p1: detail.intake.exceptionCardCount }) }}</p></form>
-          <p v-if="detail.intake.statusCode === 'ready'" class="agent-success">{{ $tx('All cards are in inventory. Select complete intakes in the list to create a submission batch.') }}</p>
+          <p v-if="detail.intake.statusCode === 'ready'" class="agent-success">{{ legacyOnly ? $tx('Intake complete. Close this drawer and add the Order to Submit.') : $tx('All cards are in inventory. Select complete intakes in the list to create a submission batch.') }}</p>
           <div class="agent-toolbar"><h3>{{ $tx('Card inventory ({p1})', { p1: detail.cards.length }) }}</h3><button type="button" class="btn-secondary" :disabled="busy || !detail.cards.length" data-testid="agent-print-intake-labels" @click="printLabels">{{ $tx('Print intake labels') }}</button></div><div class="agent-table-scroll" tabindex="0" :aria-label="$tx('Card inventory ({p1})', { p1: detail.cards.length })">
             <table class="agent-results-table agent-inventory-table" data-testid="agent-intake-card-table" :aria-label="$tx('Card inventory ({p1})', { p1: detail.cards.length })">
               <thead><tr><th scope="col">{{ $tx('Card name') }}</th><th scope="col">{{ $tx('Inventory code') }}</th><th scope="col">{{ $tx('Language') }}</th><th scope="col">{{ $tx('Status') }}</th><th scope="col">{{ $tx('Notes') }}</th><th scope="col">{{ $tx('Front') }}</th><th scope="col">{{ $tx('Back') }}</th></tr></thead>
@@ -178,6 +186,7 @@ onBeforeUnmount(() => { listGeneration++; detailGeneration++; labelPrinter.close
 </template>
 
 <style scoped>
+.agent-batch-selection{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:12px 0 18px}
 :deep(.agent-intake-dialog .el-dialog__body){max-height:calc(90vh - 140px);overflow-y:auto;overscroll-behavior:contain}
 :deep(.agent-intake-dialog .el-drawer__body){max-height:calc(100vh - 120px);overflow-y:auto;overscroll-behavior:contain}
 .agent-intake-dialog-body{min-width:0;outline:none}

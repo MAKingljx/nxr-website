@@ -41,7 +41,7 @@ async function save() {
   saving.value = true
   try {
     Object.assign(form, (await updateOrderAdmissionConfig({ ...form })).data || {})
-    proxy.$modal.msgSuccess('Admission configuration saved')
+    proxy.$modal.msgSuccess(proxy.$tx('Admission configuration saved'))
   } finally { saving.value = false }
 }
 

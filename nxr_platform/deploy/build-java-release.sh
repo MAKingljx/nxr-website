@@ -74,6 +74,8 @@ install -m 0644 "$PROJECT_ROOT/scripts/sync_python_to_java_mysql.py" \
   "$output_directory/scripts/sync_python_to_java_mysql.py"
 install -m 0644 "$PROJECT_ROOT/requirements-mysql.txt" \
   "$output_directory/scripts/requirements-mysql.txt"
+install -m 0644 "$DEPLOY_DIR/hot-deploy-java.sh" \
+  "$output_directory/scripts/hot-deploy-java.sh"
 
 shopt -s nullglob
 sql_files=("$SQL_ROOT"/[1-9][0-9]_*.sql)
@@ -84,6 +86,9 @@ shopt -u nullglob
 printf '%s\n' "$release_commit" > "$output_directory/RELEASE_COMMIT"
 git -C "$PROJECT_ROOT" rev-parse "$release_commit:nxr_platform/nxr-backend-ruoyi" \
   > "$output_directory/BACKEND_SOURCE_TREE"
+if [[ -f "$BACKEND_ROOT/ruoyi-nxr/src/main/java/com/nxr/platform/customer/PartnerReturnService.java" ]]; then
+  printf 'partner-orders-card-returns-v1\n' > "$output_directory/RELEASE_CAPABILITIES"
+fi
 
 find "$output_directory" -type d -exec chmod 0755 {} +
 find "$output_directory" -type f -exec chmod 0644 {} +
