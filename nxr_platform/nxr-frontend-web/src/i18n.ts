@@ -1,4 +1,5 @@
 import { createI18n } from 'vue-i18n'
+import { privateTrackingMessages } from './lib/privateOrderTrackingMessages'
 
 export const supportedLocales = [
   { code: 'en', label: 'English' },
@@ -31,6 +32,7 @@ const messages = {
       corners: 'Corners',
       surface: 'Surface',
     },
+    tracking: privateTrackingMessages['en'],
     home: {
       eyebrow: 'NXR Platform',
       title: 'AI precision, human review, public verification.',
@@ -112,6 +114,7 @@ const messages = {
       corners: '边角',
       surface: '表面',
     },
+    tracking: privateTrackingMessages['zh-CN'],
     home: {
       eyebrow: 'NXR 平台',
       title: 'AI 精准识别，人工复核，公开验证。',

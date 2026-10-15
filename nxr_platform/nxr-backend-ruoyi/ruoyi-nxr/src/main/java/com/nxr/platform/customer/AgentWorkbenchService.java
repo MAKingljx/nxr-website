@@ -64,7 +64,8 @@ public class AgentWorkbenchService {
         String inventoryCode, String officialCardNumber, String cardName, String languageCode, String notes, String statusCode,
         String conditionNote, String gradingCertId, Long frontPhotoId, Long backPhotoId, Long orderItemId, Long orderId, String orderNo,
         Long batchId, String batchNo, String batchStatusCode, Long returnShipmentId,
-        LocalDateTime checkedInAt, LocalDateTime returnedAt) { }
+        LocalDateTime checkedInAt, LocalDateTime returnedAt,
+        String brandName, String setName, String productType, String category, String fulfillmentStatusCode) { }
     public record NoteRequest(String note, String requestKey) { }
     public record CheckInRequest(String inventoryCode, String conditionNote, Boolean hasException, String requestKey) { }
     public record ReturnCheckRequest(String inventoryCode, String note, String requestKey) { }
@@ -89,7 +90,7 @@ public class AgentWorkbenchService {
                city, region, postal_code, country, notes, active, created_at, updated_at FROM agent_client
         """;
     private static final String INTAKE_SELECT = """
-        SELECT i.id, i.intake_no, i.client_id, cl.display_name AS client_name, i.carrier_name, i.tracking_number,
+        SELECT i.id, i.intake_no, i.client_id, COALESCE(i.client_name_snapshot,cl.display_name) AS client_name, i.carrier_name, i.tracking_number,
                i.expected_card_count,
                (SELECT COUNT(*) FROM agent_card c WHERE c.intake_id = i.id AND c.merchant_customer_id = i.merchant_customer_id AND c.checked_in_at IS NOT NULL) AS checked_in_card_count,
                (SELECT COUNT(*) FROM agent_card c WHERE c.intake_id = i.id AND c.merchant_customer_id = i.merchant_customer_id AND c.status_code = 'exception') AS exception_card_count,
@@ -99,10 +100,11 @@ public class AgentWorkbenchService {
         LEFT JOIN grading_order o ON o.id = i.order_id AND o.customer_id = i.merchant_customer_id
         """;
     private static final String CARD_SELECT = """
-        SELECT c.id, c.intake_id, i.intake_no, i.client_id, cl.display_name AS client_name,
+        SELECT c.id, c.intake_id, i.intake_no, i.client_id, COALESCE(i.client_name_snapshot,cl.display_name) AS client_name,
                c.inventory_code, c.official_card_number, c.card_name, c.language_code, c.notes, c.status_code, c.condition_note,
                gs.cert_id AS grading_cert_id, c.front_photo_id, c.back_photo_id, c.order_item_id, i.order_id, o.order_no,
-               i.batch_id, b.batch_no, b.status_code AS batch_status_code, c.return_shipment_id, c.checked_in_at, c.returned_at
+               i.batch_id, b.batch_no, b.status_code AS batch_status_code, c.return_shipment_id, c.checked_in_at, c.returned_at,
+               c.brand_name,c.set_name,c.product_type,c.category,oi.status_code AS fulfillment_status_code
         FROM agent_card c JOIN agent_intake i ON i.id = c.intake_id AND i.merchant_customer_id = c.merchant_customer_id
         JOIN agent_client cl ON cl.id = i.client_id AND cl.merchant_customer_id = c.merchant_customer_id
         LEFT JOIN merchant_order_batch b ON b.id = i.batch_id AND b.merchant_customer_id = c.merchant_customer_id
@@ -311,13 +313,20 @@ public class AgentWorkbenchService {
             if(!"ready".equals(intake.statusCode()) || intake.receivedAt()==null || intake.orderId()!=null
                 || cards.size()!=intake.expectedCardCount() || cards.stream().anyMatch(c -> !"in_stock".equals(c.statusCode()) || c.checkedInAt()==null || c.orderItemId()!=null))
                 throw conflict("Every selected intake must be fully received, counted and free of exceptions");
+            int orderVersion=jdbc.sql("SELECT partner_order_version FROM agent_intake WHERE id=:id AND merchant_customer_id=:owner")
+                .params(params("id",id,"owner",owner)).query(Integer.class).single();
+            if(orderVersion>0) requireCompleteOrderCards(owner,cards);
+            // Preserved agent images must be attached after the inventory card
+            // is linked to its order item; the direct-customer photo path rejects
+            // previously preserved evidence. Both steps share this transaction.
             List<CustomerPortalService.OrderItemRequest> items=cards.stream().map(c -> new CustomerPortalService.OrderItemRequest(
-                c.cardName(),null,null,c.officialCardNumber(),c.languageCode(),BigDecimal.ZERO,c.notes())).toList();
+                c.cardName(),c.brandName(),null,null,c.productType(),c.category(),c.setName(),c.officialCardNumber(),
+                c.languageCode(),BigDecimal.ZERO,c.notes(),null,null)).toList();
             var order=new CustomerPortalService.CreateOrderRequest("basic_grading",r.returnAddressId(),false,option,
                 null,null,null,null,null,null,null,null,intake.intakeNo(),List.of(),items,currency);
             // Intake number makes two parcels from the same client distinct within a master batch.
             // NXR communicates with the agent; end-client contact details stay in the agent directory.
-            orders.add(new MerchantBatchService.BatchOrderRequest(intake.intakeNo(),client.displayName(),null,order));
+            orders.add(new MerchantBatchService.BatchOrderRequest(intake.intakeNo(),intake.clientName(),null,order));
             intakes.add(intake); inventory.add(cards);
         }
         var batch=batches.createBatchInCurrentTransaction(owner,new MerchantBatchService.BatchCreateRequest("Agent workbench",optional(r.batchName(),191),orders));
@@ -361,6 +370,20 @@ public class AgentWorkbenchService {
         jdbc.sql("INSERT INTO agent_submission(merchant_customer_id,batch_id,request_key,request_hash) VALUES(:owner,:batch,:key,:hash)")
             .params(params("owner",owner,"batch",batch.batchId(),"key",key,"hash",hash)).update();
         return submission(owner,replay("agent_submission",owner,key,hash));
+    }
+
+    private void requireCompleteOrderCards(long owner,List<Card> cards) {
+        java.util.Set<Long> ids=new java.util.HashSet<>();
+        for(Card card:cards) {
+            if(card.brandName()==null || card.brandName().isBlank() || card.setName()==null || card.setName().isBlank()
+                || card.category()==null || card.category().isBlank() || card.officialCardNumber()==null || card.officialCardNumber().isBlank()
+                || card.languageCode()==null || card.languageCode().isBlank()
+                || !java.util.Set.of("graded_card","vintage_product").contains(card.productType()==null?"":card.productType()))
+                throw conflict("Complete every card's brand, set, category, official number, language and supported product type before submission");
+            if(card.frontPhotoId()==null || card.backPhotoId()==null || !ids.add(card.frontPhotoId()) || !ids.add(card.backPhotoId()))
+                throw conflict("Every card requires its own front and back photos before submission");
+        }
+        for(Long photoId:ids.stream().sorted().toList()) photos.readOwned(owner,photoId,true);
     }
 
     @Transactional(isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)

@@ -36,6 +36,9 @@ public class MerchantBatchService {
         "open", "inbound_shipped", "received", "return_shipped", "delivered", "cancelled"
     );
 
+    @Autowired(required = false)
+    private PartnerReturnService partnerReturnService;
+
     private final JdbcClient jdbcClient;
     private final CustomerPortalService customerPortalService;
     private final OrderFulfillmentService orderFulfillmentService;
@@ -329,7 +332,8 @@ public class MerchantBatchService {
             .list());
         return new PublicTrackingResponse(
             row.orderNo(), row.clientReference(), row.statusCode(), row.admissionStatus(), row.totalCardCount(),
-            row.createdAt(), row.updatedAt(), timeline, List.copyOf(shipments)
+            row.createdAt(), row.updatedAt(), timeline, List.copyOf(shipments),
+            partnerReturnService == null ? List.of() : partnerReturnService.publicParcels(row.orderId())
         );
     }
 
@@ -1013,7 +1017,12 @@ public class MerchantBatchService {
     public record PublicTrackingResponse(
         String orderNo, String clientReference, String statusCode, String admissionStatus, int totalCardCount,
         LocalDateTime createdAt, LocalDateTime updatedAt,
-        List<PublicTimelineEvent> timeline, List<PublicShipment> shipments
+        List<PublicTimelineEvent> timeline, List<PublicShipment> shipments,
+        List<PartnerReturnService.PublicParcel> returnParcels
     ) {
+        public PublicTrackingResponse(String orderNo,String clientReference,String statusCode,String admissionStatus,int totalCardCount,
+            LocalDateTime createdAt,LocalDateTime updatedAt,List<PublicTimelineEvent> timeline,List<PublicShipment> shipments) {
+            this(orderNo,clientReference,statusCode,admissionStatus,totalCardCount,createdAt,updatedAt,timeline,shipments,List.of());
+        }
     }
 }

@@ -12,27 +12,27 @@
       <el-table-column :label="$tx('Actions')" width="90"><template #default="scope"><el-button link type="primary" @click="open(scope.row.id)">{{ $tx('View') }}</el-button></template></el-table-column>
     </el-table>
     <pagination v-show="total>0" :total="total" v-model:page="page" v-model:limit="pageSize" @pagination="load()" />
-    <el-dialog v-model="openDialog" :title="$tx('Partner shipment batches')" width="min(900px, calc(100vw - 32px))" append-to-body>
+    <el-drawer v-model="openDialog" :title="$tx('Partner shipment batches')" size="min(1050px, 100vw)" append-to-body>
       <template v-if="detail">
         <el-descriptions :column="3" border><el-descriptions-item :label="$tx('Batch')">{{ detail.batchNo }}</el-descriptions-item><el-descriptions-item :label="$tx('Name')">{{ detail.batchName }}</el-descriptions-item><el-descriptions-item :label="$tx('Status')">{{ batchStatusLabel(detail.statusCode) }}</el-descriptions-item></el-descriptions>
         <el-divider content-position="left">{{ $tx('Independent customer orders') }}</el-divider>
         <el-table :data="detail.orders" size="small" border><el-table-column label="#" prop="rowNo" width="54" /><el-table-column :label="$tx('Client reference')" prop="clientReference" min-width="150" /><el-table-column :label="$tx('Customer label')" prop="clientDisplayName" min-width="140" /><el-table-column :label="$tx('Order No.')" min-width="150"><template #default="scope"><el-button link type="primary" @click="openOrder(scope.row.orderId)">{{scope.row.orderNo}}</el-button></template></el-table-column><el-table-column :label="$tx('Cards')" prop="totalCardCount" width="70" /><el-table-column :label="$tx('Status')" width="150"><template #default="scope">{{ statusLabel(scope.row.statusCode === 'admission_review' ? scope.row.admissionStatus || scope.row.statusCode : scope.row.statusCode) }}</template></el-table-column><el-table-column :label="$tx('Private link')" width="100"><template #default="scope">{{ scope.row.trackingTokenHint ? `${scope.row.trackingTokenHint}…` : $tx('Revoked') }}</template></el-table-column></el-table>
-        <el-divider content-position="left">{{ $tx('Master parcel logistics') }}</el-divider>
+        <div class="batch-return-action"><el-button v-hasPermi="['nxr:order:manage','nxr:order:shipping']" type="primary" @click="openDialog=false; emit('open-returns')">{{ $tx('Select cards for return') }}</el-button></div><el-divider content-position="left">{{ $tx('Master parcel logistics') }}</el-divider>
         <el-table v-if="detail.shipments.length" :data="detail.shipments" size="small" border><el-table-column :label="$tx('Direction')" width="100"><template #default="scope">{{ $tx(scope.row.directionCode === 'inbound' ? 'Inbound' : 'Outbound') }}</template></el-table-column><el-table-column :label="$tx('Carrier')" prop="carrierName" /><el-table-column :label="$tx('Tracking No.')" prop="trackingNumber" min-width="180" /><el-table-column :label="$tx('Status')" width="120"><template #default="scope">{{ statusLabel(scope.row.statusCode) }}</template></el-table-column><el-table-column :label="$tx('Actions')" width="120"><template #default="scope"><el-button v-if="!scope.row.deliveredAt" v-hasPermi="['nxr:order:manage','nxr:order:shipping','nxr:order:batch']" link type="success" @click="delivered(scope.row)">{{ $tx('Mark Delivered') }}</el-button></template></el-table-column></el-table>
-        <el-form v-if="detail.orders.length && detail.orders.every(order => order.statusCode === 'completed') && !['return_shipped', 'delivered', 'cancelled'].includes(detail.statusCode)" v-hasPermi="['nxr:order:manage','nxr:order:shipping','nxr:order:batch']" :inline="true" :model="shipment" class="outbound-form"><el-form-item :label="$tx('Carrier')"><el-input v-model="shipment.carrierName" /></el-form-item><el-form-item :label="$tx('Tracking No.')"><el-input v-model="shipment.trackingNumber" /></el-form-item><el-form-item><el-button type="primary" :loading="shipping" @click="shipOutbound">{{ $tx('Create outbound master parcel') }}</el-button></el-form-item></el-form>
+        <el-form v-if="detail.orders.length && !detail.orders.some(order => /^NXR-/.test(order.clientReference || '')) && detail.orders.every(order => order.statusCode === 'completed') && !['return_shipped', 'delivered', 'cancelled'].includes(detail.statusCode)" v-hasPermi="['nxr:order:manage','nxr:order:shipping','nxr:order:batch']" :inline="true" :model="shipment" class="outbound-form"><el-form-item :label="$tx('Carrier')"><el-input v-model="shipment.carrierName" /></el-form-item><el-form-item :label="$tx('Tracking No.')"><el-input v-model="shipment.trackingNumber" /></el-form-item><el-form-item><el-button type="primary" :loading="shipping" @click="shipOutbound">{{ $tx('Create outbound master parcel') }}</el-button></el-form-item></el-form>
       </template>
-    </el-dialog>
+    </el-drawer>
   </el-card>
 </template>
 
 <script setup>
 import { tx } from '@/i18n'
-import { ref, getCurrentInstance, watch } from 'vue'
+import { ref, getCurrentInstance, watch, onDeactivated } from 'vue'
 import { useRoute } from 'vue-router'
 import auth from '@/plugins/auth'
 import { createMerchantBatchOutbound, getMerchantBatch, listMerchantBatches, markMerchantBatchShipmentDelivered } from '@/api/nxr/orderWorkbench'
 const { proxy } = getCurrentInstance()
-const emit = defineEmits(['open-order'])
+const emit = defineEmits(['open-order','open-returns'])
 const route = useRoute()
 const page = ref(1), pageSize = ref(20), total = ref(0), query = ref(''), loadError = ref('')
 const canView = auth.hasPermiOr(['nxr:order:manage','nxr:order:warehouse','nxr:order:shipping','nxr:order:batch'])
@@ -52,6 +52,7 @@ function statusLabel(value) { return proxy.$tx(statusLabels[value] || value || '
 function batchStatusLabel(value) { return value === 'delivered' ? tx('Sub-agent received batch') : statusLabel(value) }
 const rows = ref([]); const detail = ref(null); const loading = ref(false); const openDialog = ref(false); const shipping = ref(false)
 const shipment = ref({ carrierName: '', trackingNumber: '', note: '' })
+onDeactivated(() => { detailGeneration++; openDialog.value = false })
 async function load(reset=false){if(!canView)return;if(reset===true)page.value=1;loading.value=true;loadError.value='';try{const result=(await listMerchantBatches({page:page.value,pageSize:pageSize.value,query:query.value})).data;rows.value=result.items;total.value=result.total}catch(e){loadError.value=e.message||tx('Unable to load batches.')}finally{loading.value=false}}
 async function open(id){if(!canView)return;const current=++detailGeneration;detail.value=null;loadError.value='';try{const value=(await getMerchantBatch(id)).data;if(current===detailGeneration){detail.value=value;openDialog.value=true}}catch(e){if(current===detailGeneration)loadError.value=e.message||tx('Unable to load batch details.')}}
 async function shipOutbound(){ if(!detail.value||!shipment.value.carrierName.trim()||!shipment.value.trackingNumber.trim())return; shipping.value=true; try{ detail.value=(await createMerchantBatchOutbound(detail.value.id,shipment.value)).data; shipment.value={carrierName:'',trackingNumber:'',note:''}; await load() }finally{ shipping.value=false } }
@@ -60,4 +61,4 @@ watch(()=>route.query.batchId,raw=>{const id=Number(raw);if(Number.isSafeInteger
 load()
 </script>
 
-<style scoped>.batch-heading{display:flex;justify-content:space-between;align-items:center}.outbound-form{margin-top:14px}</style>
+<style scoped>.batch-heading{display:flex;justify-content:space-between;align-items:center}.outbound-form{margin-top:14px}.batch-return-action{margin-top:18px}</style>

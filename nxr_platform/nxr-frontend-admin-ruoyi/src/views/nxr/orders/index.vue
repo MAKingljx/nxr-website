@@ -6,6 +6,7 @@
       :summary="$tx('Manage payments, warehouse intake, grading, quality checks, return shipping, adjustments, and support tickets')"
     >
       <template #actions>
+        <el-button v-hasPermi="['nxr:order:manage','nxr:order:workbench','nxr:order:shipping','nxr:order:batch']" @click="router.push('/nxr/submissions/partner-fulfillment')">{{ $tx('Partner fulfillment') }}</el-button>
         <el-button v-hasPermi="['nxr:order:manage','nxr:order:config']" icon="Setting" @click="openShippingConfig">{{ $tx('Pricing & Return Shipping') }}</el-button>
       </template>
     </nxr-page-header>
@@ -16,7 +17,7 @@
 
     <order-card-lookup v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:workbench']" @open-order="openDetail" />
 
-    <merchant-batch-panel ref="merchantBatchPanel" @open-order="openDetail" v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:shipping','nxr:order:batch']" />
+    <merchant-batch-panel ref="merchantBatchPanel" @open-order="openDetail" @open-returns="router.push('/nxr/submissions/partner-fulfillment?tab=returns')" v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:shipping','nxr:order:batch']" />
 
     <el-form ref="queryRef" :model="queryParams" :inline="true" @submit.prevent>
       <el-form-item :label="$tx('Order Status')" prop="status">
@@ -31,7 +32,7 @@
     </el-form>
 
     <el-table v-loading="loading" :data="rows">
-      <el-table-column :label="$tx('Order No.')" prop="orderNo" min-width="150" />
+      <el-table-column :label="$tx('Order No.')" min-width="150"><template #default="{row}">{{ businessOrderNumber(row) }}</template></el-table-column>
       <el-table-column :label="$tx('Customer')" min-width="190" show-overflow-tooltip><template #default="scope"><div>{{ scope.row.customer.displayName }}</div><small>{{ scope.row.customer.email }}</small></template></el-table-column>
       <el-table-column :label="$tx('Cards')" prop="totalCardCount" width="80" align="center" />
       <el-table-column :label="$tx('Service')" prop="serviceLevelCode" width="105" align="center" />
@@ -46,13 +47,13 @@
     <el-drawer direction="rtl" v-model="detailOpen" :title="$tx('Grading Order Details')" size="min(1080px, 96vw)" append-to-body class="order-detail-drawer">
       <template v-if="detail">
         <div class="order-detail-actions">
-          <strong>{{ detail.orderNo }}</strong>
+          <strong>{{ businessOrderNumber(detail) }}</strong>
           <el-button type="primary" @click="detailTab = primaryDetailSection">{{ primaryActionLabel }}</el-button>
           <el-button v-if="detail.merchantBatch" v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:shipping','nxr:order:batch']" @click="openMasterBatch">{{ $tx('Open master batch') }}</el-button>
           <el-button icon="Refresh" :loading="loading" @click="refreshDetail">{{ $tx('Refresh') }}</el-button>
         </div>
         <el-descriptions :column="3" border class="mb12">
-          <el-descriptions-item :label="$tx('Order No.')">{{ detail.orderNo }}</el-descriptions-item>
+          <el-descriptions-item :label="$tx('Order No.')">{{ businessOrderNumber(detail) }}</el-descriptions-item>
           <el-descriptions-item :label="$tx('Order Status')"><el-tag :type="statusType(displayOrderStatus(detail))">{{ labelStatus(displayOrderStatus(detail)) }}</el-tag></el-descriptions-item>
           <el-descriptions-item :label="$tx('Service / Cards')">{{ detail.serviceLevelCode }} / {{ detail.totalCardCount }}</el-descriptions-item>
           <el-descriptions-item :label="$tx('Customer')" :span="2">{{ detail.customer.displayName }} · {{ detail.customer.email }}</el-descriptions-item>
@@ -158,7 +159,7 @@
           <el-tab-pane :label="$tx('Timeline')" name="timeline">
 
         <p v-if="!detail.timeline.length" class="order-section-empty">{{ $tx('No timeline events') }}</p>
-        <el-timeline v-else><el-timeline-item v-for="event in detail.timeline" :key="event.id" :timestamp="parseTime(event.createdAt)"><strong>{{ event.title }}</strong><p v-if="event.detail" class="timeline-detail">{{ event.detail }}</p></el-timeline-item></el-timeline>
+        <el-timeline v-else><el-timeline-item v-for="event in detail.timeline" :key="event.id" :timestamp="parseTime(event.createdAt)"><strong>{{ $tx(event.title) }}</strong><p v-if="event.detail" class="timeline-detail">{{ localizeOrderEventDetail(event) }}</p></el-timeline-item></el-timeline>
           </el-tab-pane>
         </el-tabs>
       </template>
@@ -201,9 +202,11 @@
 </template>
 
 <script setup name="NxrOrders">
+import { localizeOrderEventDetail } from '@/i18n'
 import auth from '@/plugins/auth'
 import OrderFinanceExceptionPanel from './components/OrderFinanceExceptionPanel.vue'
 import { useRoute, useRouter } from 'vue-router'
+import { onDeactivated } from 'vue'
 import { orderDetailSection, orderManualStatuses } from './orderPresentation'
 import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
 import CommercePolicyPanel from './components/CommercePolicyPanel.vue'
@@ -346,6 +349,10 @@ const extraStatusLabels = {
 
 function labelStatus(value) { return filterStatusOptions.find((item) => item.value === value)?.label || extraStatusLabels[value] || value }
 function displayOrderStatus(order) { return order?.statusCode === 'admission_review' && order.admissionStatus ? order.admissionStatus : order?.statusCode }
+function businessOrderNumber(order) {
+  const reference = order?.orderReference || order?.merchantBatch?.clientReference
+  return /^NXR-\d{6,}$/.test(reference || '') ? reference : order?.orderNo || ''
+}
 function taskLabel(value) { return taskTypeOptions.find((item) => item.value === value)?.label || value }
 function statusType(value) { if (['completed', 'delivered'].includes(value)) return 'success'; if (['cancelled', 'rejected', 'payment_expired'].includes(value)) return 'danger'; if (['payment_review', 'payment_exception', 'review', 'needs_information', 'terms_confirmation'].includes(value)) return 'warning'; return 'info' }
 function paymentType(value) { return value === 'confirmed' ? 'success' : value === 'rejected' ? 'danger' : value === 'proof_submitted' ? 'warning' : 'info' }
@@ -655,6 +662,12 @@ async function saveServicePriceConfig() {
     savingServicePrice.value = false
   }
 }
+
+onDeactivated(() => {
+  // Cached order pages must not leave teleported drawers above another workspace.
+  detailGeneration++
+  for (const drawer of [detailOpen, paymentDialogOpen, exceptionDialogOpen, ticketDialogOpen, shippingActionDialogOpen, shippingConfigOpen]) drawer.value = false
+})
 
 watch(() => route.query.status, raw => {
   queryParams.status = filterStatusOptions.some(option => option.value === raw) ? raw : undefined

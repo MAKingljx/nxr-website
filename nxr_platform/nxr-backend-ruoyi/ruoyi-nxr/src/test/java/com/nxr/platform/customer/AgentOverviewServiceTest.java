@@ -60,7 +60,7 @@ class AgentOverviewServiceTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"clients", "intakes", "batches", "returns", "wallet", "addresses"})
+    @ValueSource(strings = {"clients", "orders", "intakes", "batches", "returns", "wallet", "addresses"})
     void everyViewIncludesInactiveCompaniesAndCanFilterWithoutEmails(String view) throws Exception {
         var all = service.overview(1, view, null, null, 1, 20);
         assertThat(all.total()).isEqualTo(3);
@@ -81,7 +81,7 @@ class AgentOverviewServiceTest {
     }
 
     @ParameterizedTest
-    @CsvSource({"clients,A_001", "intakes,IN-A", "batches,Alice batch", "returns,OUT-A", "wallet,USD", "addresses,One Road"})
+    @CsvSource({"clients,A_001", "orders,INT-A", "intakes,IN-A", "batches,Alice batch", "returns,OUT-A", "wallet,USD", "addresses,One Road"})
     void eachViewSearchesItsOwnReferenceAndCompanyWithAccurateTotals(String view, String term) {
         var found = service.overview(1, view, null, term, 1, 20);
         assertThat(found.total()).isEqualTo(1);
@@ -92,7 +92,7 @@ class AgentOverviewServiceTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"clients", "intakes", "batches", "returns", "wallet", "addresses"})
+    @ValueSource(strings = {"clients", "orders", "intakes", "batches", "returns", "wallet", "addresses"})
     void tiedTimestampsPaginateDeterministicallyAndStayBounded(String view) {
         var all = service.overview(1, view, null, null, 1, 20).items();
         for (int page = 1; page <= all.size(); page++) {
@@ -105,6 +105,20 @@ class AgentOverviewServiceTest {
         assertThat(beyond.total()).isEqualTo(3);
         assertThat(service.overview(1, view, null, null, 0, 999).pageSize()).isEqualTo(100);
         assertThat(service.overview(1, view, null, null, 0, -1).page()).isEqualTo(1);
+    }
+
+    @Test void ordersUseFulfillmentStatusOnlyForTheSameCompany() {
+        assertThat(first("orders").reference()).isEqualTo("INT-A");
+        assertThat(first("orders").statusCode()).isEqualTo("ready");
+        jdbc.update("UPDATE grading_order SET order_no='NXR-000051',status_code='grading' WHERE id=51");
+        jdbc.update("UPDATE agent_intake SET order_id=51 WHERE id=11");
+        assertThat(first("orders").statusCode()).isEqualTo("grading");
+        assertThat(first("orders").detail()).isEqualTo("NXR-000051");
+        jdbc.update("UPDATE grading_order SET order_no='OTHER-COMPANY',status_code='delivered' WHERE id=52");
+        jdbc.update("UPDATE agent_intake SET order_id=52 WHERE id=11");
+        assertThat(first("orders").statusCode()).isEqualTo("ready");
+        assertThat(first("orders").detail()).isEmpty();
+        assertThat(service.overview(1,"orders",101L,"OTHER-COMPANY",1,20).total()).isZero();
     }
 
     @Test void projectionsRetainUsefulCountsMoneyStatusAndAddress() {
@@ -149,7 +163,7 @@ class AgentOverviewServiceTest {
         JdbcClient business = mock(JdbcClient.class);
         AgentOverviewService guarded = new AgentOverviewService(business, scope);
         jdbc.update("INSERT INTO sys_user_role VALUES(10,1)");
-        for (String view : List.of("clients", "addresses", "wallet")) {
+        for (String view : List.of("clients", "orders", "addresses", "wallet")) {
             assertThatThrownBy(() -> guarded.overview(10, view, null, null, 1, 20)).hasMessageContaining("403");
             assertThatThrownBy(() -> guarded.overview(40, view, null, null, 1, 20)).hasMessageContaining("403");
         }

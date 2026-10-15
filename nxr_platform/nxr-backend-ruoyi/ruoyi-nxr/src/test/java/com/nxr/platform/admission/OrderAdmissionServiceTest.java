@@ -89,6 +89,30 @@ class OrderAdmissionServiceTest {
     }
 
     @Test
+    void quoteDriftAfterApprovalRejectsOldAcceptanceWithoutAddingRows() {
+        tx(() -> service.decide(10L, 9L,
+            new OrderAdmissionService.DecisionRequest("approve", "Approved initial quote", 1)));
+        // A changed stored quote must never accept the customer's earlier approval snapshot.
+        jdbc.sql("UPDATE grading_order SET total_amount=125.00 WHERE id=10").update();
+        int revision = jdbc.sql("SELECT admission_revision FROM grading_order WHERE id=10")
+            .query(Integer.class).single();
+        int events = jdbc.sql("SELECT COUNT(*) FROM order_admission_event WHERE order_id=10")
+            .query(Integer.class).single();
+
+        assertThatThrownBy(() -> tx(() -> service.acceptTerms(7L, "NXR-100",
+            new OrderAdmissionService.AcceptTermsRequest("terms-v1", new BigDecimal("100.00"), "USD"))))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("quote changed after approval");
+
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM order_terms_acceptance").query(Integer.class).single()).isZero();
+        assertThat(jdbc.sql("SELECT admission_revision FROM grading_order WHERE id=10").query(Integer.class).single())
+            .isEqualTo(revision);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM order_admission_event WHERE order_id=10").query(Integer.class).single())
+            .isEqualTo(events);
+        assertThat(jdbc.sql("SELECT status_code FROM grading_order WHERE id=10").query(String.class).single())
+            .isEqualTo("terms_confirmation");
+    }
+
+    @Test
     void approvalFreezesQuoteAndTermsAndRequiresExactCustomerAcceptance() {
         assertThatThrownBy(() -> tx(() -> {
             service.requirePaymentAllowed(10L, 7L);

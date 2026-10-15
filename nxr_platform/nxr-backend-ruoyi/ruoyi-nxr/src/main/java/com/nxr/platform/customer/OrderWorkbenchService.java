@@ -199,6 +199,14 @@ public class OrderWorkbenchService {
         WorkbenchOrder order = lockOrder(orderId);
         ensurePhysicalItems(order.id());
         List<LabelRow> rows = labelRows(order.id());
+        if (request != null && request.orderItemIds() != null && !request.orderItemIds().isEmpty()) {
+            Set<Long> selected = new java.util.HashSet<>(request.orderItemIds());
+            if (selected.contains(null) || selected.size() > 1000) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid card selection");
+            List<Long> physicalIds = jdbcClient.sql("SELECT id FROM order_physical_item WHERE order_id=:id AND order_item_id IN (:ids)")
+                .param("id",orderId).param("ids",selected).query(Long.class).list();
+            if (physicalIds.size()!=selected.size()) throw new ResponseStatusException(HttpStatus.NOT_FOUND,"Selected card not found in this order");
+            rows=rows.stream().filter(row -> physicalIds.contains(row.physicalItemId())).toList();
+        }
         if (rows.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This order has no cards to export");
         }
@@ -221,7 +229,16 @@ public class OrderWorkbenchService {
             order.id(), "labels", rows.size(), contentFingerprint,
             request == null ? null : request.reprintReason(), adminUserId
         );
-        if (printSequence > 1) {
+        boolean selectedExport = request != null && request.orderItemIds() != null && !request.orderItemIds().isEmpty();
+        if (selectedExport) {
+            for (LabelRow row : rows) {
+                jdbcClient.sql("INSERT INTO order_card_label_print(order_id,physical_item_id,print_sequence,content_fingerprint) VALUES(:orderId,:itemId,:seq,:fingerprint)")
+                    .param("orderId",order.id()).param("itemId",row.physicalItemId()).param("seq",printSequence).param("fingerprint",labelFingerprint(row)).update();
+                jdbcClient.sql("UPDATE order_workbench_scan SET status_code='invalidated',active_physical_item_id=NULL,invalidated_at=CURRENT_TIMESTAMP WHERE physical_item_id=:id AND scan_stage_code IN ('label','packing') AND status_code='active'")
+                    .param("id",row.physicalItemId()).update();
+            }
+            jdbcClient.sql("UPDATE order_packing_check SET status_code='invalidated',invalidated_at=CURRENT_TIMESTAMP WHERE order_id=:id AND status_code='passed'").param("id",order.id()).update();
+        } else if (printSequence > 1) {
             invalidateLabelAndPackingScans(order.id());
         }
         StringBuilder csv = new StringBuilder(
@@ -450,6 +467,8 @@ public class OrderWorkbenchService {
 
     private List<WorkbenchItem> loadItems(long orderId) {
         PrintVersion printVersion = currentLabelPrintVersion(orderId);
+        java.util.Map<Long,PrintVersion> cardVersions = cardPrintVersions(orderId);
+        PrintVersion latestWhole = latestFullLabelPrintVersion(orderId);
         return jdbcClient.sql(
                 """
                 SELECT p.id, p.order_item_id, p.barcode, i.item_no, i.card_name,
@@ -488,8 +507,11 @@ public class OrderWorkbenchService {
                 boolean ready = labelReady(
                     submissionId, certId, productType, vintageClassification, finalGradeValue, gradingStatus
                 );
-                String currentLabelBarcode = printVersion == null || !ready ? null : labelBarcode(
-                    physicalBarcode, printVersion.printSequence(), labelFingerprint(
+                String fingerprint=labelFingerprint(submissionId,certId,productType,vintageClassification,merchDescription,finalGradeValue,finalGradeLabel,cardName);
+                PrintVersion cardVersion=cardVersions.get(rs.getLong("id"));
+                PrintVersion effective=cardVersion != null && (latestWhole==null || cardVersion.printSequence()>=latestWhole.printSequence()) && fingerprint.equals(cardVersion.contentFingerprint()) ? cardVersion : printVersion;
+                String currentLabelBarcode = effective == null || !ready ? null : labelBarcode(
+                    physicalBarcode, effective.printSequence(), labelFingerprint(
                         submissionId, certId, productType, vintageClassification, merchDescription,
                         finalGradeValue, finalGradeLabel, cardName
                     )
@@ -506,6 +528,10 @@ public class OrderWorkbenchService {
     }
 
     private List<LabelRow> labelRows(long orderId) {
+        return labelRows(orderId,null);
+    }
+
+    private List<LabelRow> labelRows(long orderId,Long physicalId) {
         return jdbcClient.sql(
                 """
                 SELECT o.order_no, i.item_no, p.id AS physical_item_id, p.barcode, i.card_name, i.grading_submission_id,
@@ -516,11 +542,12 @@ public class OrderWorkbenchService {
                 JOIN order_physical_item p ON p.order_item_id = i.id AND p.order_id = o.id
                 LEFT JOIN grading_submission s ON s.id = i.grading_submission_id
                 LEFT JOIN grading_score g ON g.submission_id = s.id
-                WHERE o.id = :orderId
+                WHERE o.id = :orderId AND (:physicalId IS NULL OR p.id=:physicalId)
                 ORDER BY i.item_no
                 """
             )
             .param("orderId", orderId)
+            .param("physicalId", physicalId)
             .query((rs, rowNum) -> new LabelRow(
                 rs.getString("order_no"), rs.getInt("item_no"), rs.getLong("physical_item_id"),
                 rs.getString("barcode"), rs.getString("card_name"),
@@ -674,11 +701,20 @@ public class OrderWorkbenchService {
                 );
             }
         }
-        requireCurrentLabelPrintVersion(orderId, rows);
+        for(LabelRow row : rows) if(currentCardPrintVersion(orderId,row.physicalItemId(),labelFingerprint(row))==null)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,"Export the current labels before shipping");
     }
 
     private void assertCurrentPrintedLabelBarcode(long orderId, PhysicalItem item, String scannedBarcode) {
-        PrintVersion printVersion = requireCurrentLabelPrintVersion(orderId, labelRows(orderId));
+        PrintVersion printVersion = currentCardPrintVersion(orderId, item.id(), labelFingerprint(item));
+        if (printVersion == null) {
+            boolean previouslyPrinted = latestFullLabelPrintVersion(orderId) != null || jdbcClient.sql(
+                    "SELECT COUNT(*) FROM order_card_label_print WHERE order_id=:orderId AND physical_item_id=:itemId"
+                ).param("orderId", orderId).param("itemId", item.id()).query(Integer.class).single() > 0;
+            throw new ResponseStatusException(HttpStatus.CONFLICT, previouslyPrinted
+                ? "The grading result changed after label export; export the current labels before scanning or shipping"
+                : "Export the current card label before scanning");
+        }
         String expected = labelBarcode(item.barcode(), printVersion.printSequence(), labelFingerprint(item));
         if (!expected.equals(scannedBarcode)) {
             throw new ResponseStatusException(
@@ -688,17 +724,53 @@ public class OrderWorkbenchService {
         }
     }
 
+    /** Selected return cards keep the existing intake, current-label and packing scan gates. */
+    public void assertCardPackingReady(long orderId, long orderItemId) {
+        WorkbenchOrder order=requireOrder(orderId);
+        if(!order.workbenchRequired()) return;
+        Long physicalId=jdbcClient.sql("SELECT id FROM order_physical_item WHERE order_id=:orderId AND order_item_id=:itemId")
+            .param("orderId",orderId).param("itemId",orderItemId).query(Long.class).optional().orElse(null);
+        if(physicalId==null) throw new ResponseStatusException(HttpStatus.CONFLICT,"Allocate and scan this physical card before packing");
+        LabelRow row=labelRows(orderId,physicalId).stream().findFirst()
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT,"Allocate and scan this physical card before packing"));
+        if(!labelReady(row)) throw new ResponseStatusException(HttpStatus.CONFLICT,"Card grading is not approved");
+        for(String stage: List.of("intake","label","packing")) requireEarlierScan(orderId,row.physicalItemId(),stage);
+        String stored=jdbcClient.sql("SELECT label_fingerprint FROM order_workbench_scan WHERE physical_item_id=:id AND scan_stage_code='label' AND status_code='active'").param("id",row.physicalItemId()).query(String.class).single();
+        if(!labelFingerprint(row).equals(stored) || currentCardPrintVersion(orderId,row.physicalItemId(),labelFingerprint(row))==null)
+            throw new ResponseStatusException(HttpStatus.CONFLICT,"The card label changed; export and scan the current label again");
+    }
+
+    private java.util.Map<Long,PrintVersion> cardPrintVersions(long orderId) {
+        java.util.Map<Long,PrintVersion> result=new java.util.HashMap<>();
+        jdbcClient.sql("SELECT physical_item_id,print_sequence,content_fingerprint FROM order_card_label_print WHERE order_id=:id ORDER BY print_sequence")
+            .param("id",orderId).query((rs,n) -> { result.put(rs.getLong(1),new PrintVersion(rs.getInt(2),rs.getString(3))); return 1; }).list();
+        return result;
+    }
+
+    private PrintVersion currentCardPrintVersion(long orderId,long physicalItemId,String fingerprint) {
+        PrintVersion card=jdbcClient.sql("SELECT print_sequence,content_fingerprint FROM order_card_label_print WHERE order_id=:orderId AND physical_item_id=:itemId ORDER BY print_sequence DESC LIMIT 1")
+            .param("orderId",orderId).param("itemId",physicalItemId).query((rs,n)->new PrintVersion(rs.getInt(1),rs.getString(2))).optional().orElse(null);
+        PrintVersion latest=latestFullLabelPrintVersion(orderId);
+        if(card!=null && (latest==null || card.printSequence()>=latest.printSequence())) return fingerprint.equals(card.contentFingerprint()) ? card : null;
+        return currentLabelPrintVersion(orderId);
+    }
+
+    private PrintVersion latestFullLabelPrintVersion(long orderId) {
+        return jdbcClient.sql("SELECT j.print_sequence,j.content_fingerprint FROM order_print_job j WHERE j.order_id=:id AND j.export_type_code='labels' AND NOT EXISTS (SELECT 1 FROM order_card_label_print c WHERE c.order_id=j.order_id AND c.print_sequence=j.print_sequence) ORDER BY j.print_sequence DESC LIMIT 1")
+            .param("id",orderId).query((rs,n)->new PrintVersion(rs.getInt(1),rs.getString(2))).optional().orElse(null);
+    }
+
     private PrintVersion currentLabelPrintVersion(long orderId) {
         List<LabelRow> rows = labelRows(orderId);
         if (rows.isEmpty() || rows.stream().anyMatch(row -> !labelReady(row))) {
             return null;
         }
-        PrintVersion latest = latestLabelPrintVersion(orderId);
+        PrintVersion latest = latestFullLabelPrintVersion(orderId);
         return latest != null && orderLabelFingerprint(rows).equals(latest.contentFingerprint()) ? latest : null;
     }
 
     private PrintVersion requireCurrentLabelPrintVersion(long orderId, List<LabelRow> rows) {
-        PrintVersion latest = latestLabelPrintVersion(orderId);
+        PrintVersion latest = latestFullLabelPrintVersion(orderId);
         if (latest == null || !orderLabelFingerprint(rows).equals(latest.contentFingerprint())) {
             throw new ResponseStatusException(
                 HttpStatus.CONFLICT,
@@ -928,7 +1000,8 @@ public class OrderWorkbenchService {
     public record PackingCheckRequest(long sessionId) {
     }
 
-    public record ExportRequest(String reprintReason) {
+    public record ExportRequest(String reprintReason, List<Long> orderItemIds) {
+        public ExportRequest(String reprintReason) { this(reprintReason,null); }
     }
 
     public record ExportFile(String filename, String contentType, byte[] content) {

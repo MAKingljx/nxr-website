@@ -61,3 +61,7 @@ INSERT INTO customer_address(id,customer_id,label,contact_name,address_line1,cit
  (82,202,'Warehouse B','Bob Recipient','Two Road','Paris','100002','FR',0),
  (83,404,'Warehouse D','Doris Recipient','Four Road','Berlin','100004','DE',1),
  (84,303,'Collector home','Collector Recipient','Three Road','London','100003','GB',1);
+
+ALTER TABLE agent_intake ADD COLUMN order_id BIGINT;
+ALTER TABLE grading_order ADD COLUMN order_no VARCHAR(64);
+ALTER TABLE grading_order ADD COLUMN status_code VARCHAR(32);

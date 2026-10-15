@@ -902,15 +902,16 @@ public class CustomerPortalService {
     private MerchantBatchLink merchantBatchLink(long orderId) {
         return jdbcClient.sql(
                 """
-                SELECT b.id, b.batch_no, b.status_code
+                SELECT b.id, b.batch_no, b.status_code, bi.client_reference
                 FROM merchant_order_batch_item bi
                 JOIN merchant_order_batch b ON b.id = bi.batch_id
                 WHERE bi.order_id = :orderId AND b.status_code <> 'cancelled'
+                  AND EXISTS (SELECT 1 FROM grading_order owner_o WHERE owner_o.id=bi.order_id AND owner_o.customer_id=b.merchant_customer_id)
                 LIMIT 1
                 """
             )
             .param("orderId", orderId)
-            .query((rs, rowNum) -> new MerchantBatchLink(rs.getLong("id"), rs.getString("batch_no"), rs.getString("status_code")))
+            .query((rs, rowNum) -> new MerchantBatchLink(rs.getLong("id"), rs.getString("batch_no"), rs.getString("status_code"),rs.getString("client_reference")))
             .optional()
             .orElse(null);
     }
@@ -955,6 +956,9 @@ public class CustomerPortalService {
         if (!Set.of("received", "grading", "review", "quality_check", "quality_hold").contains(order.statusCode())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "A grading submission can only be linked after intake");
         }
+        int dispatched = jdbcClient.sql("SELECT COUNT(*) FROM grading_order_item WHERE id=:itemId AND order_id=:orderId AND status_code IN ('return_shipped','delivered')")
+            .param("itemId",itemId).param("orderId",orderId).query(Integer.class).single();
+        if(dispatched>0) throw new ResponseStatusException(HttpStatus.CONFLICT,"A shipped card cannot be linked or restarted for grading");
         OrderItemLinkRow itemLink = jdbcClient.sql(
                 "SELECT grading_submission_id FROM grading_order_item WHERE id = :itemId AND order_id = :orderId FOR UPDATE"
             )
@@ -1219,7 +1223,10 @@ public class CustomerPortalService {
         }
         String whereClause = """
             WHERE (:status IS NULL OR o.status_code = :status)
-              AND (:query IS NULL OR UPPER(o.order_no) LIKE :query OR UPPER(c.email) LIKE :query OR UPPER(c.display_name) LIKE :query)
+              AND (:query IS NULL OR UPPER(o.order_no) LIKE :query OR UPPER(c.email) LIKE :query OR UPPER(c.display_name) LIKE :query
+                OR EXISTS (SELECT 1 FROM merchant_order_batch_item search_bi
+                  JOIN merchant_order_batch search_b ON search_b.id=search_bi.batch_id AND search_b.merchant_customer_id=o.customer_id
+                  WHERE search_bi.order_id=o.id AND UPPER(search_bi.client_reference) LIKE :query))
             """ + customerCondition + scopeCondition;
         Integer total = jdbcClient.sql(
                 "SELECT COUNT(*) FROM grading_order o JOIN customer_account c ON c.id = o.customer_id " + whereClause
@@ -1233,7 +1240,10 @@ public class CustomerPortalService {
                        o.service_level_code,
                        o.return_shipping_option_code, o.return_shipping_option_name, o.total_card_count,
                        o.total_amount, o.currency_code, o.created_at, o.updated_at,
-                       c.id AS customer_id, c.email AS customer_email, c.display_name AS customer_display_name
+                       c.id AS customer_id, c.email AS customer_email, c.display_name AS customer_display_name,
+                       (SELECT display_bi.client_reference FROM merchant_order_batch_item display_bi
+                         JOIN merchant_order_batch display_b ON display_b.id=display_bi.batch_id AND display_b.merchant_customer_id=o.customer_id
+                         WHERE display_bi.order_id=o.id) AS order_reference
                 FROM grading_order o
                 JOIN customer_account c ON c.id = o.customer_id
                 """.formatted(orderAdmissionService == null ? "NULL" : "o.admission_status_code")
@@ -1251,7 +1261,8 @@ public class CustomerPortalService {
                 rs.getString("currency_code"),
                 new CustomerReference(rs.getLong("customer_id"), rs.getString("customer_email"), rs.getString("customer_display_name")),
                 rs.getObject("created_at", LocalDateTime.class),
-                rs.getObject("updated_at", LocalDateTime.class)
+                rs.getObject("updated_at", LocalDateTime.class),
+                rs.getString("order_reference")
             ))
             .list();
         return new OrderListResponse(items, resolvedPage, resolvedPageSize, total == null ? 0 : total);
@@ -2185,8 +2196,14 @@ public class CustomerPortalService {
         String currencyCode,
         CustomerReference customer,
         LocalDateTime createdAt,
-        LocalDateTime updatedAt
+        LocalDateTime updatedAt,
+        String orderReference
     ) {
+        public OrderListItem(long id,String orderNo,String statusCode,String admissionStatus,String serviceLevelCode,
+            int totalCardCount,BigDecimal totalAmount,String currencyCode,CustomerReference customer,
+            LocalDateTime createdAt,LocalDateTime updatedAt) {
+            this(id,orderNo,statusCode,admissionStatus,serviceLevelCode,totalCardCount,totalAmount,currencyCode,customer,createdAt,updatedAt,null);
+        }
     }
 
     public record OrderDetailResponse(
@@ -2226,7 +2243,8 @@ public class CustomerPortalService {
     ) {
     }
 
-    public record MerchantBatchLink(long batchId, String batchNo, String statusCode) {
+    public record MerchantBatchLink(long batchId, String batchNo, String statusCode, String clientReference) {
+        public MerchantBatchLink(long batchId,String batchNo,String statusCode) { this(batchId,batchNo,statusCode,null); }
     }
 
     public record CustomerReference(long id, String email, String displayName) {

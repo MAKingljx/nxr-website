@@ -1,26 +1,29 @@
 <script setup lang="ts">
 import { computed, provide } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import auth from '@/plugins/auth'
-import { resolveWorkspaceView, workspacePath } from '@/utils/submissionWorkspace'
+import { resolveWorkspaceView } from '@/utils/submissionWorkspace'
 import { AgentApiKey, type AgentApi } from '../lib/agentWorkbench'
-import AgentClientsPanel from './AgentClientsPanel.vue'
-import AgentCardsPanel from './AgentCardsPanel.vue'
-import AgentIntakesPanel from './AgentIntakesPanel.vue'
-import AgentReturnsPanel from './AgentReturnsPanel.vue'
+import AgentOrdersPanel from './AgentOrdersPanel.vue'
 import AgentBatchesPanel from './AgentBatchesPanel.vue'
 import AgentWalletPanel from './AgentWalletPanel.vue'
 import AgentAddressesPanel from './AgentAddressesPanel.vue'
 const props=defineProps<{api:AgentApi}>()
 provide(AgentApiKey,props.api)
-const route=useRoute(),router=useRouter(),busy=props.api.busy
+const route=useRoute()
 const tab=computed(()=>resolveWorkspaceView(route))
+const batchCreation = computed(() => route.query.action === 'create-batch')
 const financeAllowed = computed(() => auth.hasPermi('nxr:customer:finance'))
 const recordId=computed(()=>{const id=Number(route.query.record);return Number.isSafeInteger(id)&&id>0?id:undefined})
-const selectedClientId=computed(()=>{const id=Number(route.query.clientId);return Number.isSafeInteger(id)&&id>0?id:undefined})
-async function navigate(next:string,clientId?:number){if(busy.value || (next === 'wallet' && !financeAllowed.value))return;await router.replace({path:workspacePath(next),query:{company:String(props.api.companyId),...(clientId?{clientId:String(clientId)}:{})}})}
 </script>
-<template><section class="agent-workbench" data-testid="agent-workbench"><AgentClientsPanel v-if="tab==='clients'" :key="`clients-${recordId||0}`" :initial-record-id="recordId" @navigate="navigate" /><AgentCardsPanel v-else-if="tab==='cards'" /><AgentIntakesPanel v-else-if="tab==='intakes'" :key="`intakes-${selectedClientId||0}-${recordId||0}`" :initial-record-id="recordId" :initial-client-id="selectedClientId" /><AgentReturnsPanel v-else-if="tab==='returns'" :key="`returns-${selectedClientId||0}-${recordId||0}`" :initial-record-id="recordId" :initial-client-id="selectedClientId" /><AgentBatchesPanel v-else-if="tab==='batches'" /><AgentWalletPanel v-else-if="tab==='wallet' && financeAllowed" /><AgentAddressesPanel v-else /></section></template>
+<template>
+  <section class="agent-workbench" data-testid="agent-workbench">
+    <AgentOrdersPanel v-if="tab === 'orders'" :key="`orders-${recordId || 0}-${batchCreation}`" :initial-record-id="recordId" :initial-batch-creation="batchCreation" />
+    <AgentBatchesPanel v-else-if="tab === 'batches'" />
+    <AgentWalletPanel v-else-if="tab === 'wallet' && financeAllowed" />
+    <AgentAddressesPanel v-else-if="tab === 'addresses'" />
+  </section>
+</template>
 
 <style scoped>
 

@@ -9,7 +9,7 @@ const props = defineProps<{ view: string; financeAllowed: boolean }>()
 const emit = defineEmits<{ open: [row: AgentOverviewRow] }>()
 const rows = ref(emptyAgentPage<AgentOverviewRow>()), query = ref(''), loading = ref(false), error = ref('')
 const denied = computed(() => props.view === 'wallet' && !props.financeAllowed)
-const titleLabel = computed(() => tx(({ clients:'Customer', intakes:'Carrier / tracking number', batches:'Batch name', returns:'Carrier / tracking number', wallet:'Currency', addresses:'Contact name' } as Record<string,string>)[props.view]))
+const titleLabel = computed(() => tx(({ orders:'Customer', clients:'Customer', intakes:'Carrier / tracking number', batches:'Batch name', returns:'Carrier / tracking number', wallet:'Currency', addresses:'Contact name' } as Record<string,string>)[props.view]))
 let generation = 0, controller: AbortController | null = null
 async function load(page = 1) {
   if (denied.value) return
@@ -45,9 +45,9 @@ onBeforeUnmount(() => { generation++; controller?.abort() })
           <template #default="{row}">{{ row.companyName }} <el-tag v-if="!row.companyActive" size="small" type="info">{{ $tx('Disabled') }}</el-tag></template>
         </el-table-column>
         <el-table-column v-if="view !== 'wallet'" prop="reference" :label="view === 'addresses' ? $tx('Address name') : $tx('Reference')" min-width="170" />
-        <el-table-column v-if="view !== 'wallet'" :prop="['intakes','returns'].includes(view) ? 'detail' : 'title'" :label="titleLabel" min-width="160" />
+        <el-table-column v-if="view !== 'wallet'" :prop="view === 'orders' ? 'clientName' : ['intakes','returns'].includes(view) ? 'detail' : 'title'" :label="titleLabel" min-width="160" />
         <el-table-column v-if="['intakes','returns'].includes(view)" prop="clientName" :label="$tx('Customer')" min-width="140" />
-        <el-table-column v-if="['clients','intakes','batches','returns'].includes(view)" :label="$tx('Cards')" width="90"><template #default="{row}">{{ row.cardCount ?? '—' }}</template></el-table-column>
+        <el-table-column v-if="['orders','clients','intakes','batches','returns'].includes(view)" :label="$tx('Cards')" width="90"><template #default="{row}">{{ row.cardCount ?? '—' }}</template></el-table-column>
         <el-table-column v-if="view === 'wallet'" :label="$tx('Enterprise credits')" min-width="150"><template #default="{row}">{{ row.amount != null ? formatPoints(row.amount) : '—' }}</template></el-table-column>
         <el-table-column v-if="view === 'addresses'" prop="detail" :label="$tx('Address')" min-width="260" />
         <el-table-column v-if="!['wallet','addresses'].includes(view)" :label="$tx('Status')" min-width="155"><template #default="{row}">{{ status(row.statusCode) }}</template></el-table-column>

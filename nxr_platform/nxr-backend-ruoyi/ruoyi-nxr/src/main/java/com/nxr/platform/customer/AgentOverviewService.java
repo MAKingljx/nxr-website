@@ -87,6 +87,13 @@ public class AgentOverviewService {
                 "(SELECT COUNT(*) FROM agent_card ac JOIN agent_intake ai ON ai.id=ac.intake_id AND ai.merchant_customer_id=ac.merchant_customer_id"
                     + " WHERE ai.client_id=r.id AND ai.merchant_customer_id=r.merchant_customer_id)",
                 "NULL", "NULL", "r.phone", "r.updated_at", List.of("r.reference", "r.display_name", "r.phone"));
+            case "orders" -> new View(
+                "FROM agent_intake r JOIN customer_account c ON c.id=r.merchant_customer_id"
+                    + " JOIN agent_client cl ON cl.id=r.client_id AND cl.merchant_customer_id=r.merchant_customer_id"
+                    + " LEFT JOIN grading_order o ON o.id=r.order_id AND o.customer_id=r.merchant_customer_id",
+                "r.intake_no", "r.intake_no", "cl.display_name", "COALESCE(o.status_code,r.status_code)",
+                "r.expected_card_count", "NULL", "NULL", "COALESCE(o.order_no,'')", "r.updated_at",
+                List.of("r.intake_no", "cl.display_name", "cl.phone", "cl.email", "o.order_no"));
             case "intakes" -> new View(
                 "FROM agent_intake r JOIN customer_account c ON c.id=r.merchant_customer_id"
                     + " JOIN agent_client cl ON cl.id=r.client_id AND cl.merchant_customer_id=r.merchant_customer_id",

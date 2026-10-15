@@ -1,4 +1,4 @@
-import { activeLocale, tx } from '@/i18n'
+import { activeLocale, tx, localizeBackendMessage } from '@/i18n'
 import { inject, ref, type InjectionKey } from 'vue'
 import request from '@/utils/request'
 import type { CreditQuote, EnterpriseCreditSummary } from '@/api/nxr/enterpriseCredit'
@@ -27,6 +27,17 @@ export type AgentCard = {
   orderNo: string | null; batchId: number | null; batchNo: string | null; batchStatusCode: string | null;
   returnShipmentId: number | null; gradingCertId: string | null; checkedInAt: string | null; returnedAt: string | null;
 }
+export type WorkbenchOrder = {
+  id: number; orderNo: string; clientName: string; phone: string; email: string; statusCode: string;
+  intakeStatusCode: string; cardCount: number; gradingOrderId: number | null; gradingOrderNo: string | null;
+  batchId: number | null; batchNo: string | null; createdAt: string; notes: string | null; canSubmit: boolean; legacy: boolean;
+  gradedCardCount?: number; returnShippedCardCount?: number; deliveredCardCount?: number;
+}
+export type WorkbenchCardInput = { cardName: string; brandName: string; setName: string; officialCardNumber: string; languageCode: string; productType: string; category: string; frontPhotoId: number; backPhotoId: number }
+export type WorkbenchOrderInput = { clientName: string; phone: string; email: string; notes: string; cards: WorkbenchCardInput[] }
+export type WorkbenchOrderDetail = { order: WorkbenchOrder; cards: Array<AgentCard & { fulfillmentStatusCode?: string | null; brandName: string; setName: string; productType: string; category: string }>; events: AgentEvent[] }
+export type WorkbenchOrderOptions = { brands: Array<{ value: string; label: string }>; categories: Array<{ value: string; label: string }>; languages: Array<{ value: string; label: string }>; productTypes: Array<{ value: string; label: string }>; maxCardsPerOrder: number }
+export type PartnerReturnParcel = { id: number; parcelNo: string; companyId: number; carrierName: string; trackingNumber: string; statusCode: string; cardCount: number; shippedAt: string; deliveredAt: string | null; returnAddress: string; items?: Array<{ orderItemId: number; agentCardId: number; orderId: number; orderNo: string; orderReference?: string; batchId: number; batchNo: string; cardName: string; certId: string; itemStatus: string }> }
 export type AgentShipment = {
   id: number; shipmentNo: string; clientId: number; clientName: string; carrierName: string; trackingNumber: string;
   statusCode: string; cardCount: number; address: AgentAddress; notes: string | null; shippedAt: string; deliveredAt: string | null;
@@ -54,8 +65,8 @@ export type AgentRecharge = { id: number; rechargeNo: string; currencyCode: stri
 export type AgentTransaction = { id: number; transactionTypeCode: string; directionCode: string; amount: number | string; balanceAfter: number | string; currencyCode: string; sourceCurrency?: string | null; sourceAmount?: number | string | null; points?: number | string | null; settingsVersion?: number | null; note?: string; createdAt: string }
 export type AgentOrderCreditQuote = { quote: CreditQuote; balance: number | string; sufficient: boolean }
 export type AgentBatch = { id?: number; batchId?: number; batchNo: string; batchName: string; sourceName?: string | null; statusCode: string; totalRows?: number; acceptedRows?: number; rejectedRows?: number; createdAt: string; updatedAt?: string; orders?: Array<{ orderNo: string; clientReference: string; clientDisplayName?: string; admissionStatus?: string; statusCode: string; totalCardCount?: number; cardCount?: number }>; shipments?: Array<{ id: number; directionCode: string; carrierName: string; trackingNumber: string; statusCode: string; deliveredAt?: string }> }
-export type AgentOrder = { orderNo: string; statusCode: string; totalCardCount: number; totalAmount: number; currencyCode: string; items: Array<{ id: number; cardName: string; languageCode: string; gradingCertId?: string; frontPhotoId?: number; backPhotoId?: number; statusCode: string }>; timeline: Array<{ id: number; title: string; detail?: string; createdAt: string }> }
-export type AgentAdmission = { admissionStatus: string; termsVersion: string; termsText: string; quoteAmount: number; quoteCurrency: string; canAcceptTerms: boolean; canPay: boolean; canResubmit: boolean; canResubmit: boolean; decisionNote?: string; paymentDueAtIso?: string; supplementalPhotoIds?: number[]; events: Array<{ id: number; title: string; detail?: string; createdAt: string }> }
+export type AgentOrder = { id?: number; orderNo: string; statusCode: string; totalCardCount: number; totalAmount: number; currencyCode: string; items: Array<{ id: number; cardName: string; languageCode: string; gradingCertId?: string; frontPhotoId?: number; backPhotoId?: number; statusCode: string }>; timeline: Array<{ id: number; title: string; eventCode?: string; detail?: string; createdAt: string }> }
+export type AgentAdmission = { admissionStatus: string; termsVersion: string; termsText: string; turnaroundText?: string; quoteAmount: number; quoteCurrency: string; canAcceptTerms: boolean; canPay: boolean; canResubmit: boolean; decisionNote?: string; paymentDueAtIso?: string; supplementalPhotoIds?: number[]; events: Array<{ id: number; title: string; eventCode?: string; detail?: string; createdAt: string }> }
 type Query = Record<string, string | number | boolean | undefined>
 function queryString(query: Query) { const params = new URLSearchParams(); Object.entries(query).forEach(([key,value]) => { if (value !== undefined && value !== '') params.set(key,String(value)) }); return params.toString() }
 export function formatPoints(amount: number | string) {
@@ -116,7 +127,7 @@ export function createAgentApi(companyId?: number) {
       if (!active) throw new Error(tx('The company workspace has been closed.'))
       return value as T
     } catch (error: any) {
-      throw new Error(error?.response?.data?.message || error?.response?.data?.msg || error?.message || tx('The request was not completed. Please try again.'))
+      throw new Error(localizeBackendMessage(error?.response?.data?.message || error?.response?.data?.msg || error?.message || tx('The request was not completed. Please try again.')))
     }
   }
   function scopedRequest<T>(path: string, init: RequestInit = {}) {
@@ -126,6 +137,12 @@ export function createAgentApi(companyId?: number) {
 function post<T>(path: string, payload: object, requestKey: string) {
   return scopedRequest<T>(`${base}${path}`, { method: 'POST', body: JSON.stringify({ ...payload, requestKey }) })
 }
+const fetchWorkbenchOrders = (query: Query = {}) => scopedRequest<AgentPage<WorkbenchOrder>>(`${base}/workbench-orders?${queryString(query)}`)
+const fetchWorkbenchOrder = (id: number) => scopedRequest<WorkbenchOrderDetail>(`${base}/workbench-orders/${id}`)
+const createWorkbenchOrder = (payload: WorkbenchOrderInput, key: string) => post<WorkbenchOrderDetail>('/workbench-orders', payload, key)
+const fetchWorkbenchOrderOptions = () => scopedRequest<WorkbenchOrderOptions>(`${base}/workbench-order-options`)
+const fetchPartnerReturnParcels = (query: Query = {}) => scopedRequest<AgentPage<PartnerReturnParcel>>(`${base}/partner-return-parcels?${queryString(query)}`)
+const fetchPartnerReturnParcel = (id: number) => scopedRequest<PartnerReturnParcel>(`${base}/partner-return-parcels/${id}`)
 const fetchAgentClients = (query: Query = {}) => scopedRequest<AgentPage<AgentClient>>(`${base}/clients?${queryString(query)}`)
 const fetchAgentClient = (id: number) => scopedRequest<AgentClientDetail>(`${base}/clients/${id}`)
 const createAgentClient = (payload: AgentClientInput, key: string) => post<AgentClient>('/clients', payload, key)
@@ -185,7 +202,7 @@ const uploadAgentCardPhoto = (id: number, side: 'front' | 'back', file: File) =>
   const resubmitOrder = (orderNo: string, data: { note: string; supplementalPhotoIds: number[] }, key: string) => post<AgentAdmission>(`/orders/${encodeURIComponent(orderNo)}/admission/resubmit`,data,key)
   const uploadSupplementalPhoto = (file: File) => { const body = new FormData();body.set('file',file);return scopedRequest<{id:number}>(`${base}/order-photos`,{method:'POST',body}) }
 
-  return { companyId, busy, isActive: () => active, dispose: () => { active = false; controller.abort(); busy.value = false }, fetchAgentClients, fetchAgentClient, createAgentClient, updateAgentClient, fetchAgentIntakes, fetchAgentIntake, createAgentIntake, receiveAgentIntake, checkInAgentCard, fetchAgentCards, fetchAgentEvents, createAgentSubmission, checkAgentReturn, fetchAgentShipments, fetchAgentShipment, createAgentShipment, deliverAgentShipment, uploadAgentCardPhoto, fetchContext, fetchCompanies, fetchOperators, fetchOperatorCandidates, updateOperator, fetchApplicationConfig, fetchCustomerAddresses, saveAddress, deleteAddress, fetchServicePrices, fetchShippingOptions, fetchOrderQuote, fetchBatchQuote, fetchPhoto, fetchMerchantProfile, saveMerchantProfile, fetchWallets, fetchEnterpriseCredit, fetchCreditQuote, fetchOrderCreditQuote, fetchTransactions, fetchRecharges, requestRecharge, fetchBatches, fetchBatch, rotateTrackingLink, revokeTrackingLink, addBatchInbound, fetchOrder, fetchAdmission, acceptOrderTerms, payFromWallet, fetchPackingSlip, resubmitOrder, uploadSupplementalPhoto }
+  return { fetchWorkbenchOrders, fetchWorkbenchOrder, createWorkbenchOrder, fetchWorkbenchOrderOptions, fetchPartnerReturnParcels, fetchPartnerReturnParcel, companyId, busy, isActive: () => active, dispose: () => { active = false; controller.abort(); busy.value = false }, fetchAgentClients, fetchAgentClient, createAgentClient, updateAgentClient, fetchAgentIntakes, fetchAgentIntake, createAgentIntake, receiveAgentIntake, checkInAgentCard, fetchAgentCards, fetchAgentEvents, createAgentSubmission, checkAgentReturn, fetchAgentShipments, fetchAgentShipment, createAgentShipment, deliverAgentShipment, uploadAgentCardPhoto, fetchContext, fetchCompanies, fetchOperators, fetchOperatorCandidates, updateOperator, fetchApplicationConfig, fetchCustomerAddresses, saveAddress, deleteAddress, fetchServicePrices, fetchShippingOptions, fetchOrderQuote, fetchBatchQuote, fetchPhoto, fetchMerchantProfile, saveMerchantProfile, fetchWallets, fetchEnterpriseCredit, fetchCreditQuote, fetchOrderCreditQuote, fetchTransactions, fetchRecharges, requestRecharge, fetchBatches, fetchBatch, rotateTrackingLink, revokeTrackingLink, addBatchInbound, fetchOrder, fetchAdmission, acceptOrderTerms, payFromWallet, fetchPackingSlip, resubmitOrder, uploadSupplementalPhoto }
 }
 
 export type AgentApi = ReturnType<typeof createAgentApi>
@@ -232,12 +249,14 @@ const statusLabels: Record<string, string> = {
   in_transit: 'In transit', processing: 'Processing', expired: 'Expired',
 }
 export const agentStatusLabel = (code: string) => tx(statusLabels[code] || code)
+export const agentFulfillmentStatusLabel = (code: string) => tx(({ return_shipped: 'Returning to partner', delivered: 'Delivered to partner', quality_passed: 'Ready for return', in_stock: 'Ready to submit', received: 'Received by NXR', awaiting_payment: 'Awaiting platform settlement' } as Record<string, string>)[code] || statusLabels[code] || code)
 const batchStatusLabels: Record<string, string> = {
   open: 'Batch in preparation', inbound_shipped: 'In transit to NXR', received: 'Received by NXR',
   return_shipped: 'Returned to sub-agent', delivered: 'Sub-agent received batch', cancelled: 'Cancelled',
 }
 export const agentBatchStatusLabel = (code: string) => tx(batchStatusLabels[code] || code)
 const eventLabels: Record<string, string> = {
+  order_created: 'Order created',
   client_created: 'Customer record created', client_updated: 'Customer record updated', client_archived: 'Archive customer', client_reactivated: 'Restore customer',
   intake_created: 'Intake registered', intake_received: 'Intake received', card_checked_in: 'Card checked into inventory', card_exception: 'Card exception recorded',
   card_photo_uploaded: 'Upload card photo', submission_created: 'Create submission batch', card_return_checked: 'Check returned cards',

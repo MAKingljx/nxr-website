@@ -3,7 +3,7 @@ import test from 'node:test'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import {
   WORKSPACE_ROOT, WORKSPACE_VIEWS, workspacePath, resolveWorkspaceView,
-  groupSubmissionWorkspaceRoutes, legacyWorkspaceLocation, workspaceSidebarTarget
+  groupSubmissionWorkspaceRoutes, legacyWorkspaceLocation, workspaceSidebarTarget, addPartnerFulfillmentRoute
 } from '../src/utils/submissionWorkspace.js'
 import en from '../src/i18n/messages/en.js'
 import zh from '../src/i18n/messages/zh-CN.js'
@@ -37,7 +37,7 @@ function routerFor(source) {
     return { ...route, component: { render: () => null }, children: route.children?.map(withComponents) }
   }
   const router = createRouter({ history: createMemoryHistory(), routes: mapped.map(withComponents) })
-  router.beforeEach(to => router.hasRoute('NxrWorkspaceClients') ? legacyWorkspaceLocation(to) || true : true)
+  router.beforeEach(to => router.hasRoute('NxrWorkspaceOrders') ? legacyWorkspaceLocation(to) || true : true)
   return router
 }
 
@@ -50,18 +50,18 @@ test('server Layout wrappers become one translated workspace with unique names a
   assert.equal(parent.path, WORKSPACE_ROOT)
   assert.equal(parent.component, 'Layout')
   assert.equal(parent.alwaysShow, true)
-  assert.equal(parent.redirect, workspacePath('clients'))
+  assert.equal(parent.redirect, workspacePath('orders'))
   assert.equal(parent.meta.title, 'Submission Workspace')
   assert.deepEqual(parent.children.map(child => child.path), ['partners', ...WORKSPACE_VIEWS])
   assert.equal(new Set(parent.children.map(child => child.name)).size, WORKSPACE_VIEWS.length + 1)
   assert.deepEqual(parent.children.flatMap(child => child.alias || []), ['/nxr/partners', '/nxr/agent-workbench'])
   for (const child of parent.children.slice(1)) {
     assert.equal(child.meta.workspaceView, child.path)
-    assert.equal(child.meta.activeMenu, workspacePath(child.path))
+    assert.equal(child.meta.activeMenu, workspacePath(['orders','batches'].includes(child.path) ? child.path : child.path === 'returns' ? 'batches' : 'orders'))
     assert.equal(child.component, workspace.component)
   }
-  assert.equal(parent.children[1].meta.title, 'Customer Files')
-  assert.equal(groupSubmissionWorkspaceRoutes(source, translate(zh))[0].children[1].meta.title, '客户档案')
+  assert.equal(parent.children[1].meta.title, 'Order')
+  assert.equal(groupSubmissionWorkspaceRoutes(source, translate(zh))[0].children[1].meta.title, '订单')
   assert.deepEqual(source, original)
 })
 
@@ -69,6 +69,7 @@ test('bound partner receives only existing workspace capability, and management-
   const boundPartner = groupSubmissionWorkspaceRoutes([wrapper(workspace)])[0]
   assert.deepEqual(boundPartner.children.map(child => child.path), WORKSPACE_VIEWS)
   assert.ok(boundPartner.children.every(child => child.component !== partners.component))
+  assert.deepEqual(boundPartner.children.filter(child => !child.hidden).map(child => child.path), ['orders','batches'])
   const managementOnly = groupSubmissionWorkspaceRoutes([wrapper(partners)])[0]
   assert.deepEqual(managementOnly.children.map(child => child.path), ['partners'])
   assert.equal(managementOnly.redirect, workspacePath('partners'))
@@ -90,12 +91,12 @@ test('nested or flat authorized shapes preserve unrelated siblings, order, and h
 
 test('route metadata is authoritative and unknown or malformed legacy views fall back safely', () => {
   assert.equal(resolveWorkspaceView({ meta: { workspaceView: 'batches' }, query: { tab: 'clients' } }), 'batches')
-  assert.equal(resolveWorkspaceView({ query: { tab: 'returns' } }), 'returns')
+  assert.equal(resolveWorkspaceView({ query: { tab: 'returns' } }), 'batches')
   for (const tab of ['partners', 'missing', ['wallet'], null]) {
-    assert.equal(resolveWorkspaceView({ query: { tab } }), 'clients')
+    assert.equal(resolveWorkspaceView({ query: { tab } }), 'orders')
   }
-  assert.equal(resolveWorkspaceView(), 'clients')
-  assert.equal(workspacePath('../system/user'), workspacePath('clients'))
+  assert.equal(resolveWorkspaceView(), 'orders')
+  assert.equal(workspacePath('../system/user'), workspacePath('orders'))
 })
 
 test('legacy bookmarks preserve company and hash, resolve the intended view, and do not loop', async () => {
@@ -110,7 +111,7 @@ test('legacy bookmarks preserve company and hash, resolve the intended view, and
   assert.equal(router.currentRoute.value.name, 'NxrWorkspacePartners')
   assert.equal(router.currentRoute.value.meta.activeMenu, workspacePath('partners'))
   await router.push(`${WORKSPACE_ROOT}?tab=invalid&company=20`)
-  assert.equal(router.currentRoute.value.name, 'NxrWorkspaceClients')
+  assert.equal(router.currentRoute.value.name, 'NxrWorkspaceOrders')
   assert.deepEqual(router.currentRoute.value.query, { company: '20' })
 })
 
@@ -118,7 +119,7 @@ test('management-only parent lands in partners without fabricating customer acce
   const router = routerFor([wrapper(partners)])
   await router.push(`${WORKSPACE_ROOT}?company=20`)
   assert.equal(router.currentRoute.value.name, 'NxrWorkspacePartners')
-  assert.equal(router.hasRoute('NxrWorkspaceClients'), false)
+  assert.equal(router.hasRoute('NxrWorkspaceOrders'), false)
 })
 
 test('sidebar retains company between workspace menus without carrying filters or leaking to other menus', () => {
@@ -129,4 +130,32 @@ test('sidebar retains company between workspace menus without carrying filters o
   assert.equal(workspaceSidebarTarget(workspacePath('wallet'), { ...route, query: {} }), workspacePath('wallet'))
   assert.equal(workspaceSidebarTarget(workspacePath('wallet'), { ...route, query: { company: ['20', '21'] } }), workspacePath('wallet'))
   assert.deepEqual(workspaceSidebarTarget('/system/user', route, { page: '1' }), { path: '/system/user', query: { page: '1' } })
+})
+
+
+test('legacy records redirect without mistaking a customer or return ID for an Order ID', async () => {
+  const router = routerFor([wrapper(workspace)])
+  await router.push(`${WORKSPACE_ROOT}/clients?company=20&record=77&clientId=77`)
+  assert.equal(router.currentRoute.value.path, workspacePath('orders'))
+  assert.deepEqual(router.currentRoute.value.query, { company: '20' })
+  await router.push(`${WORKSPACE_ROOT}/intakes?company=20&record=88&action=create-batch`)
+  assert.equal(router.currentRoute.value.path, workspacePath('orders'))
+  assert.equal(router.currentRoute.value.query.record, '88')
+  await router.push(`${WORKSPACE_ROOT}/returns?company=20&record=66`)
+  assert.equal(router.currentRoute.value.path, workspacePath('batches'))
+  assert.deepEqual(router.currentRoute.value.query, { company: '20' })
+})
+
+test('fulfillment requires an authorized order menu and existing staff permissions', () => {
+  assert.deepEqual(addPartnerFulfillmentRoute([wrapper(workspace)]), [wrapper(workspace)])
+  const source = [{ path: '/nxr/orders', component: 'Layout', children: [{ path: 'orders', component: 'nxr/orders/index' }] }]
+  const result = addPartnerFulfillmentRoute(source, translate(en)), added = result.at(-1)
+  assert.equal(added.path, '/nxr/submissions')
+  assert.equal(added.children[0].path, 'partner-fulfillment')
+  assert.equal(`${added.path}/${added.children[0].path}`, '/nxr/submissions/partner-fulfillment')
+  assert.equal(added.children[0].component, 'nxr/partner-fulfillment/index')
+  assert.deepEqual(added.permissions, ['nxr:order:manage', 'nxr:order:workbench', 'nxr:order:shipping', 'nxr:order:batch'])
+  assert.deepEqual(added.children[0].permissions, added.permissions)
+  assert.equal(addPartnerFulfillmentRoute(result).length, result.length)
+  assert.equal(addPartnerFulfillmentRoute([{ ...source[0], hidden: true }]).at(-1).hidden, true)
 })

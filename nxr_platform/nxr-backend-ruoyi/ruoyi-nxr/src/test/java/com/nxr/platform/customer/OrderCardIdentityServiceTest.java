@@ -107,6 +107,7 @@ class OrderCardIdentityServiceTest {
         workbench.scan(10,1,new OrderWorkbenchService.ScanRequest(session.id(),"label",label));
         jdbc.update("UPDATE grading_score SET final_grade_value=10 WHERE submission_id=101");
         assertThatThrownBy(()->workbench.scan(10,1,new OrderWorkbenchService.ScanRequest(session.id(),"packing",label))).hasMessageContaining("changed after label export");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM order_workbench_scan WHERE order_id=10 AND scan_stage_code='packing'", Integer.class)).isZero();
     }
     @Test void partnerAliasRejectsAnotherOrderAndAmbiguousCollisions() {
         partner(); workbench.allocatePhysicalItems(10);

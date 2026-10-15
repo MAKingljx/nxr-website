@@ -10,6 +10,8 @@ on:
       - nxr_platform/nxr-frontend-shared/**
       - nxr_platform/nxr-scripts/verify-agent-workbench.py
       - nxr_platform/nxr-scripts/verify-partner-card-identities.py
+      - nxr_platform/nxr-scripts/verify-partner-order-return.py
+      - nxr_platform/nxr-scripts/verify-partner-order-exceptions.py
       - nxr_platform/nxr-scripts/prepare-agent-workbench-qa.py
       - nxr_platform/nxr-sql/ruoyi/**
       - .github/workflows/java-agent-workbench.yml
@@ -22,6 +24,8 @@ on:
       - nxr_platform/nxr-frontend-shared/**
       - nxr_platform/nxr-scripts/verify-agent-workbench.py
       - nxr_platform/nxr-scripts/verify-partner-card-identities.py
+      - nxr_platform/nxr-scripts/verify-partner-order-return.py
+      - nxr_platform/nxr-scripts/verify-partner-order-exceptions.py
       - nxr_platform/nxr-scripts/prepare-agent-workbench-qa.py
       - nxr_platform/nxr-sql/ruoyi/**
       - .github/workflows/java-agent-workbench.yml
@@ -53,9 +57,9 @@ jobs:
             nxr_platform/nxr-frontend-admin-ruoyi/package-lock.json
       - name: Customer portal build
         working-directory: nxr_platform/nxr-frontend-web
-        run: npm ci && npm run build
+        run: npm ci && node --test tests/*.test.mjs && npm run build
       - name: Agent admin build
         working-directory: nxr_platform/nxr-frontend-admin-ruoyi
-        run: npm ci && npm run build:prod
+        run: npm ci && node --test tests/*.test.js && npm run build:prod
       - name: Acceptance helper syntax
-        run: python3 -m py_compile nxr_platform/nxr-scripts/verify-agent-workbench.py nxr_platform/nxr-scripts/verify-partner-card-identities.py nxr_platform/nxr-scripts/prepare-agent-workbench-qa.py
+        run: python3 -m py_compile nxr_platform/nxr-scripts/verify-agent-workbench.py nxr_platform/nxr-scripts/verify-partner-card-identities.py nxr_platform/nxr-scripts/verify-partner-order-return.py nxr_platform/nxr-scripts/verify-partner-order-exceptions.py nxr_platform/nxr-scripts/prepare-agent-workbench-qa.py

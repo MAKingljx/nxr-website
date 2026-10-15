@@ -22,14 +22,14 @@ function businessLandingPath(target) {
   const user = useUserStore()
   const permissions = user.permissions || []
   if (canViewDashboard(permissions)) return null
-  if (permissions.includes('nxr:agent:workbench') && router.hasRoute('NxrWorkspaceClients')) {
-    return workspacePath('clients')
+  if (permissions.includes('nxr:agent:workbench') && router.hasRoute('NxrWorkspaceOrders')) {
+    return workspacePath('orders')
   }
   return usePermissionStore().landingPath || '/401'
 }
 
 function legacyLanding(target) {
-  return router.hasRoute('NxrWorkspaceClients') ? legacyWorkspaceLocation(target) : null
+  return router.hasRoute('NxrWorkspaceOrders') ? legacyWorkspaceLocation(target) : null
 }
 
 const isWhiteList = (path) => {
