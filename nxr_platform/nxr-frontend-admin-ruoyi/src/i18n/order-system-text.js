@@ -22,6 +22,7 @@ export function orderCodeSource(domain, value) {
 }
 
 export const orderSystemZhCN = {
+  'Agent workbench': '送评工作台',
   'Order submitted for admission review': '订单已提交受理审核',
   'Order approved': '订单已批准',
   'Order application rejected': '订单申请已拒绝',

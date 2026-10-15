@@ -73,6 +73,8 @@ function localeFixture(environment = 'java-stage', savedLocale = 'en') {
 }
 
 test('recognized system titles and errors translate both directions without changing unknown content', () => {
+  assert.equal(localizeKnownOrderText('Agent workbench', 'zh-CN'), '送评工作台')
+  assert.equal(localizeKnownOrderText('送评工作台', 'en'), 'Agent workbench')
   for (const [english, chinese] of Object.entries(orderSystemZhCN)) {
     assert.equal(localizeKnownOrderText(english, 'zh-CN'), chinese)
     assert.equal(localizeKnownOrderText(chinese, 'en'), english)
