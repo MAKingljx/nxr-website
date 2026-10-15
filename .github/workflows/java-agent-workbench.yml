@@ -14,6 +14,9 @@ on:
       - nxr_platform/nxr-scripts/verify-partner-order-exceptions.py
       - nxr_platform/nxr-scripts/prepare-agent-workbench-qa.py
       - nxr_platform/nxr-sql/ruoyi/**
+      - nxr_platform/deploy/hot-deploy-java.sh
+      - nxr_platform/deploy/build-java-release.sh
+      - nxr_platform/deploy/tests/test_java_rollback_compatibility.py
       - .github/workflows/java-agent-workbench.yml
   pull_request:
     branches: [main, 'Phoenix/**']
@@ -28,6 +31,9 @@ on:
       - nxr_platform/nxr-scripts/verify-partner-order-exceptions.py
       - nxr_platform/nxr-scripts/prepare-agent-workbench-qa.py
       - nxr_platform/nxr-sql/ruoyi/**
+      - nxr_platform/deploy/hot-deploy-java.sh
+      - nxr_platform/deploy/build-java-release.sh
+      - nxr_platform/deploy/tests/test_java_rollback_compatibility.py
       - .github/workflows/java-agent-workbench.yml
   workflow_dispatch:
 
@@ -63,3 +69,5 @@ jobs:
         run: npm ci && node --test tests/*.test.js && npm run build:prod
       - name: Acceptance helper syntax
         run: python3 -m py_compile nxr_platform/nxr-scripts/verify-agent-workbench.py nxr_platform/nxr-scripts/verify-partner-card-identities.py nxr_platform/nxr-scripts/verify-partner-order-return.py nxr_platform/nxr-scripts/verify-partner-order-exceptions.py nxr_platform/nxr-scripts/prepare-agent-workbench-qa.py
+      - name: Legacy rollback data boundary
+        run: python3 -m unittest discover -s nxr_platform/deploy/tests -p test_java_rollback_compatibility.py

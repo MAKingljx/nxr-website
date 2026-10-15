@@ -14,7 +14,8 @@ import overviewZhCN from '../src/i18n/workspace-overview-zh-CN.js'
 import enterpriseWalletZhCN from '../src/i18n/enterprise-wallet-zh-CN.js'
 import cardOperatorsZhCN from '../src/i18n/card-operators-zh-CN.js'
 import partnerReturnsZhCN from '../src/i18n/partner-returns-zh-CN.js'
-import { orderSystemZhCN, localizeKnownOrderText, localizeDefaultOrderText, localizeOrderEventDetail } from '../src/i18n/order-system-text.js'
+import { orderSystemZhCN, localizeKnownOrderText, localizeDefaultOrderText, localizeOrderEventDetail, orderCodeSource } from '../src/i18n/order-system-text.js'
+import { orderManualStatuses } from '../src/views/nxr/orders/orderPresentation.js'
 
 const orderBackendServices = ['customer/AgentOrderService', 'customer/AgentWorkbenchService', 'customer/MerchantBatchService', 'customer/PartnerReturnService', 'customer/OrderWorkbenchService', 'customer/OrderFulfillmentService', 'admission/OrderAdmissionService', 'customer/CustomerOrderPhotoService', 'commerce/OrderAccessScopeService', 'commerce/ScopedOrderSubmissionService', 'customer/OrderCardIdentityService', 'customer/AgentOrderCancellationService']
 const backendRoot = new URL('../../nxr-backend-ruoyi/ruoyi-nxr/src/main/java/com/nxr/platform/', import.meta.url)
@@ -65,9 +66,9 @@ function localeFixture(environment = 'java-stage', savedLocale = 'en') {
   const source = readFileSync(new URL('../src/i18n/index.js', import.meta.url), 'utf8')
     .replace(/^import .*\n/gm, '').replace(/\bexport /g, '').replaceAll('import.meta.env.VITE_APP_ENV', JSON.stringify(environment))
   const storage = new Map([['nxr-admin-locale', savedLocale]])
-  const context = { createI18n, en, zhCN, baseLiteralZhCN, workspaceZhCN, partnerZhCN, overviewZhCN, enterpriseWalletZhCN, cardOperatorsZhCN, partnerReturnsZhCN, localizeKnownOrderText, localizeDefaultOrderText, translateOrderEventDetail: localizeOrderEventDetail,
+  const context = { createI18n, en, zhCN, baseLiteralZhCN, workspaceZhCN, partnerZhCN, overviewZhCN, enterpriseWalletZhCN, cardOperatorsZhCN, partnerReturnsZhCN, localizeKnownOrderText, localizeDefaultOrderText, translateOrderEventDetail: localizeOrderEventDetail, orderCodeSource,
     window: { localStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value) } }, document: { documentElement: {} } }
-  vm.runInNewContext(source + '\nglobalThis.api = {i18n,tx,localizeBackendMessage,localizeOrderTerms,localizeOrderEventDetail,allowLocaleSelection};', context)
+  vm.runInNewContext(source + '\nglobalThis.api = {i18n,tx,localizeBackendMessage,localizeOrderTerms,localizeOrderEventDetail,localizeOrderCode,allowLocaleSelection};', context)
   return context.api
 }
 
@@ -190,6 +191,71 @@ test('hosted builds stay English and hide locale selection despite stale browser
   const local = localeFixture('java-stage','zh-CN')
   assert.equal(local.allowLocaleSelection, true)
   assert.equal(local.i18n.global.locale.value, 'zh-CN')
+})
+
+test('order-page status, task and tracking options follow live locale without changing selectable values', () => {
+  const source = readFileSync(new URL('../src/views/nxr/orders/index.vue', import.meta.url), 'utf8')
+  const optionsSource = source.slice(source.indexOf('const manualStatusOptions ='), source.indexOf('function statusType('))
+  const api = localeFixture(), detail = ref({merchantBatch:null}), context = {computed,tx:api.tx,orderManualStatuses,detail}
+  vm.runInNewContext(optionsSource + '\nglobalThis.page = {statusOptions,filterStatusOptions,taskTypeOptions,trackingEventOptions,manualStatusOptions,extraStatusLabels,labelStatus,taskLabel};', context)
+  const page = context.page, names = ['statusOptions','filterStatusOptions','taskTypeOptions','trackingEventOptions','manualStatusOptions']
+  const snapshot = () => JSON.parse(JSON.stringify(Object.fromEntries(names.map(name => [name,page[name].value]))))
+  const english = snapshot()
+  assert.equal(page.labelStatus('confirmed'), 'Confirmed')
+  assert.equal(page.labelStatus('proof_submitted'), 'Proof submitted')
+  api.i18n.global.locale.value = 'zh-CN'
+  const chinese = snapshot()
+  for (const name of names) {
+    assert.deepEqual(chinese[name].map(item => item.value), english[name].map(item => item.value))
+    assert.ok(chinese[name].some((item, index) => item.label !== english[name][index].label), `${name} labels stayed frozen`)
+    for (const [index, option] of chinese[name].entries()) assert.equal(option.label, api.tx(english[name][index].label))
+  }
+  assert.equal(page.labelStatus('confirmed'), '已确认')
+  assert.equal(page.labelStatus('proof_submitted'), '凭证已提交')
+  assert.equal(page.labelStatus('approved'), api.tx('Approved'))
+  assert.equal(page.taskLabel('preprocess'), api.tx('Card Preprocessing'))
+  assert.equal(page.labelStatus('custom_status'), 'custom_status')
+  assert.equal(page.labelStatus('constructor'), 'constructor')
+  assert.equal(page.taskLabel('custom_task'), 'custom_task')
+  detail.value = {merchantBatch:{batchId:42}}
+  assert.deepEqual(Array.from(page.manualStatusOptions.value, item => item.value), english.statusOptions.filter(item => !['inbound_shipped','return_shipped','delivered'].includes(item.value)).map(item => item.value))
+  detail.value = {merchantBatch:null}
+  api.i18n.global.locale.value = 'en'
+  assert.deepEqual(snapshot(), english)
+})
+
+test('known finance and application codes localize on switch while unknown values and source records stay exact', () => {
+  const api = localeFixture(), cases = [
+    ['serviceLevel','basic_grading','Base Grading Service','基础评级服务'],
+    ['paymentType','grading_fee','Grading fee','评级费用'],
+    ['paymentType','shipping_adjustment','Shipping adjustment','运费调整'],
+    ['paymentType','shipping_refund','Shipping refund','运费退款'],
+    ['paymentProvider','manual_transfer','Manual transfer','人工转账'],
+    ['paymentProvider','bank_transfer','Bank transfer','银行转账'],
+    ['paymentProvider','wechat_pay_native','WeChat Pay','微信支付'],
+    ['paymentStatus','confirmed','Confirmed','已确认'],
+    ['paymentStatus','proof_submitted','Proof submitted','凭证已提交'],
+    ['paymentStatus','refund_pending','Refund pending','待退款'],
+    ['productType','graded_card','Graded Card','评级卡'],
+    ['productType','vintage_product','Vintage Card','经典卡'],
+    ['cardCategory','sports_card','Sports Card','体育卡'],
+    ['cardCategory','movie_film','Movie Film','电影胶片'],
+    ['shipmentDirection','inbound','Inbound',api.tx('Inbound')],
+    ['actorType','admin','Staff',api.tx('Staff')]
+  ]
+  const record = Object.freeze({paymentTypeCode:'grading_fee',providerCode:'manual_transfer',statusCode:'confirmed',productType:'graded_card',category:'sports_card',customerNote:'Manual transfer / 客户原文',payerReference:'BANK-{p1}-$&'})
+  const before = JSON.stringify(record), display = computed(() => cases.map(([domain,code]) => api.localizeOrderCode(domain,code)))
+  assert.deepEqual(display.value, cases.map(item => item[2]))
+  api.i18n.global.locale.value = 'zh-CN'
+  assert.deepEqual(display.value.slice(0,14), cases.slice(0,14).map(item => item[3]))
+  assert.equal(display.value[14], api.tx('Inbound'))
+  assert.equal(display.value[15], api.tx('Staff'))
+  for (const domain of ['paymentProvider','paymentType','paymentStatus','serviceLevel','productType','cardCategory','shipmentDirection','actorType','constructor','customDomain']) {
+    for (const value of ['custom_provider','Confirmed','__proto__','constructor',' manual_transfer ',null,undefined]) assert.equal(api.localizeOrderCode(domain,value),value)
+  }
+  api.i18n.global.locale.value = 'en'
+  assert.deepEqual(display.value, cases.map(item => item[2]))
+  assert.equal(JSON.stringify(record), before)
 })
 
 test('review decisions and configuration saves retain custom note and frozen text payloads', async () => {

@@ -527,5 +527,18 @@ export default {
   "Vintage Product": "经典卡产品",
   "Published": "已发布",
   "Labels": "标签",
-  "Packing manifest": "装箱清单"
+  "Packing manifest": "装箱清单",
+  "Grading fee": "评级费用",
+  "Shipping adjustment": "运费调整",
+  "Shipping refund": "运费退款",
+  "Manual transfer": "人工转账",
+  "Bank transfer": "银行转账",
+  "WeChat transfer": "微信转账",
+  "WeChat Pay": "微信支付",
+  "Alipay transfer": "支付宝转账",
+  "Alipay": "支付宝",
+  "Proof submitted": "凭证已提交",
+  "Refunded": "已退款",
+  "Reversed": "已冲正",
+  "Refund pending": "待退款"
 }

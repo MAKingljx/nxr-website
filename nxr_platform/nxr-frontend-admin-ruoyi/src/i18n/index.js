@@ -8,7 +8,7 @@ import overviewZhCN from './workspace-overview-zh-CN'
 import enterpriseWalletZhCN from './enterprise-wallet-zh-CN'
 import cardOperatorsZhCN from './card-operators-zh-CN'
 import partnerReturnsZhCN from './partner-returns-zh-CN'
-import { localizeKnownOrderText, localizeDefaultOrderText, localizeOrderEventDetail as translateOrderEventDetail } from './order-system-text'
+import { localizeKnownOrderText, localizeDefaultOrderText, localizeOrderEventDetail as translateOrderEventDetail, orderCodeSource } from './order-system-text'
 
 const literalZhCN = { ...baseLiteralZhCN, ...workspaceZhCN, ...partnerZhCN, ...overviewZhCN, ...enterpriseWalletZhCN, ...cardOperatorsZhCN, ...partnerReturnsZhCN }
 export const allowLocaleSelection = ['development', 'java-stage'].includes(import.meta.env.VITE_APP_ENV)
@@ -94,6 +94,10 @@ export function tx(source, parameters = {}) {
 
 export const localizeOrderTerms = value => localizeDefaultOrderText(value, activeLocale())
 export const localizeOrderEventDetail = event => translateOrderEventDetail(event, activeLocale())
+export function localizeOrderCode(domain, value) {
+  const source = orderCodeSource(domain, value)
+  return source === value ? value : tx(source)
+}
 
 export function localizeBackendMessage(message) {
   if (message === null || message === undefined) return message

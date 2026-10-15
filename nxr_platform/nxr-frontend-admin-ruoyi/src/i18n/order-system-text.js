@@ -4,6 +4,23 @@ export const orderDefaultTextZhCN = {
   'Subject to admission confirmation': '以受理确认为准'
 }
 
+// Codes are from the order/payment services and the existing product/category dictionaries.
+const orderCodeSources = {
+  serviceLevel: { basic_grading: 'Base Grading Service' },
+  paymentType: { grading_fee: 'Grading fee', shipping_adjustment: 'Shipping adjustment', shipping_refund: 'Shipping refund' },
+  paymentProvider: { manual_transfer: 'Manual transfer', bank_transfer: 'Bank transfer', wechat_transfer: 'WeChat transfer', wechat_pay_native: 'WeChat Pay', alipay_transfer: 'Alipay transfer', alipay: 'Alipay', stripe: 'Stripe', paypal: 'PayPal', wallet: 'Company wallet' },
+  paymentStatus: { pending: 'Pending', proof_submitted: 'Proof submitted', confirmed: 'Confirmed', rejected: 'Rejected', failed: 'Failed', refund_pending: 'Refund pending', refunded: 'Refunded', reversed: 'Reversed' },
+  productType: { graded_card: 'Graded Card', merch_product: 'Merch Product', label_product: 'Merch Product', vintage_product: 'Vintage Card' },
+  cardCategory: { trading_card: 'Trading Card', sports_card: 'Sports Card', celebrity_card: 'Celebrity Card', movie_film: 'Movie Film' },
+  shipmentDirection: { inbound: 'Inbound', outbound: 'Outbound' },
+  actorType: { customer: 'Customer', admin: 'Staff', system: 'System' }
+}
+
+export function orderCodeSource(domain, value) {
+  if (!Object.hasOwn(orderCodeSources, domain)) return value
+  return Object.hasOwn(orderCodeSources[domain], value) ? orderCodeSources[domain][value] : value
+}
+
 export const orderSystemZhCN = {
   'Order submitted for admission review': '订单已提交受理审核',
   'Order approved': '订单已批准',

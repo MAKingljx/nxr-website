@@ -92,7 +92,7 @@ def identity_digest():
 def snapshot(entry):
     oid = entry['order']['gradingOrderId']
     bid = entry['_batch']['id']
-    return h.sql(f'''SELECT
+    return h.sql('SELECT ' + f'''
       (SELECT CONCAT_WS('|',status_code,admission_status_code,admission_revision,COALESCE(accepted_terms_version,'')) FROM grading_order WHERE id={oid}),
       (SELECT COUNT(*) FROM merchant_batch_shipment WHERE batch_id={bid}),
       (SELECT COUNT(*) FROM order_shipment WHERE order_id={oid}),
@@ -209,6 +209,116 @@ def labels(entry):
     return current['labelBarcode']
 
 
+def existing_custody_digest(watermarks=None):
+    """Keep pre-existing local custody samples unchanged during legacy acceptance."""
+    if watermarks is None:
+        watermarks = {table: int(h.sql(f'SELECT COALESCE(MAX(id),0) FROM {table}'))
+                      for table in ['agent_client', 'agent_intake', 'agent_card']}
+    fingerprints = {table: hashlib.sha256(h.sql(f'SELECT * FROM {table} WHERE id<={limit} ORDER BY id').encode()).hexdigest()
+                    for table, limit in watermarks.items()}
+    return watermarks, fingerprints
+
+
+def legacy_compatibility():
+    """Use the real former API contract without adding new-card metadata or photos."""
+    watermarks, before = existing_custody_digest()
+    count_sql = ('SELECT (SELECT COUNT(*) FROM agent_client WHERE merchant_customer_id=22),'
+                 '(SELECT COUNT(*) FROM agent_intake WHERE merchant_customer_id=22),'
+                 '(SELECT COUNT(*) FROM agent_card WHERE merchant_customer_id=22)')
+    counts = h.sql(count_sql)
+    h.owner('/workbench-orders', h.keyed({'clientName': h.PREFIX + ' Incomplete new Order', 'phone': '15550107777',
+            'cards': [{'cardName': 'Legacy-shaped fields cannot bypass the new Order contract', 'languageCode': 'EN'}]}), blocked={400})
+    h.check('New Order contract still rejects missing metadata and photos without custody rows', h.sql(count_sql) == counts)
+    client_request = h.keyed({'reference': 'LEGACY-' + RUN, 'displayName': h.PREFIX + ' Legacy customer',
+                             'phone': '15550107777', 'email': 'legacy-' + secrets.token_hex(6) + '@example.invalid',
+                             'contactName': 'Synthetic Legacy Customer', 'notes': h.PREFIX + ' legacy-only fixture', 'active': True})
+    client = h.owner('/clients', client_request)
+    h.check('Legacy customer creation remains idempotent', h.owner('/clients', client_request)['id'] == client['id'])
+    card_inputs = [{'cardName': h.PREFIX + ' legacy card ' + str(index), 'languageCode': 'EN',
+                    'notes': 'Synthetic legacy card with no new metadata or photos'} for index in [1, 2]]
+    intake_request = h.keyed({'clientId': client['id'], 'carrierName': 'Local Legacy Carrier',
+                             'trackingNumber': 'LOCAL-LEGACY-' + secrets.token_hex(6), 'expectedCardCount': len(card_inputs),
+                             'notes': h.PREFIX + ' old API intake', 'cards': card_inputs})
+    detail = h.owner('/intakes', intake_request)
+    intake_id, reference = detail['intake']['id'], detail['intake']['intakeNo']
+    evidence = {'clientId': client['id'], 'intakeId': intake_id, 'intakeReference': reference,
+                'cardIds': [card['id'] for card in detail['cards']], 'phase': 'created'}
+    h.REPORT.setdefault('legacyCompatibility', []).append(evidence)
+    h.save()
+    h.check('Legacy intake creation remains idempotent', h.owner('/intakes', intake_request)['intake']['id'] == intake_id)
+    h.check('Legacy intake has version 0 and null contact snapshots', h.sql(
+        f'SELECT partner_order_version=0 AND client_name_snapshot IS NULL AND client_phone_snapshot IS NULL AND client_email_snapshot IS NULL '
+        f'FROM agent_intake WHERE id={intake_id} AND merchant_customer_id={h.COMPANY}') == '1')
+    h.check('Legacy card API returns no invented metadata or photographs', all(
+        all(card[field] is None for field in ['brandName', 'setName', 'productType', 'category', 'officialCardNumber', 'frontPhotoId', 'backPhotoId'])
+        for card in detail['cards']))
+    received = h.owner(f'/intakes/{intake_id}/receive', h.keyed({'note': h.PREFIX + ' received old-contract parcel'}))
+    h.check('Legacy receipt uses the original custody state', received['intake']['statusCode'] == 'received')
+    for card in detail['cards']:
+        ready = h.owner(f'/intakes/{intake_id}/check-in', h.keyed({'inventoryCode': card['inventoryCode'],
+                        'conditionNote': h.PREFIX + ' synthetic local count matched', 'hasException': False}))
+    h.check('Legacy check-in becomes ready only after all cards are counted', ready['intake']['statusCode'] == 'ready'
+            and ready['intake']['checkedInCardCount'] == len(card_inputs))
+    workbench = h.owner('/workbench-orders/' + str(intake_id))
+    h.check('New Orders view preserves the legacy number and submission eligibility', workbench['order']['legacy']
+            and workbench['order']['canSubmit'] and workbench['order']['orderNo'] == reference)
+    address = next(row for row in h.owner('/addresses') if row['id'] == 8)
+    option = h.owner('/shipping-options?country=US&currencyCode=USD')[0]['optionCode']
+    submit_request = h.keyed({'intakeIds': [intake_id], 'returnAddressId': address['id'],
+                             'returnShippingOptionCode': option, 'currencyCode': 'USD', 'batchName': h.PREFIX + ' Legacy Submit'})
+    submitted = h.owner('/submissions', submit_request)
+    h.check('Legacy submission retry returns the same batch', h.owner('/submissions', submit_request)['batchId'] == submitted['batchId'])
+    final = h.owner('/intakes/' + str(intake_id))
+    oid = final['intake']['orderId']
+    h.check('Real legacy submission creates the correct order linkage', oid is not None
+            and final['intake']['statusCode'] == 'submitted' and final['intake']['batchId'] == submitted['batchId']
+            and all(card['orderId'] == oid and card['orderItemId'] is not None for card in final['cards']))
+    h.check('SQL keeps old intake version and new contact snapshots unchanged after submission', h.sql(
+        f'SELECT partner_order_version=0 AND client_name_snapshot IS NULL AND client_phone_snapshot IS NULL AND client_email_snapshot IS NULL '
+        f'FROM agent_intake WHERE id={intake_id} AND merchant_customer_id={h.COMPANY}') == '1')
+    h.check('SQL keeps all legacy card metadata and photo references null', h.sql(
+        f'SELECT COUNT(*) FROM agent_card WHERE intake_id={intake_id} AND merchant_customer_id={h.COMPANY} '
+        'AND brand_name IS NULL AND set_name IS NULL AND product_type IS NULL AND category IS NULL '
+        'AND official_card_number IS NULL AND front_photo_id IS NULL AND back_photo_id IS NULL') == str(len(card_inputs)))
+    h.check('SQL creates linked order items without invented metadata or photo references', h.sql(
+        f'SELECT COUNT(*) FROM grading_order_item oi JOIN agent_card ac ON ac.order_item_id=oi.id '
+        f'WHERE oi.order_id={oid} AND ac.intake_id={intake_id} AND ac.merchant_customer_id={h.COMPANY} '
+        'AND oi.brand_name IS NULL AND oi.set_name IS NULL AND oi.product_type IS NULL AND oi.category IS NULL '
+        'AND oi.card_number IS NULL AND oi.front_photo_id IS NULL AND oi.back_photo_id IS NULL '
+        'AND BINARY oi.card_name=BINARY ac.card_name AND BINARY oi.language_code=BINARY ac.language_code '
+        'AND BINARY oi.item_note=BINARY ac.notes') == str(len(card_inputs)))
+    h.check('Legacy submit does not create any attached customer photographs', h.sql(
+        f'SELECT COUNT(*) FROM customer_order_photo WHERE order_id={oid}') == '0')
+    h.check('Existing clients, intakes and stock cards are unchanged', existing_custody_digest(watermarks)[1] == before)
+    current = h.owner('/workbench-orders/' + str(intake_id))['order']
+    admission = h.admin('/api/admin/order-admissions/' + str(oid))
+    h.REPORT['orders'].append({'label': 'Legacy API compatibility', 'companyId': h.COMPANY, 'id': intake_id,
+                              'orderReference': reference, 'gradingOrderId': oid, 'batchId': submitted['batchId'],
+                              'finalStatusCode': current['statusCode'], 'admissionStatus': admission['admissionStatus']})
+    h.REPORT['batches'].append({'id': submitted['batchId'], 'batchNo': submitted['batchNo'], 'companyId': h.COMPANY})
+    evidence.update(phase='submitted', gradingOrderId=oid, batchId=submitted['batchId'], batchNo=submitted['batchNo'],
+                    cardItemIds=[card['orderItemId'] for card in final['cards']], version=0,
+                    nullableNewMetadataPreserved=True, photoUploads=0)
+    h.save()
+
+
+def legacy_only():
+    guard()
+    baseline = identity_digest()
+    h.TOKEN = h.api('/login', {'username': 'admin', 'password': os.environ.get('NXR_QA_ADMIN_PASSWORD', 'admin123')})['token']
+    h.B_TOKEN = h.api('/login', {'username': 'local_btest_20260917', 'password': os.environ.get('NXR_QA_B_PASSWORD', 'admin123')})['token']
+    context = h.api('/api/admin/agent/context', token=h.B_TOKEN)
+    h.check('Legacy acceptance uses company 22 with its existing bound B account',
+            context['company']['id'] == h.COMPANY and not context['platformManager'])
+    h.REPORT.update(status='running', mode='legacy_only', coverageLimits=['Only the real legacy API compatibility scenario runs in this mode.'])
+    h.save()
+    legacy_compatibility()
+    h.check('Legacy acceptance preserves existing users, passwords, roles and B binding', identity_digest() == baseline)
+    h.REPORT['status'] = 'passed'
+    h.save()
+    print(json.dumps({'status': 'passed', 'mode': 'legacy_only', 'checks': len(h.REPORT['checks']), 'output': str(h.OUTPUT)}, ensure_ascii=False))
+
+
 def main():
     guard()
     baseline = identity_digest()
@@ -279,6 +389,7 @@ def main():
            {'intakeCode': rejected_order['intakeCode'], 'receivedCount': 1, 'conditionNote': 'Synthetic', 'exceptionTypes': []})
     denied(rejected, 'Rejected Order cannot bypass generic status', rejected['_path'] + '/status', {'statusCode': 'received', 'detail': h.PREFIX})
     parcel(rejected, 'Rejected Order cannot return')
+    legacy_compatibility()
     for row in h.REPORT['orders']:
         current = h.owner('/workbench-orders/' + str(row['id']))['order']
         row['finalStatusCode'] = current['statusCode']
@@ -325,8 +436,10 @@ if __name__ == '__main__':
     try:
         if len(sys.argv) == 3 and sys.argv[1] == '--readback-only':
             readback_only(sys.argv[2])
+        elif sys.argv[1:] == ['--legacy-only']:
+            legacy_only()
         else:
-            assert len(sys.argv) == 1, 'Use no arguments, or --readback-only /tmp/<evidence>.json'
+            assert len(sys.argv) == 1, 'Use no arguments, --legacy-only, or --readback-only /tmp/<evidence>.json'
             main()
     except Exception as exc:
         h.REPORT.update(status='failed', failure=str(exc))

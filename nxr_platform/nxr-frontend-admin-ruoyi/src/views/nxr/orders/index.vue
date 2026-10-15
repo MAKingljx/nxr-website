@@ -35,7 +35,7 @@
       <el-table-column :label="$tx('Order No.')" min-width="150"><template #default="{row}">{{ businessOrderNumber(row) }}</template></el-table-column>
       <el-table-column :label="$tx('Customer')" min-width="190" show-overflow-tooltip><template #default="scope"><div>{{ scope.row.customer.displayName }}</div><small>{{ scope.row.customer.email }}</small></template></el-table-column>
       <el-table-column :label="$tx('Cards')" prop="totalCardCount" width="80" align="center" />
-      <el-table-column :label="$tx('Service')" prop="serviceLevelCode" width="105" align="center" />
+      <el-table-column :label="$tx('Service')" width="130" align="center"><template #default="scope">{{ localizeOrderCode('serviceLevel', scope.row.serviceLevelCode) }}</template></el-table-column>
       <el-table-column :label="$tx('Amount')" width="110" align="right"><template #default="scope">{{ scope.row.currencyCode }} {{ Number(scope.row.totalAmount).toFixed(2) }}</template></el-table-column>
       <el-table-column :label="$tx('Status')" width="170" align="center"><template #default="scope"><el-tag :type="statusType(displayOrderStatus(scope.row))">{{ labelStatus(displayOrderStatus(scope.row)) }}</el-tag></template></el-table-column>
       <el-table-column :label="$tx('Created At')" width="170" align="center"><template #default="scope">{{ parseTime(scope.row.createdAt) }}</template></el-table-column>
@@ -55,7 +55,7 @@
         <el-descriptions :column="3" border class="mb12">
           <el-descriptions-item :label="$tx('Order No.')">{{ businessOrderNumber(detail) }}</el-descriptions-item>
           <el-descriptions-item :label="$tx('Order Status')"><el-tag :type="statusType(displayOrderStatus(detail))">{{ labelStatus(displayOrderStatus(detail)) }}</el-tag></el-descriptions-item>
-          <el-descriptions-item :label="$tx('Service / Cards')">{{ detail.serviceLevelCode }} / {{ detail.totalCardCount }}</el-descriptions-item>
+          <el-descriptions-item :label="$tx('Service / Cards')">{{ localizeOrderCode('serviceLevel', detail.serviceLevelCode) }} / {{ detail.totalCardCount }}</el-descriptions-item>
           <el-descriptions-item :label="$tx('Customer')" :span="2">{{ detail.customer.displayName }} · {{ detail.customer.email }}</el-descriptions-item>
           <el-descriptions-item :label="$tx('Phone')">{{ detail.contactPhone }}</el-descriptions-item>
           <el-descriptions-item :label="$tx('Return Address')" :span="3">{{ [detail.returnAddressLine1, detail.returnAddressLine2, detail.returnCity, detail.returnRegion, detail.returnPostalCode, detail.returnCountry].filter(Boolean).join(', ') }}</el-descriptions-item>
@@ -97,10 +97,10 @@
         <el-table :data="detail.items" size="small" border>
           <el-table-column label="#" prop="itemNo" width="55" align="center" />
           <el-table-column :label="$tx('Card Name')" prop="cardName" min-width="180" />
-          <el-table-column :label="$tx('Application Details')" min-width="240"><template #default="scope">{{ [scope.row.brandName, scope.row.setName, scope.row.cardNumber, scope.row.year, scope.row.rarity, scope.row.productType, scope.row.category, scope.row.languageCode].filter(Boolean).join(' · ') || '-' }}</template></el-table-column>
+          <el-table-column :label="$tx('Application Details')" min-width="240"><template #default="scope">{{ [scope.row.brandName, scope.row.setName, scope.row.cardNumber, scope.row.year, scope.row.rarity, localizeOrderCode('productType', scope.row.productType), localizeOrderCode('cardCategory', scope.row.category), scope.row.languageCode].filter(Boolean).join(' · ') || '-' }}</template></el-table-column>
           <el-table-column :label="$tx('Application Photos')" min-width="210"><template #default="scope"><order-application-photo v-if="scope.row.frontPhotoId" :photo-id="scope.row.frontPhotoId" :order-id="detail.id" :label="$tx('Front')" /><order-application-photo v-if="scope.row.backPhotoId" :photo-id="scope.row.backPhotoId" :order-id="detail.id" :label="$tx('Back')" /><span v-if="!scope.row.frontPhotoId && !scope.row.backPhotoId">-</span></template></el-table-column>
           <el-table-column :label="$tx('Item Status')" width="130"><template #default="scope"><el-tag>{{ labelStatus(scope.row.statusCode) }}</el-tag></template></el-table-column>
-          <el-table-column :label="$tx('Grading Entry')" min-width="220"><template #default="scope"><span v-if="scope.row.gradingSubmissionId">#{{ scope.row.gradingSubmissionId }} · {{ scope.row.gradingCertId }} · {{ scope.row.gradingStatusCode }}</span><div v-else-if="fulfillmentOpen" class="link-submission"><el-input-number v-model="submissionLinks[scope.row.id]" :min="1" :controls="false" :placeholder="$tx('Entry ID')" /><el-button v-hasPermi="['nxr:order:manage','nxr:order:grading']" link type="primary" :loading="linkingItemId === scope.row.id" @click="linkSubmission(scope.row)">{{ $tx('Link') }}</el-button></div><span v-else>-</span></template></el-table-column>
+          <el-table-column :label="$tx('Grading Entry')" min-width="220"><template #default="scope"><span v-if="scope.row.gradingSubmissionId">#{{ scope.row.gradingSubmissionId }} · {{ scope.row.gradingCertId }} · {{ labelStatus(scope.row.gradingStatusCode) }}</span><div v-else-if="fulfillmentOpen" class="link-submission"><el-input-number v-model="submissionLinks[scope.row.id]" :min="1" :controls="false" :placeholder="$tx('Entry ID')" /><el-button v-hasPermi="['nxr:order:manage','nxr:order:grading']" link type="primary" :loading="linkingItemId === scope.row.id" @click="linkSubmission(scope.row)">{{ $tx('Link') }}</el-button></div><span v-else>-</span></template></el-table-column>
         </el-table>
 
         <el-divider content-position="left">{{ $tx('Order Workbench & Packing Verification') }}</el-divider>
@@ -125,11 +125,11 @@
         <p v-if="!detail.payments.length" class="order-section-empty">{{ $tx('No payments recorded') }}</p>
 
         <el-table v-if="detail.payments.length" :data="detail.payments" size="small" border>
-          <el-table-column :label="$tx('Type')" width="120"><template #default="scope">{{ scope.row.paymentTypeCode }}</template></el-table-column>
+          <el-table-column :label="$tx('Type')" width="120"><template #default="scope">{{ localizeOrderCode('paymentType', scope.row.paymentTypeCode) }}</template></el-table-column>
           <el-table-column :label="$tx('Amount')" width="130"><template #default="scope">{{ scope.row.currencyCode }} {{ Number(scope.row.amount).toFixed(2) }}</template></el-table-column>
-          <el-table-column :label="$tx('Provider')" min-width="140"><template #default="scope">{{ scope.row.providerCode }}</template></el-table-column>
+          <el-table-column :label="$tx('Provider')" min-width="140"><template #default="scope">{{ localizeOrderCode('paymentProvider', scope.row.providerCode) }}</template></el-table-column>
           <el-table-column :label="$tx('Payment Reference')" min-width="180"><template #default="scope">{{ scope.row.payerReference || '-' }}</template></el-table-column>
-          <el-table-column :label="$tx('Status')" width="140"><template #default="scope"><el-tag :type="paymentType(scope.row.statusCode)">{{ labelStatus(scope.row.statusCode) }}</el-tag></template></el-table-column>
+          <el-table-column :label="$tx('Status')" width="140"><template #default="scope"><el-tag :type="paymentType(scope.row.statusCode)">{{ localizeOrderCode('paymentStatus', scope.row.statusCode) }}</el-tag></template></el-table-column>
           <el-table-column :label="$tx('Actions')" width="150"><template #default="scope"><el-button v-if="canReviewPayment(scope.row)" v-hasPermi="['nxr:order:manage','nxr:order:payment']" link type="success" @click="openPaymentAction(scope.row, 'confirm')">{{ $tx('Confirm') }}</el-button><el-button v-if="canReviewPayment(scope.row)" v-hasPermi="['nxr:order:manage','nxr:order:payment']" link type="danger" @click="openPaymentAction(scope.row, 'reject')">{{ $tx('Reject') }}</el-button></template></el-table-column>
         </el-table>
 
@@ -141,10 +141,10 @@
           <el-col v-hasPermi="['nxr:order:manage']" :span="12"><el-form :inline="true" :model="statusForm"><el-form-item :label="$tx('Advance Status')"><el-select v-model="statusForm.statusCode" :disabled="detail?.statusCode === 'payment_exception'" style="width: 180px"><el-option v-for="item in manualStatusOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item><el-form-item><el-button type="primary" :loading="savingStatus" :disabled="detail?.statusCode === 'payment_exception'" @click="saveStatus">{{ $tx('Save') }}</el-button></el-form-item></el-form></el-col>
           <el-col v-if="!detail.merchantBatch" v-hasPermi="['nxr:order:manage','nxr:order:shipping']" :span="12"><el-form :inline="true" :model="shipmentForm"><el-form-item :label="$tx('Direction')"><el-select v-model="shipmentForm.direction" style="width: 100px"><el-option :label="$tx('Inbound')" value="inbound" /><el-option :label="$tx('Outbound')" value="outbound" /></el-select></el-form-item><el-form-item :label="$tx('Carrier')"><el-input v-model="shipmentForm.carrierName" style="width: 120px" /></el-form-item><el-form-item :label="$tx('Tracking No.')"><el-input v-model="shipmentForm.trackingNumber" style="width: 150px" /></el-form-item><el-form-item><el-button type="primary" :loading="savingShipment" @click="saveShipment">{{ $tx('Add Shipment') }}</el-button></el-form-item></el-form></el-col>
         </el-row>
-        <el-table v-if="detail.shipments.length" :data="detail.shipments" size="small" border><el-table-column :label="$tx('Direction')" width="100"><template #default="scope">{{ scope.row.directionCode === 'inbound' ? $tx('Inbound') : $tx('Outbound') }}</template></el-table-column><el-table-column :label="$tx('Carrier')" prop="carrierName" width="130" /><el-table-column :label="$tx('Tracking No.')" prop="trackingNumber" min-width="200" /><el-table-column :label="$tx('Status')" width="120"><template #default="scope"><el-tag :type="scope.row.statusCode === 'delivered' ? 'success' : 'info'">{{ labelStatus(scope.row.statusCode) }}</el-tag></template></el-table-column><el-table-column :label="$tx('Shipped At')" width="170"><template #default="scope">{{ parseTime(scope.row.shippedAt) }}</template></el-table-column><el-table-column :label="$tx('Actions')" width="110"><template #default="scope"><el-button v-if="!detail.merchantBatch && !scope.row.deliveredAt" v-hasPermi="['nxr:order:manage','nxr:order:shipping']" link type="success" @click="markDelivered(scope.row)">{{ $tx('Mark Delivered') }}</el-button></template></el-table-column></el-table>
+        <el-table v-if="detail.shipments.length" :data="detail.shipments" size="small" border><el-table-column :label="$tx('Direction')" width="100"><template #default="scope">{{ localizeOrderCode('shipmentDirection', scope.row.directionCode) }}</template></el-table-column><el-table-column :label="$tx('Carrier')" prop="carrierName" width="130" /><el-table-column :label="$tx('Tracking No.')" prop="trackingNumber" min-width="200" /><el-table-column :label="$tx('Status')" width="120"><template #default="scope"><el-tag :type="scope.row.statusCode === 'delivered' ? 'success' : 'info'">{{ labelStatus(scope.row.statusCode) }}</el-tag></template></el-table-column><el-table-column :label="$tx('Shipped At')" width="170"><template #default="scope">{{ parseTime(scope.row.shippedAt) }}</template></el-table-column><el-table-column :label="$tx('Actions')" width="110"><template #default="scope"><el-button v-if="!detail.merchantBatch && !scope.row.deliveredAt" v-hasPermi="['nxr:order:manage','nxr:order:shipping']" link type="success" @click="markDelivered(scope.row)">{{ $tx('Mark Delivered') }}</el-button></template></el-table-column></el-table>
 
         <el-form v-if="!detail.merchantBatch && detail.shipments.length" v-hasPermi="['nxr:order:manage','nxr:order:shipping']" :inline="true" :model="trackingForm" class="operation-form">
-          <el-form-item :label="$tx('Shipment')"><el-select v-model="trackingForm.shipmentId" style="width:220px"><el-option v-for="shipment in detail.shipments" :key="shipment.id" :label="`${shipment.directionCode} · ${shipment.carrierName} · ${shipment.trackingNumber}`" :value="shipment.id" /></el-select></el-form-item><el-form-item :label="$tx('Event')"><el-select v-model="trackingForm.eventCode" style="width:150px"><el-option v-for="item in trackingEventOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item><el-form-item :label="$tx('Location')"><el-input v-model="trackingForm.locationLabel" style="width:150px" /></el-form-item><el-form-item :label="$tx('Details')"><el-input v-model="trackingForm.eventDetail" style="width:210px" /></el-form-item><el-form-item><el-button type="primary" :loading="savingTracking" @click="saveTrackingEvent">{{ $tx('Add Tracking Event') }}</el-button></el-form-item>
+          <el-form-item :label="$tx('Shipment')"><el-select v-model="trackingForm.shipmentId" style="width:220px"><el-option v-for="shipment in detail.shipments" :key="shipment.id" :label="`${localizeOrderCode('shipmentDirection', shipment.directionCode)} · ${shipment.carrierName} · ${shipment.trackingNumber}`" :value="shipment.id" /></el-select></el-form-item><el-form-item :label="$tx('Event')"><el-select v-model="trackingForm.eventCode" style="width:150px"><el-option v-for="item in trackingEventOptions" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item><el-form-item :label="$tx('Location')"><el-input v-model="trackingForm.locationLabel" style="width:150px" /></el-form-item><el-form-item :label="$tx('Details')"><el-input v-model="trackingForm.eventDetail" style="width:210px" /></el-form-item><el-form-item><el-button type="primary" :loading="savingTracking" @click="saveTrackingEvent">{{ $tx('Add Tracking Event') }}</el-button></el-form-item>
         </el-form>
         <el-table v-if="operations?.trackingEvents.length" :data="operations.trackingEvents" size="small" border><el-table-column :label="$tx('Time')" width="170"><template #default="scope">{{ parseTime(scope.row.eventTime) }}</template></el-table-column><el-table-column :label="$tx('Direction')" prop="directionCode" width="90" /><el-table-column :label="$tx('Event')" min-width="150"><template #default="scope">{{ scope.row.eventTitle }}</template></el-table-column><el-table-column :label="$tx('Location')" prop="locationLabel" width="150" /><el-table-column :label="$tx('Details')" prop="eventDetail" min-width="200" /></el-table>
 
@@ -172,7 +172,7 @@
 
     <el-drawer direction="rtl" v-model="exceptionDialogOpen" :title="$tx('Resolve Intake Exception')" size="500px" append-to-body><el-form :model="exceptionResolutionForm" label-width="90px"><el-form-item :label="$tx('Exception')"><span>{{ activeException?.title }}</span></el-form-item><el-form-item :label="$tx('Resolution')" required><el-input v-model="exceptionResolutionForm.resolutionNote" type="textarea" :rows="4" maxlength="4000" show-word-limit /></el-form-item></el-form><template #footer><el-button @click="exceptionDialogOpen=false">{{ $tx('Cancel') }}</el-button><el-button type="primary" :loading="resolvingException" @click="resolveException">{{ $tx('Resolve') }}</el-button></template></el-drawer>
 
-    <el-drawer direction="rtl" v-model="ticketDialogOpen" :title="$tx('Handle Support Ticket')" size="560px" append-to-body><template v-if="activeTicket"><el-descriptions :column="1" border><el-descriptions-item :label="$tx('Ticket')">{{ activeTicket.ticketNo }} · {{ activeTicket.subject }}</el-descriptions-item><el-descriptions-item :label="$tx('Message History')"><div v-for="message in activeTicket.messages" :key="message.id" class="ticket-history"><strong>{{ message.actorTypeCode }}</strong><span>{{ message.message }}</span><small>{{ parseTime(message.createdAt) }}</small></div></el-descriptions-item></el-descriptions><el-form :model="ticketActionForm" label-width="90px" class="mt12"><el-form-item :label="$tx('Status')"><el-select v-model="ticketActionForm.statusCode"><el-option :label="$tx('Assigned')" value="assigned" /><el-option :label="$tx('Waiting for Customer')" value="waiting_customer" /><el-option :label="$tx('Resolved')" value="resolved" /><el-option :label="$tx('Closed')" value="closed" /></el-select></el-form-item><el-form-item :label="$tx('Reply')"><el-input v-model="ticketActionForm.message" type="textarea" :rows="3" maxlength="4000" /></el-form-item><el-form-item :label="$tx('Attachment Reference')"><el-input v-model="ticketActionForm.attachmentReference" maxlength="512" /></el-form-item></el-form></template><template #footer><el-button @click="ticketDialogOpen=false">{{ $tx('Cancel') }}</el-button><el-button type="primary" :loading="savingTicket" @click="saveTicketAction">{{ $tx('Save') }}</el-button></template></el-drawer>
+    <el-drawer direction="rtl" v-model="ticketDialogOpen" :title="$tx('Handle Support Ticket')" size="560px" append-to-body><template v-if="activeTicket"><el-descriptions :column="1" border><el-descriptions-item :label="$tx('Ticket')">{{ activeTicket.ticketNo }} · {{ activeTicket.subject }}</el-descriptions-item><el-descriptions-item :label="$tx('Message History')"><div v-for="message in activeTicket.messages" :key="message.id" class="ticket-history"><strong>{{ localizeOrderCode('actorType', message.actorTypeCode) }}</strong><span>{{ message.message }}</span><small>{{ parseTime(message.createdAt) }}</small></div></el-descriptions-item></el-descriptions><el-form :model="ticketActionForm" label-width="90px" class="mt12"><el-form-item :label="$tx('Status')"><el-select v-model="ticketActionForm.statusCode"><el-option :label="$tx('Assigned')" value="assigned" /><el-option :label="$tx('Waiting for Customer')" value="waiting_customer" /><el-option :label="$tx('Resolved')" value="resolved" /><el-option :label="$tx('Closed')" value="closed" /></el-select></el-form-item><el-form-item :label="$tx('Reply')"><el-input v-model="ticketActionForm.message" type="textarea" :rows="3" maxlength="4000" /></el-form-item><el-form-item :label="$tx('Attachment Reference')"><el-input v-model="ticketActionForm.attachmentReference" maxlength="512" /></el-form-item></el-form></template><template #footer><el-button @click="ticketDialogOpen=false">{{ $tx('Cancel') }}</el-button><el-button type="primary" :loading="savingTicket" @click="saveTicketAction">{{ $tx('Save') }}</el-button></template></el-drawer>
 
     <el-drawer direction="rtl" v-model="shippingActionDialogOpen" :title="shippingActionMode === 'settle' ? $tx('Record Shipping Adjustment') : (shippingReviewApproved ? $tx('Approve Return Shipping Change') : $tx('Reject Return Shipping Change'))" size="520px" append-to-body><el-form :model="shippingActionForm" label-width="130px"><el-form-item v-if="shippingActionMode === 'settle'" :label="$tx('Transaction / Refund ID')"><el-input v-model="shippingActionForm.providerTransactionId" maxlength="255" /></el-form-item><el-form-item :label="$tx('Processing Note')" required><el-input v-model="shippingActionForm.note" type="textarea" :rows="4" maxlength="2000" /></el-form-item></el-form><template #footer><el-button @click="shippingActionDialogOpen=false">{{ $tx('Cancel') }}</el-button><el-button type="primary" :loading="savingShippingAction" @click="saveShippingAction">{{ $tx('Confirm') }}</el-button></template></el-drawer>
 
@@ -202,7 +202,7 @@
 </template>
 
 <script setup name="NxrOrders">
-import { localizeOrderEventDetail } from '@/i18n'
+import { localizeOrderEventDetail, localizeOrderCode } from '@/i18n'
 import auth from '@/plugins/auth'
 import OrderFinanceExceptionPanel from './components/OrderFinanceExceptionPanel.vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -314,46 +314,48 @@ const fulfillmentOpen = computed(() => ![
 ].includes(detail.value?.statusCode))
 
 const awaitingFulfillment = computed(() => ['admission_review', 'terms_confirmation', 'payment_expired', 'awaiting_payment', 'payment_review', 'payment_exception'].includes(detail.value?.statusCode))
-const manualStatusOptions = computed(() => orderManualStatuses(statusOptions, detail.value?.merchantBatch))
+const manualStatusOptions = computed(() => orderManualStatuses(statusOptions.value, detail.value?.merchantBatch))
 
-const taskTypeOptions = [
+const taskTypeOptions = computed(() => [
   { value: 'preprocess', label: tx('Card Preprocessing') }, { value: 'vision', label: tx('Machine Vision Inspection') },
   { value: 'manual_review', label: tx('Manual Review') }, { value: 'encapsulation', label: tx('Standard Encapsulation') }
-]
-const trackingEventOptions = [
+])
+const trackingEventOptions = computed(() => [
   { value: 'label_created', label: tx('Label Created') }, { value: 'picked_up', label: tx('Picked Up') },
   { value: 'in_transit', label: tx('In Transit') }, { value: 'customs', label: tx('Customs') },
   { value: 'exception', label: tx('Shipping Exception') }, { value: 'out_for_delivery', label: tx('Out for Delivery') },
   { value: 'delivered', label: tx('Delivered') }
-]
+])
 
-const statusOptions = [
+const statusOptions = computed(() => [
   { value: 'awaiting_payment', label: tx('Awaiting Payment') }, { value: 'payment_review', label: tx('Payment Review') }, { value: 'awaiting_inbound', label: tx('Awaiting Cards') }, { value: 'inbound_shipped', label: tx('Shipped to NXR') }, { value: 'intake_exception', label: tx('Intake Exception') }, { value: 'received', label: tx('Cards Received') }, { value: 'grading', label: tx('Grading') }, { value: 'review', label: tx('Review') }, { value: 'quality_check', label: tx('Quality Check') }, { value: 'quality_hold', label: tx('QC Rework') }, { value: 'completed', label: tx('Ready to Return') }, { value: 'return_shipped', label: tx('Return Shipped') }, { value: 'delivered', label: tx('Delivered') }, { value: 'cancelled', label: tx('Cancelled') }
-]
-const filterStatusOptions = [
+])
+const filterStatusOptions = computed(() => [
   { value: 'admission_review', label: tx('Application Review') },
   { value: 'terms_confirmation', label: tx('Awaiting Terms Confirmation') },
   { value: 'payment_expired', label: tx('Payment Deadline Expired') },
-  ...statusOptions,
+  ...statusOptions.value,
   { value: 'payment_exception', label: tx('Payment Exception') }
-]
+])
 
-const extraStatusLabels = {
+const extraStatusLabels = computed(() => ({
   shortage: tx('Shortage'), overage: tx('Overage'), damaged: tx('Damaged'), missing_barcode: tx('Missing Barcode'), other: tx('Other'),
   open: tx('Open'), assigned: tx('Assigned'), waiting_customer: tx('Waiting for Customer'), resolved: tx('Resolved'), closed: tx('Closed'),
   shipping_change: tx('Shipping Change'), score_dispute: tx('Grade Dispute'), inquiry: tx('Inquiry'), requested: tx('Pending Review'),
   awaiting_settlement: tx('Awaiting Settlement'), settled: tx('Settled'), rejected: tx('Rejected'), pending: tx('Pending'),
   pending_review: tx('Application under review'), needs_information: tx('More information needed'),
-  in_progress: tx('In Progress'), failed: tx('Failed'), completed: tx('Completed')
-}
+  in_progress: tx('In Progress'), failed: tx('Failed'), completed: tx('Completed'),
+  approved: tx('Approved'), published: tx('Published'), confirmed: tx('Confirmed'), proof_submitted: tx('Proof submitted'), refunded: tx('Refunded'), reversed: tx('Reversed'),
+  refund_pending: tx('Refund pending'), shipped: tx('Shipped'), in_transit: tx('In Transit')
+}))
 
-function labelStatus(value) { return filterStatusOptions.find((item) => item.value === value)?.label || extraStatusLabels[value] || value }
+function labelStatus(value) { return filterStatusOptions.value.find((item) => item.value === value)?.label || (Object.hasOwn(extraStatusLabels.value, value) ? extraStatusLabels.value[value] : value) }
 function displayOrderStatus(order) { return order?.statusCode === 'admission_review' && order.admissionStatus ? order.admissionStatus : order?.statusCode }
 function businessOrderNumber(order) {
   const reference = order?.orderReference || order?.merchantBatch?.clientReference
   return /^NXR-\d{6,}$/.test(reference || '') ? reference : order?.orderNo || ''
 }
-function taskLabel(value) { return taskTypeOptions.find((item) => item.value === value)?.label || value }
+function taskLabel(value) { return taskTypeOptions.value.find((item) => item.value === value)?.label || value }
 function statusType(value) { if (['completed', 'delivered'].includes(value)) return 'success'; if (['cancelled', 'rejected', 'payment_expired'].includes(value)) return 'danger'; if (['payment_review', 'payment_exception', 'review', 'needs_information', 'terms_confirmation'].includes(value)) return 'warning'; return 'info' }
 function paymentType(value) { return value === 'confirmed' ? 'success' : value === 'rejected' ? 'danger' : value === 'proof_submitted' ? 'warning' : 'info' }
 function canReviewPayment(payment) { return ['awaiting_payment', 'payment_review', 'payment_expired'].includes(detail.value?.statusCode) && ['pending', 'proof_submitted'].includes(payment.statusCode) }
@@ -670,7 +672,7 @@ onDeactivated(() => {
 })
 
 watch(() => route.query.status, raw => {
-  queryParams.status = filterStatusOptions.some(option => option.value === raw) ? raw : undefined
+  queryParams.status = filterStatusOptions.value.some(option => option.value === raw) ? raw : undefined
   void loadOrders(true)
 }, { immediate: true })
 watch(() => [route.query.orderId, route.query.section], ([raw, section]) => {
