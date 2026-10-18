@@ -657,6 +657,98 @@ class PythonToJavaSync:
             )
             print(f"sync_retired_match_projections={cursor.rowcount}")
 
+    def preserve_java_publications(self) -> None:
+        """Freeze established Java publication results for this changed batch.
+
+        Java locks upload state before media/certificate/submission writes. Take
+        those same row locks before inspecting provenance, so a concurrent
+        completed publication cannot become stale between the read and merge.
+        Only changed source rows participate; unchanged cards stay unlocked.
+        """
+        with self.db.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT s.id FROM tmp_nxr_submission t
+                JOIN grading_submission s ON s.cert_id=t.cert_id
+                WHERE t.sync_required=1 ORDER BY s.id
+                """
+            )
+            submission_ids = [row["id"] for row in cursor]
+            for batch in domain.batches(submission_ids, 500):
+                placeholders = ",".join(["%s"] * len(batch))
+                cursor.execute(
+                    "SELECT submission_id FROM submission_upload_state "
+                    f"WHERE submission_id IN ({placeholders}) "
+                    "ORDER BY submission_id FOR UPDATE",
+                    batch,
+                )
+                locked_ids = {row["submission_id"] for row in cursor}
+                missing_count = len(set(batch) - locked_ids)
+                if missing_count:
+                    # READ COMMITTED does not lock absent rows. Continuing here
+                    # would let Java insert/complete an upload after our snapshot,
+                    # then have that success overwritten by the source merge.
+                    # Existing managed rows must have upload state; new source
+                    # cards have no submission ID yet and are unaffected.
+                    raise domain.MigrationError(
+                        f"Synchronization safety check failed: missing_upload_state={missing_count}; "
+                        "existing submissions require upload-state row locks"
+                    )
+
+            # Python imports always use legacy-python. A linked, active Java
+            # pair is positive provenance; a status flag alone is not proof.
+            # Snapshot current values, never promote an already drifted row.
+            cursor.execute(
+                """
+                CREATE TEMPORARY TABLE tmp_nxr_java_publication (
+                    PRIMARY KEY (submission_id), UNIQUE KEY (cert_id)
+                ) ENGINE=InnoDB AS
+                SELECT s.id AS submission_id,s.cert_id,
+                       s.status_code AS original_submission_status,
+                       s.published_at AS original_submission_published_at,
+                       s.status_code='published' AS preserve_submission,
+                       COALESCE(u.status_code='uploaded',0) AS preserve_upload,
+                       u.status_code AS original_upload_status,
+                       u.claim_token AS original_claim_token,
+                       u.claimed_front_media_id AS original_claimed_front_media_id,
+                       u.claimed_back_media_id AS original_claimed_back_media_id,
+                       u.started_at AS original_started_at,
+                       u.completed_at AS original_completed_at,
+                       u.error_message AS original_error_message,
+                       u.response_payload_json AS original_response_payload_json,
+                       u.triggered_by_user_id AS original_triggered_by_user_id,
+                       u.created_at AS original_upload_created_at,
+                       u.updated_at AS original_upload_updated_at,
+                       p.id AS original_certificate_id,
+                       p.verification_slug AS original_verification_slug,
+                       p.qr_url AS original_qr_url,
+                       p.published_at AS original_certificate_published_at,
+                       p.published_front_media_id AS original_front_media_id,
+                       p.published_back_media_id AS original_back_media_id,
+                       p.updated_at AS original_certificate_updated_at,
+                       p.published_media_snapshot_json AS original_media_snapshot_json
+                FROM tmp_nxr_submission t
+                JOIN grading_submission s ON s.cert_id=t.cert_id
+                JOIN published_certificate p
+                  ON p.submission_id=s.id AND p.cert_id=s.cert_id
+                JOIN submission_media f
+                  ON f.id=p.published_front_media_id AND f.submission_id=s.id
+                 AND f.cert_id=s.cert_id AND f.media_side_code='front'
+                 AND f.media_stage_code='published' AND f.is_active=1
+                 AND f.storage_provider_code<>'legacy-python'
+                 AND NULLIF(TRIM(f.public_url),'') IS NOT NULL
+                JOIN submission_media b
+                  ON b.id=p.published_back_media_id AND b.submission_id=s.id
+                 AND b.cert_id=s.cert_id AND b.media_side_code='back'
+                 AND b.media_stage_code='published' AND b.is_active=1
+                 AND b.storage_provider_code<>'legacy-python'
+                 AND NULLIF(TRIM(b.public_url),'') IS NOT NULL
+                LEFT JOIN submission_upload_state u ON u.submission_id=s.id
+                WHERE t.sync_required=1
+                """
+            )
+            print(f"sync_preserved_java_publications={cursor.rowcount}")
+
     def merge(self, *, full_refresh: bool = False) -> None:
         with self.db.cursor() as cursor:
             cursor.execute(
@@ -672,6 +764,7 @@ class PythonToJavaSync:
                 "SELECT COUNT(*) AS count FROM tmp_nxr_submission WHERE sync_required=1"
             )
             print(f"sync_changed_submissions={cursor.fetchone()['count']}")
+        self.preserve_java_publications()
         if full_refresh:
             self.retire_missing_match_projections()
         statements = (
@@ -686,14 +779,20 @@ class PythonToJavaSync:
                 created_at,updated_at
             )
             SELECT
-                cert_id,card_name,year_label,brand_name,player_name,variety_name,
-                set_name,card_number,language_code,population_value,status_code,
-                grading_phase_code,card_category_code,product_type_code,
-                vintage_classification_code,merch_description,movie_name,release_year,
-                production_company,film_type,sports_type,group_name,approval_sequence,
-                entry_notes,NULL,entry_by_label,NULL,approved_at,published_at,created_at,updated_at
-            FROM tmp_nxr_submission
-            WHERE sync_required=1
+                t.cert_id,t.card_name,t.year_label,t.brand_name,t.player_name,t.variety_name,
+                t.set_name,t.card_number,t.language_code,t.population_value,
+                CASE WHEN j.preserve_submission=1 THEN j.original_submission_status
+                     ELSE t.status_code END,
+                t.grading_phase_code,t.card_category_code,t.product_type_code,
+                t.vintage_classification_code,t.merch_description,t.movie_name,t.release_year,
+                t.production_company,t.film_type,t.sports_type,t.group_name,t.approval_sequence,
+                t.entry_notes,NULL,t.entry_by_label,NULL,t.approved_at,
+                CASE WHEN j.preserve_submission=1 THEN j.original_submission_published_at
+                     ELSE t.published_at END,
+                t.created_at,t.updated_at
+            FROM tmp_nxr_submission t
+            LEFT JOIN tmp_nxr_java_publication j ON j.cert_id=t.cert_id
+            WHERE t.sync_required=1
             ON DUPLICATE KEY UPDATE
                 card_name=VALUES(card_name),year_label=VALUES(year_label),
                 brand_name=VALUES(brand_name),player_name=VALUES(player_name),
@@ -766,7 +865,8 @@ class PythonToJavaSync:
                 t.created_at,t.updated_at
             FROM tmp_nxr_submission t
             JOIN grading_submission s ON s.cert_id=t.cert_id
-            WHERE t.sync_required=1
+            LEFT JOIN tmp_nxr_java_publication j ON j.submission_id=s.id
+            WHERE t.sync_required=1 AND COALESCE(j.preserve_upload,0)=0
             ON DUPLICATE KEY UPDATE
                 started_at=IF(
                     submission_upload_state.status_code='uploading'
@@ -1003,8 +1103,9 @@ class PythonToJavaSync:
              AND back_media.media_side_code='back'
              AND back_media.sort_order=1
              AND back_media.is_active=1
+            LEFT JOIN tmp_nxr_java_publication j ON j.submission_id=s.id
             WHERE t.sync_required=1
-              AND t.is_published=1
+              AND t.is_published=1 AND j.submission_id IS NULL
             ON DUPLICATE KEY UPDATE
                 cert_id=VALUES(cert_id),verification_slug=VALUES(verification_slug),
                 qr_url=VALUES(qr_url),published_at=VALUES(published_at),
@@ -1122,6 +1223,7 @@ class PythonToJavaSync:
                 SELECT COUNT(*) AS count
                 FROM tmp_nxr_submission t
                 LEFT JOIN grading_submission s ON s.cert_id=t.cert_id
+                LEFT JOIN tmp_nxr_java_publication j ON j.submission_id=s.id
                 WHERE t.sync_required=1
                   AND (s.id IS NULL OR NOT (
                        s.card_name <=> t.card_name
@@ -1133,7 +1235,8 @@ class PythonToJavaSync:
                    AND s.card_number <=> t.card_number
                    AND s.language_code <=> t.language_code
                    AND s.population_value <=> t.population_value
-                   AND s.status_code <=> t.status_code
+                   AND s.status_code <=> CASE WHEN j.preserve_submission=1
+                       THEN j.original_submission_status ELSE t.status_code END
                    AND s.grading_phase_code <=> t.grading_phase_code
                    AND s.card_category_code <=> t.card_category_code
                    AND s.product_type_code <=> t.product_type_code
@@ -1149,7 +1252,8 @@ class PythonToJavaSync:
                    AND s.entry_notes <=> t.entry_notes
                    AND s.entry_by_label <=> t.entry_by_label
                    AND s.approved_at <=> t.approved_at
-                   AND s.published_at <=> t.published_at
+                   AND s.published_at <=> CASE WHEN j.preserve_submission=1
+                       THEN j.original_submission_published_at ELSE t.published_at END
                 ))
             """,
             "score": """
@@ -1184,7 +1288,9 @@ class PythonToJavaSync:
                 FROM tmp_nxr_submission t
                 JOIN grading_submission s ON s.cert_id=t.cert_id
                 LEFT JOIN submission_upload_state u ON u.submission_id=s.id
-                WHERE t.sync_required=1 AND (u.submission_id IS NULL OR (
+                LEFT JOIN tmp_nxr_java_publication j ON j.submission_id=s.id
+                WHERE t.sync_required=1 AND COALESCE(j.preserve_upload,0)=0
+                  AND (u.submission_id IS NULL OR (
                     NOT (
                            u.status_code <=> t.upload_status
                        AND u.started_at <=> t.upload_started_at
@@ -1234,11 +1340,41 @@ class PythonToJavaSync:
                 FROM tmp_nxr_submission t
                 JOIN grading_submission s ON s.cert_id=t.cert_id
                 LEFT JOIN published_certificate p ON p.submission_id=s.id
-                WHERE t.sync_required=1 AND t.is_published=1 AND (
+                LEFT JOIN tmp_nxr_java_publication j ON j.submission_id=s.id
+                WHERE t.sync_required=1 AND t.is_published=1
+                  AND j.submission_id IS NULL AND (
                     p.id IS NULL OR p.cert_id<>t.cert_id
                     OR p.verification_slug<>t.verification_slug
                     OR NOT (p.qr_url <=> t.qr_url)
                 )
+            """,
+            "preserved_java_publication": """
+                SELECT COUNT(*) AS count FROM tmp_nxr_java_publication j
+                LEFT JOIN published_certificate p ON p.submission_id=j.submission_id
+                LEFT JOIN submission_upload_state u ON u.submission_id=j.submission_id
+                WHERE p.id IS NULL OR NOT (
+                       p.id <=> j.original_certificate_id
+                   AND p.cert_id <=> j.cert_id
+                   AND p.verification_slug <=> j.original_verification_slug
+                   AND p.qr_url <=> j.original_qr_url
+                   AND p.published_at <=> j.original_certificate_published_at
+                   AND p.published_front_media_id <=> j.original_front_media_id
+                   AND p.published_back_media_id <=> j.original_back_media_id
+                   AND p.updated_at <=> j.original_certificate_updated_at
+                   AND p.published_media_snapshot_json <=> j.original_media_snapshot_json
+                ) OR (j.preserve_upload=1 AND (u.submission_id IS NULL OR NOT (
+                       u.status_code <=> j.original_upload_status
+                   AND u.claim_token <=> j.original_claim_token
+                   AND u.claimed_front_media_id <=> j.original_claimed_front_media_id
+                   AND u.claimed_back_media_id <=> j.original_claimed_back_media_id
+                   AND u.started_at <=> j.original_started_at
+                   AND u.completed_at <=> j.original_completed_at
+                   AND u.error_message <=> j.original_error_message
+                   AND u.response_payload_json <=> j.original_response_payload_json
+                   AND u.triggered_by_user_id <=> j.original_triggered_by_user_id
+                   AND u.created_at <=> j.original_upload_created_at
+                   AND u.updated_at <=> j.original_upload_updated_at
+                )))
             """,
             "staged_front_media": """
                 SELECT COUNT(*) AS count
@@ -1398,6 +1534,11 @@ class PythonToJavaSync:
             print(f"sync_mode={mode}", flush=True)
 
             with self.prepare_rows(mode, previous) as (rows, captured):
+                # Target preflight SELECTs may already have opened a transaction.
+                # End that read-only snapshot before selecting the write isolation;
+                # otherwise MySQL can retain REPEATABLE READ despite the new
+                # session default, hiding a publisher that just released our lock.
+                self.db.rollback()
                 with self.db.cursor() as cursor:
                     cursor.execute(
                         "SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED"

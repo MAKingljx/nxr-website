@@ -137,7 +137,7 @@ TARGET_REQUIRED_COLUMNS = {
     "published_certificate": {
         "id", "submission_id", "cert_id", "verification_slug", "qr_url",
         "published_at", "published_front_media_id", "published_back_media_id",
-        "updated_at",
+        "published_media_snapshot_json", "updated_at",
     },
     "waitlist_email": {
         "id", "email", "source_code", "status_code", "created_at",

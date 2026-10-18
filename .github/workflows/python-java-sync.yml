@@ -1,0 +1,50 @@
+name: Python Java Sync Contracts
+
+on:
+  push:
+    paths:
+      - 'scripts/sync_python_to_java_mysql.py'
+      - 'scripts/migrate_python_to_java_mysql.py'
+      - 'tests/test_java_mysql_domain_migration.py'
+      - 'tests/test_java_mysql_sync_publication.py'
+      - 'nxr_platform/nxr-sql/ruoyi/**'
+      - '.github/workflows/python-java-sync.yml'
+  pull_request:
+    paths:
+      - 'scripts/**'
+      - 'tests/test_java_mysql*'
+      - 'nxr_platform/nxr-sql/ruoyi/**'
+      - '.github/workflows/python-java-sync.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publication-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      mysql:
+        image: mysql:8.0.46@sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b
+        env:
+          MYSQL_ROOT_PASSWORD: disposable-sync-ci
+          MYSQL_ROOT_HOST: '%'
+        ports:
+          - 3306/tcp
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pdisposable-sync-ci --silent"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install 'PyMySQL[rsa]>=1.1,<2'
+      - name: Unit and isolated MySQL contracts
+        env:
+          NXR_RUN_MYSQL_SYNC_TESTS: '1'
+          NXR_TEST_MYSQL_PORT: ${{ job.services.mysql.ports['3306'] }}
+          NXR_TEST_MYSQL_USER: root
+          NXR_TEST_MYSQL_PASSWORD: disposable-sync-ci
+        run: python -m unittest tests.test_java_mysql_domain_migration tests.test_java_mysql_sync_publication
