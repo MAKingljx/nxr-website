@@ -1,0 +1,38 @@
+name: Flask Export Contracts
+
+on:
+  push:
+    paths:
+      - 'nxr_admin/**'
+      - 'nxr_common/**'
+      - 'requirements.txt'
+      - 'tests/test_streaming_excel_export.py'
+      - 'tests/test_product_types.py'
+      - '.github/workflows/flask-export.yml'
+  pull_request:
+    paths:
+      - 'nxr_admin/**'
+      - 'nxr_common/**'
+      - 'requirements.txt'
+      - 'tests/test_streaming_excel_export.py'
+      - 'tests/test_product_types.py'
+      - '.github/workflows/flask-export.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install export runtime matching production
+        run: python -m pip install -r requirements.txt pandas==2.1.4 openpyxl==3.1.2 numpy==1.26.4
+      - run: python -m unittest tests.test_streaming_excel_export
+      - run: python -m unittest tests.test_product_types
+      - run: python -m py_compile nxr_site/app.py nxr_admin/app_updated.py nxr_admin/routes_exports.py
