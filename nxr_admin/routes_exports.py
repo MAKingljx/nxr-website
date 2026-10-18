@@ -1,4 +1,8 @@
 import re
+import pickle
+import tempfile
+from collections import Counter
+from contextlib import closing
 
 from nxr_admin.admin_core import *
 
@@ -128,24 +132,6 @@ def normalize_score_columns_for_export(df, pd_module):
         numeric_values = pd_module.to_numeric(df[column_name], errors='coerce')
         df[column_name] = numeric_values.round(1).where(numeric_values.notna(), df[column_name])
     return df
-
-
-def apply_score_number_format(worksheet, column_names=SCORE_EXPORT_COLUMNS):
-    from openpyxl.utils import get_column_letter
-
-    header_map = {
-        cell.value: cell.column
-        for cell in worksheet[1]
-        if cell.value
-    }
-    for column_name in column_names:
-        column_index = header_map.get(column_name)
-        if not column_index:
-            continue
-        column_letter = get_column_letter(column_index)
-        for cell in worksheet[column_letter][1:]:
-            if isinstance(cell.value, (int, float)):
-                cell.number_format = '0.0'
 
 
 def parse_cert_id_filter(raw_value):
@@ -389,14 +375,154 @@ def preview_excel_export():
     })
 
 
+# Keep both SQL materialization and worksheet storage bounded independently.
+EXPORT_CHUNK_SIZE = 1000
+
+
+def spool_export_query(conn, query, params, spool):
+    """Capture one query snapshot quickly, releasing SQLite locks before Excel IO."""
+    import pandas as pd
+
+    chunks = pd.read_sql_query(query, conn, params=params, chunksize=EXPORT_CHUNK_SIZE)
+    with closing(chunks):
+        for frame in chunks:
+            if not frame.empty:
+                pickle.dump(frame, spool, protocol=pickle.HIGHEST_PROTOCOL)
+    pickle.dump(None, spool, protocol=pickle.HIGHEST_PROTOCOL)
+    spool.seek(0)
+
+
+def iter_export_frames(spool):
+    # Only deserialize the anonymous, private TemporaryFile written by this
+    # request; never accept an uploaded, user-selected, or persisted pickle.
+    while True:
+        frame = pickle.load(spool)
+        if frame is None:
+            return
+        yield frame
+
+
+def write_streaming_export(spool, output_path, export_selection, cert_ids):
+    """Keep the legacy Excel values and sheets without retaining every row/cell."""
+    import pandas as pd
+    from openpyxl import Workbook
+    from openpyxl.cell import WriteOnlyCell
+    from openpyxl.styles import Alignment, Border, Font, Side
+
+    workbook = Workbook(write_only=True)
+    header_font = Font(bold=True)
+    header_alignment = Alignment(horizontal='center', vertical='top')
+    header_border = Border(**{side: Side(style='thin') for side in ('top', 'right', 'bottom', 'left')})
+    grade_counts = Counter()
+    date_bounds = {}
+    record_count = 0
+    columns = None
+    output_path = Path(output_path)
+    temporary_path = None
+
+    def append_row(sheet, values, *, headers=False, score_indexes=()):
+        cells = []
+        for index, value in enumerate(values):
+            # Match pandas ExcelFormatter's missing/infinite scalar handling.
+            if pd.isna(value):
+                value = ''
+            elif isinstance(value, float) and value in (float('inf'), float('-inf')):
+                value = str(value)
+            cell = WriteOnlyCell(sheet, value=value)
+            if headers:
+                cell.font = header_font
+                cell.alignment = header_alignment
+                cell.border = header_border
+            elif index in score_indexes and isinstance(value, (int, float)):
+                cell.number_format = '0.0'
+            cells.append(cell)
+        sheet.append(cells)
+
+    try:
+        # All source reads finished before worksheet generation. The private
+        # spool preserves one SQL snapshot/order without a long-lived read lock.
+        for frame in iter_export_frames(spool):
+            frame['landing_page_url'] = frame['cert_id'].apply(
+                lambda value: f"nxrgrading.com/card/{str(value).strip()}"
+            )
+            if 'final_grade_text' in frame.columns:
+                frame['final_grade_text'] = frame['final_grade_text'].apply(
+                    normalize_final_grade_text
+                ).replace('', pd.NA).fillna(frame['final_grade_text'])
+            frame = normalize_score_columns_for_export(frame, pd)
+            if columns is None:
+                columns = [column for column in frame.columns if column != 'landing_page_url']
+                columns.append('landing_page_url')
+                cards_sheet = workbook.create_sheet('Approved Cards')
+                append_row(cards_sheet, columns, headers=True)
+                score_indexes = {index for index, name in enumerate(columns) if name in SCORE_EXPORT_COLUMNS}
+            frame = frame[columns]
+            for values in frame.itertuples(index=False, name=None):
+                append_row(cards_sheet, values, score_indexes=score_indexes)
+            record_count += len(frame)
+            if 'final_grade_text' in frame.columns:
+                # Keep first-occurrence order before pandas applies its
+                # existing value_counts frequency ordering below.
+                grade_counts.update(frame['final_grade_text'].dropna())
+            for name in ('approved_at', 'entry_date', 'created_at', 'updated_at'):
+                if name not in frame.columns:
+                    continue
+                values = frame[name].dropna().astype('string').str.strip()
+                values = values[values != '']
+                if not values.empty:
+                    low, high = date_bounds.get(name, (values.min(), values.max()))
+                    date_bounds[name] = (min(low, values.min()), max(high, values.max()))
+
+        if not record_count:
+            return 0
+        date_range = '无数据'
+        for name in ('approved_at', 'entry_date', 'created_at', 'updated_at'):
+            if name in date_bounds:
+                low, high = date_bounds[name]
+                date_range = f"{low[:10]} 至 {high[:10]}"
+                break
+        summary = workbook.create_sheet('导出汇总')
+        append_row(summary, ['导出时间', '总记录数', '筛选条件', '数据范围', '包含字段数', '文件名称'], headers=True)
+        append_row(summary, [datetime.now().strftime('%Y-%m-%d %H:%M:%S'), record_count,
+                            format_export_filter_label(export_selection=export_selection, cert_ids=cert_ids),
+                            date_range, len(columns), output_path.name])
+        if 'final_grade_text' in columns:
+            grades = workbook.create_sheet('评分统计')
+            append_row(grades, ['评分等级', '数量', '占比'], headers=True)
+            # Reuse pandas rounding/string conversion, including empty statistics.
+            stats = pd.Series(grade_counts, dtype='int64').sort_values(ascending=False)
+            percentages = (stats / record_count * 100).round(1).astype(str) + '%'
+            for grade, count in stats.items():
+                append_row(grades, [grade, int(count), percentages.loc[grade]], score_indexes={0})
+
+        # A failed request must not expose an incomplete XLSX in export/download.
+        with tempfile.NamedTemporaryFile(dir=output_path.parent, prefix='.export-', suffix='.tmp', delete=False) as stream:
+            temporary_path = Path(stream.name)
+        workbook.save(temporary_path)
+        os.replace(temporary_path, output_path)
+        return record_count
+    finally:
+        # openpyxl cleans sheet spools after save; on an interrupted write it
+        # otherwise retains them until process exit. Keep cleanup request-local.
+        for sheet in workbook.worksheets:
+            writer = getattr(sheet, '_writer', None)
+            if writer is not None and os.path.exists(writer.out):
+                try:
+                    if not sheet.closed:
+                        sheet.close()
+                finally:
+                    writer.cleanup()
+        workbook.close()
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
 # ========== Generate Excel File ==========
 @app.route('/admin/export/generate-excel', methods=['POST'])
 @login_required
 def generate_excel():
     """生成Excel文件"""
     try:
-        import pandas as pd
-
         export_selection = get_requested_export_selection(request.form)
         query_filters = export_selection_query_filters(export_selection)
 
@@ -410,37 +536,6 @@ def generate_excel():
 
         query += f" ORDER BY {build_approved_order_clause()}"
 
-        # 执行查询
-        conn = get_temp_db_connection()
-        matching_cert_ids = get_matching_export_cert_ids(
-            conn,
-            cert_ids=cert_ids,
-            **query_filters,
-        )
-        missing_cert_ids = [cert_id for cert_id in cert_ids if cert_id not in matching_cert_ids]
-        if missing_cert_ids:
-            conn.close()
-            flash(f"以下Cert ID没有匹配到已批准数据: {', '.join(missing_cert_ids)}", 'warning')
-            return redirect(url_for('export_excel_page'))
-
-        df = pd.read_sql_query(query, conn, params=params)
-        conn.close()
-
-        if df.empty:
-            flash('没有找到匹配的数据', 'warning')
-            return redirect(url_for('export_excel_page'))
-
-        # 添加landing page url列
-        df['landing_page_url'] = df['cert_id'].apply(lambda x: f"nxrgrading.com/card/{str(x).strip()}")
-        if 'final_grade_text' in df.columns:
-            df['final_grade_text'] = df['final_grade_text'].apply(normalize_final_grade_text).replace('', pd.NA).fillna(df['final_grade_text'])
-        df = normalize_score_columns_for_export(df, pd)
-
-        # 重新排列列顺序，将landing_page_url放在最后
-        columns = [col for col in df.columns if col != 'landing_page_url']
-        columns.append('landing_page_url')
-        df = df[columns]
-
         # 生成输出文件名
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filter_suffix = format_export_selection_suffix(export_selection)
@@ -451,32 +546,19 @@ def generate_excel():
         output_filename = f"approved_cards{filter_suffix}{id_suffix}_{timestamp}.xlsx"
         output_path = exports_dir / output_filename
 
-        # 导出到Excel
-        with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-            # 主数据表
-            df.to_excel(writer, sheet_name='Approved Cards', index=False)
-            apply_score_number_format(writer.sheets['Approved Cards'])
-
-            # 添加汇总表
-            summary_data = {
-                '导出时间': [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
-                '总记录数': [len(df)],
-                '筛选条件': [format_export_filter_label(export_selection=export_selection, cert_ids=cert_ids)],
-                '数据范围': [format_export_date_range(df)],
-                '包含字段数': [len(df.columns)],
-                '文件名称': [output_filename]
-            }
-
-            summary_df = pd.DataFrame(summary_data)
-            summary_df.to_excel(writer, sheet_name='导出汇总', index=False)
-
-            # 添加评分统计表
-            if 'final_grade_text' in df.columns:
-                grade_stats = df['final_grade_text'].value_counts().reset_index()
-                grade_stats.columns = ['评分等级', '数量']
-                grade_stats['占比'] = (grade_stats['数量'] / len(df) * 100).round(1).astype(str) + '%'
-                grade_stats.to_excel(writer, sheet_name='评分统计', index=False)
-                apply_score_number_format(writer.sheets['评分统计'], column_names=('评分等级',))
+        # Anonymous request-owned spool is not an export/download artifact.
+        with tempfile.TemporaryFile() as spool:
+            with closing(get_temp_db_connection()) as conn:
+                matching_cert_ids = get_matching_export_cert_ids(conn, cert_ids=cert_ids, **query_filters)
+                missing_cert_ids = [cert_id for cert_id in cert_ids if cert_id not in matching_cert_ids]
+                if missing_cert_ids:
+                    flash(f"以下Cert ID没有匹配到已批准数据: {', '.join(missing_cert_ids)}", 'warning')
+                    return redirect(url_for('export_excel_page'))
+                spool_export_query(conn, query, params, spool)
+            record_count = write_streaming_export(spool, output_path, export_selection, cert_ids)
+        if not record_count:
+            flash('没有找到匹配的数据', 'warning')
+            return redirect(url_for('export_excel_page'))
 
         # 记录导出历史
         export_history_path = exports_dir / "export_history.json"
@@ -488,7 +570,7 @@ def generate_excel():
             'export_filter_label': export_selection['label'],
             'grade_filter': export_selection['grade_filter'] or None,
             'cert_ids': cert_ids,
-            'record_count': len(df),
+            'record_count': record_count,
             'export_time': datetime.now().isoformat(),
             'file_size': os.path.getsize(output_path)
         })
@@ -500,7 +582,7 @@ def generate_excel():
         with open(export_history_path, 'w', encoding='utf-8') as f:
             json.dump(history, f, ensure_ascii=False, indent=2)
 
-        flash(f'Excel文件生成成功: {output_filename} ({len(df)} 条记录)', 'success')
+        flash(f'Excel文件生成成功: {output_filename} ({record_count} 条记录)', 'success')
         return redirect(url_for('export_excel_page'))
 
     except Exception as e:
