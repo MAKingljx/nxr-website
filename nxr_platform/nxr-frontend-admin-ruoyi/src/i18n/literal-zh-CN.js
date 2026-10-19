@@ -1392,4 +1392,9 @@ export default {
   "Invalid finance review action": "财务异常处理方式无效",
   "Payment exception ids are required": "暂无可处理的付款异常，请刷新后重新核对",
   "Unable to record financial review": "财务核对记录保存失败",
+  "Upload interrupted": "上传中断",
+  "Interrupted, retry available": "上传中断，可重试",
+  "Upload interrupted. Retry publishing when both images are ready.": "上传中断，请在正背面图片齐全后重试发布。",
+  "Only uploaded entries can be marked as client pushed.": "只有已上传的卡片才能标记为客户端已推送。",
+  "This submission is currently being published.": "这张卡片正在发布，请稍后刷新。",
 }

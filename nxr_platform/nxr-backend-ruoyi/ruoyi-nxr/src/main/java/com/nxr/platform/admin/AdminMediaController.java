@@ -54,10 +54,8 @@ public class AdminMediaController {
         @RequestParam(defaultValue = "12") int pageSize
     ) {
         AccessScope scope=accessScopeService.cardScopeForUser(SecurityUtils.getUserId());
-        var result=adminMediaService.loadQueuePage(query,certId,cardName,cardCategory,productType,brand,language,finalGrade,
-            uploadStatus,imageStatus,showClientPushed,page,pageSize,scope);
-        return AjaxResult.success(new AdminMediaService.MediaQueueResponse(result.items(),adminMediaService.loadQueueSummary(scope),
-            result.page(),result.pageSize(),result.total()));
+        return AjaxResult.success(adminMediaService.loadQueue(query,certId,cardName,cardCategory,productType,brand,language,finalGrade,
+            uploadStatus,imageStatus,showClientPushed,page,pageSize,scope));
     }
 
     @PreAuthorize("@ss.hasPermi('nxr:media:list')")

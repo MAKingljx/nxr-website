@@ -29,6 +29,7 @@ import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -59,6 +60,7 @@ public class AdminMediaService {
     private final long maxImportFileSizeBytes;
     private final long maxImportTotalSizeBytes;
     private final long maxImagePixels;
+    private final MediaUploadLease uploadLease;
 
     public AdminMediaService(
         JdbcClient jdbcClient,
@@ -70,6 +72,21 @@ public class AdminMediaService {
         @Value("${nxr.media.import.max-total-size-bytes:25165824}") long maxImportTotalSizeBytes,
         @Value("${nxr.media.import.max-image-pixels:100000000}") long maxImagePixels
     ) {
+        this(jdbcClient,jdbcTemplate,adminMediaPersistenceService,mediaStorageRegistry,maxImportFiles,maxImportFileSizeBytes,
+            maxImportTotalSizeBytes,maxImagePixels,new MediaUploadLease());
+    }
+
+    @Autowired
+    public AdminMediaService(
+        JdbcClient jdbcClient, JdbcTemplate jdbcTemplate, AdminMediaPersistenceService adminMediaPersistenceService,
+        MediaStorageRegistry mediaStorageRegistry,
+        @Value("${nxr.media.import.max-files:12}") int maxImportFiles,
+        @Value("${nxr.media.import.max-file-size-bytes:25165824}") long maxImportFileSizeBytes,
+        @Value("${nxr.media.import.max-total-size-bytes:25165824}") long maxImportTotalSizeBytes,
+        @Value("${nxr.media.import.max-image-pixels:100000000}") long maxImagePixels,
+        MediaUploadLease uploadLease
+    ) {
+        this.uploadLease=uploadLease;
         this.jdbcClient = jdbcClient;
         this.jdbcTemplate = jdbcTemplate;
         this.adminMediaPersistenceService = adminMediaPersistenceService;
@@ -210,18 +227,37 @@ public class AdminMediaService {
     }
 
     private MediaQueuePage queuePage(QueueFilters filters,int page,int size,AccessScope scope) {
-        var result=new AdminMediaQueueReader(jdbcTemplate,mediaStorageRegistry,this::isReferenceAvailable).page(filters,page,size,scope);
+        return queuePage(filters,page,size,scope,uploadLease.snapshot());
+    }
+
+    private MediaQueuePage queuePage(QueueFilters filters,int page,int size,AccessScope scope,MediaUploadLease.Snapshot lease) {
+        var result=new AdminMediaQueueReader(jdbcTemplate,mediaStorageRegistry,this::isReferenceAvailable,lease).page(filters,page,size,scope);
         List<MediaQueueItem> items=new ArrayList<>(result.ids().size());
         if(!result.ids().isEmpty()) {
             String ids=result.ids().stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
-            scanQueueItems(items::add," AND s.id IN ("+ids+")");
+            scanQueueItems(items::add," AND s.id IN ("+ids+")",lease);
         }
         return new MediaQueuePage(items,result.page(),result.pageSize(),result.total());
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public MediaQueueSummary loadQueueSummary(AccessScope scope) {
-        return new AdminMediaQueueReader(jdbcTemplate,mediaStorageRegistry,this::isReferenceAvailable).summary(scope);
+        return new AdminMediaQueueReader(jdbcTemplate,mediaStorageRegistry,this::isReferenceAvailable,uploadLease.snapshot()).summary(scope);
+    }
+
+    /** The combined compatibility endpoint uses one lease cutoff for both page and totals. */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public MediaQueueResponse loadQueue(
+        String query,String certId,String cardName,String cardCategory,String productType,String brand,String language,
+        String finalGrade,String uploadStatus,String imageStatus,boolean showClientPushed,int page,int pageSize,AccessScope scope
+    ) {
+        var lease=uploadLease.snapshot();
+        QueueFilters filters=new QueueFilters(normalizeFilter(query),normalizeFilter(certId),normalizeFilter(cardName),
+            normalizeCode(cardCategory),normalizeCode(productType),normalizeFilter(brand),normalizeFilter(language),
+            normalizeFilter(finalGrade),normalizeUploadStatus(uploadStatus),normalizeImageStatus(imageStatus),showClientPushed);
+        var result=queuePage(filters,page,pageSize,scope,lease);
+        var summary=new AdminMediaQueueReader(jdbcTemplate,mediaStorageRegistry,this::isReferenceAvailable,lease).summary(scope);
+        return new MediaQueueResponse(result.items(),summary,result.page(),result.pageSize(),result.total());
     }
 
     @Transactional(readOnly = true)
@@ -234,11 +270,11 @@ public class AdminMediaService {
     }
 
     private void scanQueueItems(Consumer<MediaQueueItem> visitor) {
-        scanQueueItems(visitor, "");
+        scanQueueItems(visitor, "", uploadLease.snapshot());
     }
 
-    private void scanQueueItems(Consumer<MediaQueueItem> visitor, String additionalWhere) {
-        RowCallbackHandler consumeRow = rs -> visitor.accept(mapQueueItem(rs));
+    private void scanQueueItems(Consumer<MediaQueueItem> visitor, String additionalWhere, MediaUploadLease.Snapshot lease) {
+        RowCallbackHandler consumeRow = rs -> visitor.accept(mapQueueItem(rs,lease));
         jdbcTemplate.query(connection -> {
             PreparedStatement statement = connection.prepareStatement(
                 """
@@ -297,12 +333,15 @@ public class AdminMediaService {
         }, consumeRow);
     }
 
-    private MediaQueueItem mapQueueItem(ResultSet rs) throws SQLException {
+    private MediaQueueItem mapQueueItem(ResultSet rs, MediaUploadLease.Snapshot lease) throws SQLException {
                 MediaReference stagedFront = inspectReference(rs, "sf", "staged");
                 MediaReference stagedBack = inspectReference(rs, "sb", "staged");
                 MediaReference publishedFront = inspectReference(rs, "pf", "published");
                 MediaReference publishedBack = inspectReference(rs, "pb", "published");
-                String uploadState = rs.getString("upload_status");
+                String storedUploadState = rs.getString("upload_status");
+                LocalDateTime startedAt = rs.getObject("upload_started_at", LocalDateTime.class);
+                boolean uploadInterrupted = lease.interrupted(storedUploadState,startedAt);
+                String uploadState = lease.displayedStatus(storedUploadState,startedAt);
                 return new MediaQueueItem(
                     rs.getLong("id"),
                     rs.getString("cert_id"),
@@ -318,9 +357,9 @@ public class AdminMediaService {
                     rs.getObject("approved_at", LocalDateTime.class),
                     rs.getObject("published_at", LocalDateTime.class),
                     uploadState,
-                    rs.getObject("upload_started_at", LocalDateTime.class),
+                    startedAt,
                     rs.getObject("upload_completed_at", LocalDateTime.class),
-                    rs.getString("upload_error"),
+                    uploadInterrupted ? MediaUploadLease.INTERRUPTED_MESSAGE : rs.getString("upload_error"),
                     rs.getBigDecimal("final_grade_value"),
                     rs.getString("final_grade_label"),
                     stagedFront.publicUrl(),
@@ -338,7 +377,7 @@ public class AdminMediaService {
                     stagedFront.available() && stagedBack.available()
                         && !"uploading".equals(uploadState)
                         && !"client_pushed".equals(uploadState),
-                    MediaStageVersion.of(stageVersionSource(rs,"sf"),stageVersionSource(rs,"sb"))
+                    MediaStageVersion.of(stageVersionSource(rs,"sf"),stageVersionSource(rs,"sb")),uploadInterrupted
                 );
     }
 
@@ -1394,7 +1433,8 @@ public class AdminMediaService {
         boolean publishedFrontMissing,
         boolean publishedBackMissing,
         boolean readyToPublish,
-        String stagedVersion
+        String stagedVersion,
+        boolean uploadInterrupted
     ) {
     }
 

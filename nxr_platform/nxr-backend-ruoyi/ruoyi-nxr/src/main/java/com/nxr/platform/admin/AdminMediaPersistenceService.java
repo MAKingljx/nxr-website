@@ -13,6 +13,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -25,15 +26,26 @@ public class AdminMediaPersistenceService {
     private final JdbcClient jdbcClient;
     private final ObjectMapper objectMapper;
     private final String publicSiteBaseUrl;
+    private final MediaUploadLease uploadLease;
 
     public AdminMediaPersistenceService(
         JdbcClient jdbcClient,
         ObjectMapper objectMapper,
         @Value("${nxr.public-site.base-url:http://127.0.0.1:3000}") String publicSiteBaseUrl
     ) {
+        this(jdbcClient, objectMapper, publicSiteBaseUrl, new MediaUploadLease());
+    }
+
+    @Autowired
+    public AdminMediaPersistenceService(
+        JdbcClient jdbcClient, ObjectMapper objectMapper,
+        @Value("${nxr.public-site.base-url:http://127.0.0.1:3000}") String publicSiteBaseUrl,
+        MediaUploadLease uploadLease
+    ) {
         this.jdbcClient = jdbcClient;
         this.objectMapper = objectMapper;
         this.publicSiteBaseUrl = trimTrailingSlash(publicSiteBaseUrl);
+        this.uploadLease = uploadLease;
     }
 
     @Transactional(readOnly = true)
@@ -105,6 +117,7 @@ public class AdminMediaPersistenceService {
         boolean approvedOnly
     ) {
         List<ImportedMediaReplaceResult> results = new ArrayList<>();
+        MediaUploadLease.Snapshot lease = uploadLease.snapshot();
         // One transaction owns the entire browser batch. Stable lock order also
         // lets overlapping imports wait without taking each other's locks out of order.
         for (ImportedMediaReplacement replacement : replacements.stream()
@@ -112,10 +125,7 @@ public class AdminMediaPersistenceService {
                 .thenComparing(ImportedMediaReplacement::sideCode)).toList()) {
             // Match the publisher's lock order: upload state first, then the
             // submission. The second lock also prevents concurrent cert edits.
-            ensureUploadState(replacement.submissionId());
-            if ("uploading".equals(lockUploadStatus(replacement.submissionId()))) {
-                throw new ResponseStatusException(HttpStatus.CONFLICT, "This submission is currently being published.");
-            }
+            requireReplaceableUpload(replacement.submissionId(), lease);
             SubmissionForPublish current = jdbcClient.sql("""
                     SELECT id, cert_id, status_code FROM grading_submission
                     WHERE id=:submissionId FOR UPDATE
@@ -132,7 +142,7 @@ public class AdminMediaPersistenceService {
             }
             MediaReplaceResult result = replaceMediaRecord(
                 replacement.submissionId(), replacement.certId(), replacement.sideCode(),
-                "staged", replacement.storedMedia(), null
+                "staged", replacement.storedMedia(), null, lease
             );
             results.add(new ImportedMediaReplaceResult(result.replacedMedia(), replacement.storedMedia()));
         }
@@ -176,11 +186,14 @@ public class AdminMediaPersistenceService {
         MediaStorageProvider.StoredMediaObject storedFile,
         Long sourceMediaId
     ) {
-        ensureUploadState(submissionId);
-        String uploadStatus = lockUploadStatus(submissionId);
-        if ("uploading".equals(uploadStatus)) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "This submission is currently being published.");
-        }
+        return replaceMediaRecord(submissionId,certId,sideCode,stage,storedFile,sourceMediaId,uploadLease.snapshot());
+    }
+
+    private MediaReplaceResult replaceMediaRecord(
+        long submissionId,String certId,String sideCode,String stage,
+        MediaStorageProvider.StoredMediaObject storedFile,Long sourceMediaId,MediaUploadLease.Snapshot lease
+    ) {
+        requireReplaceableUpload(submissionId,lease);
         ExistingMedia existingMedia = findExistingMediaInternal(submissionId, stage, sideCode).orElse(null);
         upsertMediaRecord(existingMedia, submissionId, certId, sideCode, stage, storedFile, sourceMediaId);
         jdbcClient.sql(
@@ -229,9 +242,8 @@ public class AdminMediaPersistenceService {
         if (expectedVersion != null && !expectedVersion.equals(stagedVersion)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "The images changed. Reload before publishing.");
         }
-        if ("uploading".equals(currentState.statusCode())
-            && currentState.startedAt() != null
-            && currentState.startedAt().isAfter(LocalDateTime.now().minusMinutes(15))) {
+        MediaUploadLease.Snapshot lease = uploadLease.snapshot();
+        if (lease.blocked(currentState.statusCode(), currentState.startedAt())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This submission is already being published.");
         }
         if (stagedFront == null && stagedBack == null && "uploaded".equals(currentState.statusCode())) {
@@ -244,7 +256,7 @@ public class AdminMediaPersistenceService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                 stagedFront == null ? "Front staged media is required." : "Back staged media is required.");
         }
-        LocalDateTime startedAt = LocalDateTime.now();
+        LocalDateTime startedAt = lease.now();
         jdbcClient.sql("""
                 UPDATE submission_upload_state
                 SET status_code='uploading', claim_token=:claimToken,
@@ -362,11 +374,11 @@ public class AdminMediaPersistenceService {
 
     @Transactional
     public UploadState markClientPushed(long submissionId, Long triggeredByUserId) {
-        loadSubmissionForPublish(submissionId);
         ensureUploadState(submissionId);
         UploadState state = loadUploadStateForUpdate(submissionId);
-        if ("uploading".equals(state.statusCode())) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "This submission is currently being published.");
+        loadSubmissionForPublishForUpdate(submissionId);
+        if (!"uploaded".equals(state.statusCode())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Only uploaded entries can be marked as client pushed.");
         }
         jdbcClient.sql(
                 """
@@ -765,13 +777,14 @@ public class AdminMediaPersistenceService {
             .update();
     }
 
-    private String lockUploadStatus(long submissionId) {
-        return jdbcClient.sql(
-                "SELECT status_code FROM submission_upload_state WHERE submission_id=:submissionId FOR UPDATE"
-            )
-            .param("submissionId", submissionId)
-            .query(String.class)
-            .single();
+    private void requireReplaceableUpload(long submissionId,MediaUploadLease.Snapshot lease) {
+        ensureUploadState(submissionId);
+        UploadState state=loadUploadStateForUpdate(submissionId);
+        if(lease.blocked(state.statusCode(),state.startedAt())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,"This submission is currently being published.");
+        }
+        // Only the explicit image replacement below retires an expired claim.
+        // It preserves the previous public result and completion proof.
     }
 
     private UploadState loadUploadStateForUpdate(long submissionId) {

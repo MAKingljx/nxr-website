@@ -143,6 +143,135 @@ class AdminMediaPublishWorkflowTest {
     }
 
     @Test
+    void expiredClaimCanBeExplicitlyRetriedAndLatePublisherCannotCommitOrMarkFailure() {
+        var now=java.time.LocalDateTime.of(2026,10,19,12,0);
+        useLease(java.time.Clock.fixed(now.toInstant(java.time.ZoneOffset.UTC),java.time.ZoneOffset.UTC));
+        var old=persistenceService.claimSubmissionForPublish(1L,"interrupted-owner",7L);
+        String version=currentVersion();
+        jdbcTemplate.update("UPDATE submission_upload_state SET started_at=? WHERE submission_id=1",now.minusMinutes(15));
+        String proof=value("SELECT response_payload_json FROM submission_upload_state WHERE submission_id=1");
+        assertThat(proof).isNull();
+        var published=mediaService.publishSubmission(1L,8L,version);
+        assertThat(published.stagedVersion()).isEqualTo(version);
+        String currentProof=value("SELECT response_payload_json FROM submission_upload_state WHERE submission_id=1");
+        String publicSnapshot=value("SELECT published_media_snapshot_json FROM published_certificate WHERE submission_id=1");
+        assertConflict(()->persistenceService.publishSubmissionRecords(1L,"CERT001","interrupted-owner",old.stagedFront(),old.stagedBack(),
+            storageProvider.object("late-front","front"),storageProvider.object("late-back","back")));
+        persistenceService.markPublishFailed(1L,"interrupted-owner","late failure");
+        assertThat(value("SELECT status_code FROM submission_upload_state WHERE submission_id=1")).isEqualTo("uploaded");
+        assertThat(value("SELECT response_payload_json FROM submission_upload_state WHERE submission_id=1")).isEqualTo(currentProof);
+        assertThat(value("SELECT published_media_snapshot_json FROM published_certificate WHERE submission_id=1")).isEqualTo(publicSnapshot);
+        assertThat(storageProvider.copyCount).isEqualTo(2);
+        assertThat(mediaService.publishSubmission(1L,8L,version)).isEqualTo(published);
+        assertThat(storageProvider.copyCount).isEqualTo(2);
+    }
+
+    @Test
+    void freshOrUnknownLeaseCannotBeStolenAndDoesNotChangeAnyBusinessRow() {
+        var now=java.time.LocalDateTime.of(2026,10,19,12,0);
+        useLease(java.time.Clock.fixed(now.toInstant(java.time.ZoneOffset.UTC),java.time.ZoneOffset.UTC));
+        persistenceService.claimSubmissionForPublish(1L,"active-owner",7L);
+        for(java.time.LocalDateTime started:java.util.Arrays.asList(now.minusMinutes(15).plusSeconds(1),null)) {
+            jdbcTemplate.update("UPDATE submission_upload_state SET started_at=? WHERE submission_id=1",started);
+            var before=publishSnapshot();
+            assertConflict(()->mediaService.publishSubmission(1L,8L,currentVersion()));
+            assertThat(publishSnapshot()).isEqualTo(before);assertThat(storageProvider.copyCount).isZero();
+        }
+    }
+
+    @Test
+    void clientPushedRequiresUploadedAndRejectsRepeatedOrIncompleteStatesWithoutChanges() {
+        for(String state:List.of("not_started","failed","uploading","client_pushed")) {
+            jdbcTemplate.update("UPDATE submission_upload_state SET status_code=?,claim_token='keep-claim',error_message='keep-error',response_payload_json='keep-proof' WHERE submission_id=1",state);
+            var before=publishSnapshot();
+            assertConflict(()->persistenceService.markClientPushed(1L,9L));
+            assertThat(publishSnapshot()).isEqualTo(before);
+        }
+        jdbcTemplate.update("UPDATE submission_upload_state SET status_code='not_started',claim_token=NULL,started_at=NULL,error_message=NULL,response_payload_json=NULL WHERE submission_id=1");
+        mediaService.publishSubmission(1L,7L,currentVersion());
+        String proof=value("SELECT response_payload_json FROM submission_upload_state WHERE submission_id=1");
+        var publicBefore=jdbcTemplate.queryForList("SELECT * FROM published_certificate");
+        var mediaBefore=jdbcTemplate.queryForList("SELECT * FROM submission_media ORDER BY id");
+        var marked=persistenceService.markClientPushed(1L,9L);
+        assertThat(marked.statusCode()).isEqualTo("client_pushed");
+        assertThat(value("SELECT response_payload_json FROM submission_upload_state WHERE submission_id=1")).isEqualTo(proof);
+        assertThat(jdbcTemplate.queryForList("SELECT * FROM published_certificate")).isEqualTo(publicBefore);
+        assertThat(jdbcTemplate.queryForList("SELECT * FROM submission_media ORDER BY id")).isEqualTo(mediaBefore);
+        var beforeRepeat=publishSnapshot();assertConflict(()->persistenceService.markClientPushed(1L,9L));
+        assertThat(publishSnapshot()).isEqualTo(beforeRepeat);
+    }
+
+    @Test
+    void expiredSingleSidedImportCanBeRepairedBeforeRetryWithoutTouchingPublicProof() {
+        var now=java.time.LocalDateTime.of(2026,10,19,12,0);
+        useLease(java.time.Clock.fixed(now.toInstant(java.time.ZoneOffset.UTC),java.time.ZoneOffset.UTC));
+        mediaService.publishSubmission(1L,7L,currentVersion());
+        String publicBefore=value("SELECT published_media_snapshot_json FROM published_certificate WHERE submission_id=1");
+        String proofBefore=value("SELECT response_payload_json FROM submission_upload_state WHERE submission_id=1");
+        importPair("repair");
+        var old=persistenceService.claimSubmissionForPublish(1L,"interrupted-repair-owner",7L);
+        jdbcTemplate.update("UPDATE submission_upload_state SET started_at=? WHERE submission_id=1",now.minusMinutes(15));
+        jdbcTemplate.update("DELETE FROM submission_media WHERE id=?",old.stagedBack().id());
+        assertThat(countWhere("submission_media","media_stage_code='staged'")).isOne();
+        storageProvider.objects.add("repaired-back");
+        persistenceService.replaceMediaRecord(1L,"CERT001","back","staged",storageProvider.object("repaired-back","back"),null);
+        assertThat(value("SELECT status_code FROM submission_upload_state WHERE submission_id=1")).isEqualTo("not_started");
+        assertThat(value("SELECT claim_token FROM submission_upload_state WHERE submission_id=1")).isNull();
+        assertThat(value("SELECT published_media_snapshot_json FROM published_certificate WHERE submission_id=1")).isEqualTo(publicBefore);
+        assertThat(value("SELECT response_payload_json FROM submission_upload_state WHERE submission_id=1")).isEqualTo(proofBefore);
+        var repaired=publishSnapshot();
+        assertConflict(()->persistenceService.publishSubmissionRecords(1L,"CERT001","interrupted-repair-owner",old.stagedFront(),old.stagedBack(),
+            storageProvider.object("late-front","front"),storageProvider.object("late-back","back")));
+        persistenceService.markPublishFailed(1L,"interrupted-repair-owner","late failure");
+        assertThat(publishSnapshot()).isEqualTo(repaired);
+        String version=currentVersion();
+        assertThat(mediaService.publishSubmission(1L,8L,version).stagedVersion()).isEqualTo(version);
+        assertThat(countWhere("submission_media","media_stage_code='staged'")).isZero();
+        assertThat(value("SELECT status_code FROM submission_upload_state WHERE submission_id=1")).isEqualTo("uploaded");
+    }
+
+    @Test
+    void bothImportPathsKeepFreshOrUnknownClaimsAndBatchCanExplicitlyReplaceAnExpiredClaim() {
+        var now=java.time.LocalDateTime.of(2026,10,19,12,0);
+        useLease(java.time.Clock.fixed(now.toInstant(java.time.ZoneOffset.UTC),java.time.ZoneOffset.UTC));
+        mediaService.publishSubmission(1L,7L,currentVersion());
+        importPair("replacement");
+        persistenceService.claimSubmissionForPublish(1L,"active-import-owner",7L);
+        var replacement=replacement("replacement-new-back","back");
+        for(java.time.LocalDateTime started:java.util.Arrays.asList(now.minusMinutes(15).plusSeconds(1),null)) {
+            jdbcTemplate.update("UPDATE submission_upload_state SET started_at=? WHERE submission_id=1",started);
+            var before=publishSnapshot();
+            assertConflict(()->persistenceService.replaceImportedMedia(List.of(replacement),true));
+            assertConflict(()->persistenceService.replaceMediaRecord(1L,"CERT001","back","staged",replacement.storedMedia(),null));
+            assertThat(publishSnapshot()).isEqualTo(before);
+        }
+        jdbcTemplate.update("UPDATE submission_upload_state SET started_at=? WHERE submission_id=1",now.minusMinutes(15));
+        String proof=value("SELECT response_payload_json FROM submission_upload_state WHERE submission_id=1");
+        String publicBefore=value("SELECT published_media_snapshot_json FROM published_certificate WHERE submission_id=1");
+        persistenceService.replaceImportedMedia(List.of(replacement),true);
+        assertThat(value("SELECT status_code FROM submission_upload_state WHERE submission_id=1")).isEqualTo("not_started");
+        assertThat(value("SELECT claim_token FROM submission_upload_state WHERE submission_id=1")).isNull();
+        assertThat(value("SELECT response_payload_json FROM submission_upload_state WHERE submission_id=1")).isEqualTo(proof);
+        assertThat(value("SELECT published_media_snapshot_json FROM published_certificate WHERE submission_id=1")).isEqualTo(publicBefore);
+        assertThat(currentVersion()).isNotNull();
+    }
+
+    private void useLease(java.time.Clock clock) {
+        var lease=new MediaUploadLease(clock);
+        var manager=new DataSourceTransactionManager(jdbcTemplate.getDataSource());
+        ProxyFactory proxy=new ProxyFactory(new AdminMediaPersistenceService(jdbcClient,new ObjectMapper(),"https://nxrgrading.com/",lease));
+        proxy.setProxyTargetClass(true);proxy.addAdvice(new TransactionInterceptor(manager,new AnnotationTransactionAttributeSource()));
+        persistenceService=(AdminMediaPersistenceService)proxy.getProxy();
+        mediaService=new AdminMediaService(jdbcClient,jdbcTemplate,persistenceService,new MediaStorageRegistry(List.of(storageProvider),"r2"),12,25165824,25165824,100000000,lease);
+    }
+    private Map<String,List<Map<String,Object>>> publishSnapshot() {
+        Map<String,List<Map<String,Object>>> rows=new java.util.LinkedHashMap<>();
+        for(String table:List.of("grading_submission","submission_media","submission_upload_state","published_certificate"))
+            rows.put(table,jdbcTemplate.queryForList("SELECT * FROM "+table+" ORDER BY 1"));
+        return rows;
+    }
+
+    @Test
     void legacyPythonImagesAreStreamedIntoTheActiveJavaProvider() {
         jdbcTemplate.update(
             """

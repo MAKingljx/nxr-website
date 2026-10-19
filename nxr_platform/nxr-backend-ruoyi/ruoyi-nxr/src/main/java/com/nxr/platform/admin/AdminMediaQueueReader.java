@@ -32,13 +32,14 @@ final class AdminMediaQueueReader {
     private final JdbcTemplate template;
     private final MediaStorageRegistry registry;
     private final ReferenceCheck referenceCheck;
+    private final MediaUploadLease.Snapshot lease;
 
     @FunctionalInterface interface ReferenceCheck {
         boolean available(String stage,String provider,String bucket,String key,String version,String url);
     }
     record PageIds(List<Long> ids,int page,int pageSize,int total) { }
-    AdminMediaQueueReader(JdbcTemplate template,MediaStorageRegistry registry,ReferenceCheck check) {
-        this.template=template;this.registry=registry;this.referenceCheck=check;
+    AdminMediaQueueReader(JdbcTemplate template,MediaStorageRegistry registry,ReferenceCheck check,MediaUploadLease.Snapshot lease) {
+        this.template=template;this.registry=registry;this.referenceCheck=check;this.lease=lease;
     }
     PageIds page(QueueFilters filters,int page,int size,AccessScope scope) {
         return template.execute((ConnectionCallback<PageIds>) connection -> {
@@ -69,6 +70,7 @@ final class AdminMediaQueueReader {
             this.sql=new NamedParameterJdbcTemplate(dataSource);this.direct=new JdbcTemplate(dataSource);
             mysql=connection.getMetaData().getDatabaseProductName().toLowerCase(Locale.ROOT).contains("mysql");
             params.put("nonblank", "[^\\x{0}-\\x{20}]");
+            params.put("leaseCutoff",lease.cutoff());
             if(scope.unrestricted())scopeWhere="";
             else if(scope.denied())scopeWhere=" AND 1=0";
             else {
@@ -78,7 +80,11 @@ final class AdminMediaQueueReader {
         }
         String binary(String value) { return mysql?"CAST("+value+" AS BINARY)":"CAST("+value+" AS VARBINARY)"; }
         String base() { return " WHERE s.status_code IN ('approved','published')"+scopeWhere; }
-        String upload() { return "COALESCE(us.status_code,'not_started')"; }
+        String upload() {
+            String raw="COALESCE(us.status_code,'not_started')";
+            return "CASE WHEN "+equal(raw,"'uploading'")+" AND us.started_at IS NOT NULL AND us.started_at<=:leaseCutoff"
+                +" THEN 'failed' ELSE "+raw+" END";
+        }
         String equal(String left,String right) { return binary(left)+"="+binary(right); }
         String exactStatus(String value) { return equal(upload(),"'"+value+"'"); }
         String uploadWhere(QueueFilters f) {

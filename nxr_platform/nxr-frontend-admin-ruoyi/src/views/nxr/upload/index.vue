@@ -39,7 +39,7 @@
       <el-tag effect="plain">{{ $tx('Staged back images') }}: {{ summary.hasBackImage }}</el-tag>
       <template v-for="(count, status) in summary.statusCounts" :key="status">
         <el-tag v-if="status !== 'client_pushed'" effect="plain" class="summary-action" @click="applyUploadStatusFilter(status)">
-          {{ uploadStateLabel(status) }}: {{ count }}
+          {{ $tx(mediaUploadPresentation({ uploadStatus: status }).label) }}: {{ count }}
         </el-tag>
       </template>
     </div>
@@ -225,12 +225,12 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column :label="$tx('Upload Status')" width="135" align="center">
+      <el-table-column :label="$tx('Upload Status')" width="185" align="center">
         <template #default="scope">
-          <el-tooltip v-if="scope.row.uploadError" :content="scope.row.uploadError" placement="top">
-            <el-tag :type="uploadStateTag(scope.row.uploadStatus)">{{ uploadStateLabel(scope.row.uploadStatus) }}</el-tag>
+          <el-tooltip v-if="scope.row.uploadError" :content="localizeBackendMessage(scope.row.uploadError)" placement="top">
+            <el-tag class="upload-state-tag" :type="mediaUploadPresentation(scope.row).type">{{ $tx(mediaUploadPresentation(scope.row).label) }}</el-tag>
           </el-tooltip>
-          <el-tag v-else :type="uploadStateTag(scope.row.uploadStatus)">{{ uploadStateLabel(scope.row.uploadStatus) }}</el-tag>
+          <el-tag v-else class="upload-state-tag" :type="mediaUploadPresentation(scope.row).type">{{ $tx(mediaUploadPresentation(scope.row).label) }}</el-tag>
         </template>
       </el-table-column>
       <el-table-column :label="$tx('Image Status')" width="130" align="center">
@@ -244,16 +244,16 @@
             link
             type="success"
             icon="Promotion"
-            :disabled="!scope.row.readyToPublish || mutating"
+            :disabled="!canPublishMediaRow(scope.row, mutating)"
             :loading="publishLoadingId === scope.row.submissionId"
             v-hasPermi="['nxr:media:publish']"
             @click="publishEntry(scope.row)"
-          >{{ $tx('Publish') }}</el-button>
+          >{{ $tx(scope.row.uploadInterrupted ? 'Retry' : 'Publish') }}</el-button>
           <el-button
             link
             type="primary"
             :loading="clientPushLoadingId === scope.row.submissionId"
-            :disabled="mutating || scope.row.uploadStatus === 'uploading' || scope.row.uploadStatus === 'client_pushed'"
+            :disabled="!canMarkMediaClientPushed(scope.row, mutating)"
             v-hasPermi="['nxr:media:publish']"
             @click="markClientPushed(scope.row)"
           >{{ $tx('Client Pushed') }}</el-button>
@@ -275,6 +275,7 @@
 import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
 import { localizeBackendMessage } from '@/i18n'
 import { fetchMediaQueueItems, fetchMediaQueueSummary, importMediaFolder, publishSubmissionMedia, publishSubmissionMediaBatch, markSubmissionClientPushed } from '@/api/nxr/media'
+import { canPublishMediaRow, canMarkMediaClientPushed, mediaUploadPresentation, createMediaClientPushAction } from '@/api/nxr/mediaQueueState'
 
 const { proxy } = getCurrentInstance()
 const route = useRoute()
@@ -453,7 +454,7 @@ function resetQueueFilters() {
 }
 
 function isReadyToSelect(row) {
-  return row.readyToPublish && !mutating.value
+  return canPublishMediaRow(row, mutating.value)
 }
 
 function handleSelectionChange(rows) {
@@ -548,13 +549,14 @@ function armPublicationRefresh() {
 }
 
 async function publishEntry(row) {
-  if (mutating.value) return
+  if (!canPublishMediaRow(row, mutating.value)) return
+  const expectedVersion = row.stagedVersion
   lastPublish.value = null
   publishProgress.value = null
   publishLoadingId.value = row.submissionId
   try {
-    const response = await publishSubmissionMedia(row.submissionId, row.stagedVersion)
-    if (response.data.stagedVersion !== row.stagedVersion) throw new Error(tx('Publication could not be confirmed. Reload the image queue to check the result.'))
+    const response = await publishSubmissionMedia(row.submissionId, expectedVersion)
+    if (response.data.stagedVersion !== expectedVersion) throw new Error(tx('Publication could not be confirmed. Reload the image queue to check the result.'))
     if (componentActive) proxy.$modal.msgSuccess(tx('Published ') + response.data.certId)
   } catch (error) {
     uncertainPublication = true
@@ -569,7 +571,7 @@ async function publishSelected() {
   if (mutating.value || !selectedReadyIds.value.length) return
   const ids = [...selectedReadyIds.value], versions = { ...selectedReadyVersions.value }
   try { await proxy.$modal.confirm(tx('Publish the {count} selected cards?', { count: ids.length })) } catch { return }
-  if (!componentActive) return
+  if (!componentActive || mutating.value) return
   batchPublishing.value = true; lastPublish.value = null
   publishProgress.value = { requestedCount: ids.length, processedCount: 0, publishedCount: 0, failedCount: 0 }
   try {
@@ -604,38 +606,23 @@ function mediaStateLabel(item) {
   return tx('Images Missing')
 }
 
-function uploadStateLabel(status) {
-  const labels = {
-    not_started: 'Not Started',
-    uploading: 'Uploading',
-    uploaded: 'Uploaded',
-    failed: 'Failed',
-    client_pushed: 'Client Pushed'
-  }
-  return tx(labels[status] || 'Not Started')
-}
-
-function uploadStateTag(status) {
-  if (status === 'uploaded' || status === 'client_pushed') return 'success'
-  if (status === 'uploading') return 'warning'
-  if (status === 'failed') return 'danger'
-  return 'info'
-}
+const clientPushAction = createMediaClientPushAction({
+  rowForId: id => componentActive ? queue.value.find(row => row.submissionId === id) : undefined,
+  isBusy: () => mutating.value,
+  setBusy: id => {
+    clientPushLoadingId.value = id
+    if (id === null) armPublicationRefresh()
+  },
+  confirm: () => proxy.$modal.confirm(tx('Mark this card as pushed by the client?')),
+  submit: id => markSubmissionClientPushed(id),
+  refresh: () => componentActive ? Promise.all([loadQueue(), loadSummary()]) : Promise.resolve(),
+  onSuccess: () => { if (componentActive) proxy.$modal.msgSuccess(tx('Marked as Client Pushed')) }
+})
 
 async function markClientPushed(row) {
-  try {
-    await proxy.$modal.confirm(tx('Mark this card as pushed by the client?'))
-  } catch {
-    return
-  }
-  clientPushLoadingId.value = row.submissionId
-  try {
-    await markSubmissionClientPushed(row.submissionId)
-    proxy.$modal.msgSuccess(tx('Marked as Client Pushed'))
-    await loadQueue()
-    loadSummary()
-  } finally {
-    clientPushLoadingId.value = null
+  try { await clientPushAction(row.submissionId) } catch {
+    // The request interceptor already reports the localized backend error.
+    // The refreshed row decides whether another action is available.
   }
 }
 
@@ -666,6 +653,13 @@ loadSummary()
 </script>
 
 <style scoped>
+.upload-state-tag {
+  height: auto;
+  white-space: normal;
+  line-height: 1.4;
+  padding: 4px 8px;
+}
+
 .hidden-input {
   display: none;
 }
