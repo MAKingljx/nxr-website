@@ -132,6 +132,61 @@ class AdminMediaQueueSqlTest {
         assertThat(service.loadQueueSummary(scope)).isEqualTo(oracle(new String[8],null,null,1,20,allowed::contains).summary());
         assertThat(page(new String[8],null,"ready",1,20,new AccessScope(false,List.of(),List.of())).total()).isZero();
     }
+    @Test void interruptedUploadsAreReadOnlyAndAgreeAcrossFiltersPageAndSummary() {
+        var now=java.time.LocalDateTime.of(2026,10,19,12,0);
+        var lease=new MediaUploadLease(java.time.Clock.fixed(now.toInstant(java.time.ZoneOffset.UTC),java.time.ZoneOffset.UTC));
+        service=new AdminMediaService(JdbcClient.create(jdbc),jdbc,null,registry,12,1024,2048,100000,lease);
+        jdbc.update("UPDATE submission_upload_state SET status_code='uploading',started_at=?,error_message='stored lease evidence' WHERE submission_id=1",now.minusMinutes(15));
+        jdbc.update("UPDATE submission_upload_state SET status_code='uploading',started_at=? WHERE submission_id=2",now.minusMinutes(15).minusSeconds(1));
+        jdbc.update("UPDATE submission_upload_state SET status_code='uploading',started_at=? WHERE submission_id=3",now.minusMinutes(15).plusSeconds(1));
+        jdbc.update("UPDATE submission_upload_state SET status_code='uploading',started_at=NULL WHERE submission_id=4");
+        jdbc.update("UPDATE submission_upload_state SET status_code='failed',started_at=?,error_message='ordinary failure' WHERE submission_id=5",now.minusMinutes(30));
+        var before=businessSnapshot();
+        var failed=page(new String[8],"failed",null,1,20,all);
+        assertThat(failed.total()).isEqualTo(3);
+        assertThat(failed.items()).extracting(AdminMediaService.MediaQueueItem::submissionId).containsExactly(5L,2L,1L);
+        assertThat(failed.items().get(0).uploadInterrupted()).isFalse();
+        assertThat(failed.items().get(0).uploadError()).isEqualTo("ordinary failure");
+        assertThat(failed.items().get(1).uploadInterrupted()).isTrue();
+        assertThat(failed.items().get(1).readyToPublish()).isFalse();
+        assertThat(failed.items().get(2).uploadInterrupted()).isTrue();
+        assertThat(failed.items().get(2).readyToPublish()).isTrue();
+        assertThat(failed.items().get(2).uploadError()).isEqualTo(MediaUploadLease.INTERRUPTED_MESSAGE);
+        var active=page(new String[8],"uploading",null,1,20,all);
+        assertThat(active.items()).extracting(AdminMediaService.MediaQueueItem::submissionId).containsExactly(4L,3L);
+        assertThat(active.items()).allMatch(item->!item.uploadInterrupted()&&!item.readyToPublish());
+        var ready=page(new String[8],null,"ready",99,1,all);
+        assertThat(ready.total()).isEqualTo(3);assertThat(ready.page()).isEqualTo(3);
+        assertThat(ready.items()).singleElement().satisfies(item->{assertThat(item.submissionId()).isEqualTo(1);assertThat(item.uploadInterrupted()).isTrue();});
+        var summary=service.loadQueueSummary(all);
+        assertThat(summary.readyToPublish()).isEqualTo(3);assertThat(summary.statusCounts()).containsEntry("failed",3).containsEntry("uploading",2);
+        assertThat(oracle(new String[8],null,null,1,20,id->true).summary()).isEqualTo(summary);
+        assertThat(businessSnapshot()).isEqualTo(before);assertNoTemps();
+    }
+    @Test void oneRequestKeepsOneCutoffEvenWhenTheClockMovesDuringPagination() {
+        var initial=java.time.Instant.parse("2026-10-19T10:00:00Z");
+        var reads=new java.util.concurrent.atomic.AtomicInteger();
+        java.time.Clock moving=new java.time.Clock() {
+            public java.time.ZoneId getZone(){return java.time.ZoneOffset.UTC;}
+            public java.time.Clock withZone(java.time.ZoneId zone){return this;}
+            public java.time.Instant instant(){return initial.plusSeconds(3600L*reads.getAndIncrement());}
+        };
+        jdbc.update("UPDATE submission_upload_state SET status_code='uploading',started_at=TIMESTAMP '2026-10-19 09:46:00' WHERE submission_id=1");
+        var before=businessSnapshot();
+        service=new AdminMediaService(JdbcClient.create(jdbc),jdbc,null,registry,12,1024,2048,100000,new MediaUploadLease(moving));
+        var result=service.loadQueue(null,null,null,null,null,null,null,null,"uploading",null,true,1,20,all);
+        assertThat(reads.get()).isOne();assertThat(result.total()).isEqualTo(2);
+        assertThat(result.items()).allMatch(item->"uploading".equals(item.uploadStatus())&&!item.uploadInterrupted());
+        assertThat(result.summary().statusCounts()).containsEntry("uploading",2);
+        assertThat(businessSnapshot()).isEqualTo(before);assertNoTemps();
+    }
+    private Map<String,List<Map<String,Object>>> businessSnapshot() {
+        Map<String,List<Map<String,Object>>> rows=new LinkedHashMap<>();
+        for(String table:List.of("grading_submission","submission_media","submission_upload_state","grading_score"))
+            rows.put(table,jdbc.queryForList("SELECT * FROM "+table+" ORDER BY 1"));
+        return rows;
+    }
+
     @Test void temporaryEvidenceIsCleanedOnFailureAndCannotCommitTheCallersTransaction() {
         TransactionTemplate tx=new TransactionTemplate(new DataSourceTransactionManager(source));
         tx.executeWithoutResult(status->{
