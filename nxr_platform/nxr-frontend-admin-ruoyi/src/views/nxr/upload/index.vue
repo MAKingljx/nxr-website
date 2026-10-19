@@ -34,7 +34,7 @@
       <el-tag type="success" effect="plain" class="summary-action" @click="applyUploadStatusFilter('client_pushed')">
         {{ $tx('Client Pushed') }}: {{ summary.clientPushed }}
       </el-tag>
-      <el-tag type="success" effect="plain">{{ $tx('Published') }}: {{ summary.livePublished }}</el-tag>
+      <el-tooltip :content="$tx('Replacing images for an already published card does not increase this count.')"><el-tag type="success" effect="plain">{{ $tx('Published cards') }}: {{ summary.livePublished }}</el-tag></el-tooltip>
       <el-tag effect="plain">{{ $tx('Staged front images') }}: {{ summary.hasFrontImage }}</el-tag>
       <el-tag effect="plain">{{ $tx('Staged back images') }}: {{ summary.hasBackImage }}</el-tag>
       <template v-for="(count, status) in summary.statusCounts" :key="status">
@@ -64,13 +64,13 @@
       />
 
       <div class="picker-row">
-        <el-button type="primary" icon="FolderOpened" @click="openFolderPicker">{{ $tx('Select Folder') }}</el-button>
-        <el-button :disabled="!selectedFiles.length || importing" @click="clearSelectedFiles">{{ $tx('Clear') }}</el-button>
+        <el-button type="primary" icon="FolderOpened" :disabled="mutating" @click="openFolderPicker">{{ $tx('Select Folder') }}</el-button>
+        <el-button :disabled="!selectedFiles.length || mutating" @click="clearSelectedFiles">{{ $tx('Clear') }}</el-button>
         <el-button
           type="success"
           icon="Upload"
           :loading="importing"
-          :disabled="!selectedFiles.length"
+          :disabled="!selectedFiles.length || mutating"
           @click="submitImport"
         >{{ $tx('Start Import') }}</el-button>
         <span class="picker-meta">
@@ -89,6 +89,7 @@
 
       <el-alert v-if="lastImport" :type="uploadStatus === 'failed' ? 'warning' : 'success'" :closable="false" class="mt8">
         <div>{{ $tx('Saved') }} {{ lastImport.savedFiles }} {{ $tx('files, updated') }} {{ lastImport.updatedSides }} {{ $tx('sides, and matched') }} {{ lastImport.matchedEntries }} {{ $tx('entries.') }}</div>
+        <div v-if="lastImport.savedFiles">{{ $tx('Imported images are staged. Select cards below and publish to update the public images.') }}</div>
         <div v-if="lastImport.missingCertIds.length">{{ $tx('Cert IDs not found:') }} {{ lastImport.missingCertIds.join(', ') }}</div>
         <div v-if="lastImport.invalidNames.length">{{ $tx('Invalid filenames:') }} {{ lastImport.invalidNames.join(', ') }}</div>
         <div v-if="lastImport.duplicateNames.length">{{ $tx('Duplicate files:') }} {{ lastImport.duplicateNames.join(', ') }}</div>
@@ -155,7 +156,7 @@
       <el-form-item :label="$tx('Image Status')">
         <el-select v-model="imageStatusFilter" clearable style="width: 150px" @change="loadQueue(true)">
           <el-option :label="$tx('Ready')" value="ready" />
-          <el-option :label="$tx('Waiting')" value="waiting" />
+          <el-option :label="$tx('Waiting for Images')" value="waiting" />
           <el-option :label="$tx('Published')" value="published" />
           <el-option :label="$tx('Missing Any Image')" value="missing_any" />
           <el-option :label="$tx('Missing Front Image')" value="missing_front" />
@@ -170,15 +171,27 @@
           type="success"
           icon="Promotion"
           :loading="batchPublishing"
-          :disabled="!selectedReadyIds.length"
+          :disabled="!selectedReadyIds.length || mutating"
           @click="publishSelected"
         >{{ $tx('Publish Selected (') }}{{ selectedReadyIds.length }})</el-button>
       </el-form-item>
     </el-form>
 
+    <section v-if="publishProgress" class="publication-progress mb8" aria-live="polite" data-testid="media-publication-progress">
+      <el-progress :percentage="Math.floor(publishProgress.processedCount / publishProgress.requestedCount * 100)" :status="lastPublish && !lastPublish.failedCount && !lastPublish.unknownIds.length && !lastPublish.pendingIds.length ? 'success' : undefined" />
+      <span>{{ $tx('Processed {done} of {total} selected cards.', { done: publishProgress.processedCount, total: publishProgress.requestedCount }) }}</span>
+      <span v-if="batchPublishing && publishProgress.phase === 'retrying'"> {{ $tx('Connection interrupted. Retrying the same images…') }}</span>
+    </section>
+    <el-alert v-if="lastPublish" :type="lastPublish.failedCount || lastPublish.unknownIds.length || lastPublish.pendingIds.length ? 'warning' : 'success'" :closable="false" class="mb8" data-testid="media-publication-result">
+      <div>{{ $tx('{published} cards published; {failed} failed.', { published: lastPublish.publishedCount, failed: lastPublish.failedCount }) }}</div>
+      <div v-if="lastPublish.unknownIds.length">{{ $tx('Publication status for {count} cards is not yet confirmed. Check the refreshed queue before retrying.', { count: lastPublish.unknownIds.length }) }}</div>
+      <div v-if="lastPublish.pendingIds.length">{{ $tx('{count} remaining cards were not sent.', { count: lastPublish.pendingIds.length }) }}</div>
+      <div v-for="failure in lastPublish.failures.slice(0, 5)" :key="failure.submissionId">{{ failure.submissionId }}: {{ $tx(failure.message) }}</div>
+    </el-alert>
+
     <el-alert v-if="queueError" type="error" :closable="false" class="mb8">
       <div class="queue-error">
-        <span>{{ $tx('Could not load the card image queue. Please try again.') }}</span>
+        <span>{{ queueErrorMessage }}</span>
         <el-button type="primary" plain :loading="loading" @click="loadQueue()">{{ $tx('Retry') }}</el-button>
       </div>
     </el-alert>
@@ -231,16 +244,16 @@
             link
             type="success"
             icon="Promotion"
-            :disabled="!scope.row.readyToPublish"
+            :disabled="!scope.row.readyToPublish || mutating"
             :loading="publishLoadingId === scope.row.submissionId"
             v-hasPermi="['nxr:media:publish']"
-            @click="publishEntry(scope.row.submissionId)"
+            @click="publishEntry(scope.row)"
           >{{ $tx('Publish') }}</el-button>
           <el-button
             link
             type="primary"
             :loading="clientPushLoadingId === scope.row.submissionId"
-            :disabled="scope.row.uploadStatus === 'uploading' || scope.row.uploadStatus === 'client_pushed'"
+            :disabled="mutating || scope.row.uploadStatus === 'uploading' || scope.row.uploadStatus === 'client_pushed'"
             v-hasPermi="['nxr:media:publish']"
             @click="markClientPushed(scope.row)"
           >{{ $tx('Client Pushed') }}</el-button>
@@ -260,6 +273,7 @@
 
 <script setup name="NxrUpload">
 import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
+import { localizeBackendMessage } from '@/i18n'
 import { fetchMediaQueueItems, fetchMediaQueueSummary, importMediaFolder, publishSubmissionMedia, publishSubmissionMediaBatch, markSubmissionClientPushed } from '@/api/nxr/media'
 
 const { proxy } = getCurrentInstance()
@@ -295,6 +309,7 @@ const languageOptions = ['EN', 'JP', 'CT', 'CS', 'IN', 'KO', 'TH', 'Other']
 const loading = ref(false)
 const queueLoaded = ref(false)
 const queueError = ref(false)
+const queueErrorMessage = ref('')
 let queueRequestId = 0
 const summaryLoading = ref(false)
 const summaryLoaded = ref(false)
@@ -305,6 +320,11 @@ const publishLoadingId = ref(null)
 const clientPushLoadingId = ref(null)
 const batchPublishing = ref(false)
 const selectedReadyIds = ref([])
+const selectedReadyVersions = ref({})
+const publishProgress = ref(null)
+const lastPublish = ref(null)
+const mutating = computed(() => importing.value || batchPublishing.value || publishLoadingId.value !== null || clientPushLoadingId.value !== null)
+let componentActive = true, refreshTimer = null, refreshPolls = 0, uncertainPublication = false
 const selectedFiles = ref([])
 const skippedFileCount = ref(0)
 const selectedFolderName = ref('')
@@ -321,11 +341,14 @@ function mediaDisplayUrl(value) {
   return value
 }
 
-function loadQueue(resetPage = false) {
+function loadQueue(resetPage = false, polling = false) {
+  if (refreshTimer) clearTimeout(refreshTimer)
+  if (!polling) refreshPolls = 0
   if (resetPage) queuePage.value = 1
   const requestId = ++queueRequestId
   loading.value = true
   queueError.value = false
+  queueErrorMessage.value = ''
   queueLoaded.value = false
   return fetchMediaQueueItems({
     query: searchQuery.value.trim() || undefined,
@@ -346,20 +369,28 @@ function loadQueue(resetPage = false) {
       if (requestId !== queueRequestId) return
       queue.value = res.data.items
       selectedReadyIds.value = []
+      selectedReadyVersions.value = {}
       queueTotal.value = res.data.total
       queuePage.value = res.data.page
       queuePageSize.value = res.data.pageSize
       queueLoaded.value = true
     })
-    .catch(() => {
+    .catch((error) => {
       if (requestId !== queueRequestId) return
       queue.value = []
       queueTotal.value = 0
       selectedReadyIds.value = []
+      selectedReadyVersions.value = {}
       queueError.value = true
+      const status = error?.status || error?.response?.data?.code || error?.response?.status
+      queueErrorMessage.value = Number(status) === 403
+        ? tx('You do not have permission to view the card image queue.')
+        : /timeout|timed out/i.test(String(error?.message || ''))
+          ? tx('The card image queue timed out. Retry loading the queue.')
+          : tx('Could not load the card image queue. Please try again.')
     })
     .finally(() => {
-      if (requestId === queueRequestId) loading.value = false
+      if (requestId === queueRequestId) { loading.value = false; armPublicationRefresh() }
     })
 }
 
@@ -422,11 +453,13 @@ function resetQueueFilters() {
 }
 
 function isReadyToSelect(row) {
-  return row.readyToPublish
+  return row.readyToPublish && !mutating.value
 }
 
 function handleSelectionChange(rows) {
-  selectedReadyIds.value = rows.filter(isReadyToSelect).map((row) => row.submissionId)
+  const ready = rows.filter(isReadyToSelect)
+  selectedReadyIds.value = ready.map((row) => row.submissionId)
+  selectedReadyVersions.value = Object.fromEntries(ready.map(row => [row.submissionId, row.stagedVersion]))
 }
 
 function openFolderPicker() {
@@ -459,6 +492,8 @@ async function submitImport() {
     return
   }
   importing.value = true
+  lastPublish.value = null
+  publishProgress.value = null
   uploadStatus.value = 'uploading'
   uploadPercent.value = 0
   uploadLabel.value = tx('Preparing upload…')
@@ -471,7 +506,7 @@ async function submitImport() {
       } else if (meta.phase === 'batch-complete') {
         uploadLabel.value = `${meta.completedBatches}/${meta.batchCount} batches complete · ${meta.successfulCertificates || 0} certificates`
       } else if (meta.phase === 'complete') {
-        uploadLabel.value = tx('Upload complete')
+        uploadLabel.value = tx('Import complete')
       } else {
         const batchLabel = meta.batchCount ? `Batch ${meta.batchIndex}/${meta.batchCount} · ` : ''
         uploadLabel.value = `${batchLabel}${uploadPercent.value}% · ${(loaded / 1024 / 1024).toFixed(1)} MB / ${(total / 1024 / 1024).toFixed(1)} MB`
@@ -480,9 +515,9 @@ async function submitImport() {
     lastImport.value = response
     uploadStatus.value = 'success'
     uploadPercent.value = 100
-    uploadLabel.value = tx('Upload complete')
+    uploadLabel.value = tx('Import complete')
     clearSelectedFiles()
-    proxy.$modal.msgSuccess(`Saved ${response.savedFiles} files and matched ${response.updatedSubmissionIds.length} entries`)
+    proxy.$modal.msgSuccess(tx('Imported {files} images for {cards} cards.', { files: response.savedFiles, cards: response.updatedSubmissionIds.length }))
     loadQueue()
     loadSummary()
   } catch (error) {
@@ -501,46 +536,64 @@ async function submitImport() {
   }
 }
 
-function publishEntry(submissionId) {
-  publishLoadingId.value = submissionId
-  publishSubmissionMedia(submissionId)
-    .then((res) => {
-      proxy.$modal.msgSuccess(tx('Published ') + res.data.certId)
-      loadQueue()
-      loadSummary()
-    })
-    .finally(() => {
-      publishLoadingId.value = null
-    })
+function armPublicationRefresh() {
+  if (refreshTimer) clearTimeout(refreshTimer)
+  if (!componentActive || mutating.value || refreshPolls >= 24 || (!uncertainPublication && !queue.value.some(row => row.uploadStatus === 'uploading'))) return
+  refreshTimer = setTimeout(async () => {
+    refreshPolls++
+    await Promise.all([loadQueue(false, true), loadSummary()])
+    if (summaryLoaded.value && !summary.value.statusCounts?.uploading) uncertainPublication = false
+    armPublicationRefresh()
+  }, 5000)
+}
+
+async function publishEntry(row) {
+  if (mutating.value) return
+  lastPublish.value = null
+  publishProgress.value = null
+  publishLoadingId.value = row.submissionId
+  try {
+    const response = await publishSubmissionMedia(row.submissionId, row.stagedVersion)
+    if (response.data.stagedVersion !== row.stagedVersion) throw new Error(tx('Publication could not be confirmed. Reload the image queue to check the result.'))
+    if (componentActive) proxy.$modal.msgSuccess(tx('Published ') + response.data.certId)
+  } catch (error) {
+    uncertainPublication = true
+    if (componentActive) proxy.$modal.msgError(localizeBackendMessage(error?.response?.data?.message || error?.response?.data?.msg || error?.message || 'Publication could not be confirmed. Reload the image queue to check the result.'))
+  } finally {
+    publishLoadingId.value = null
+    if (componentActive) { await Promise.all([loadQueue(), loadSummary()]); armPublicationRefresh() }
+  }
 }
 
 async function publishSelected() {
-  if (!selectedReadyIds.value.length) return
+  if (mutating.value || !selectedReadyIds.value.length) return
+  const ids = [...selectedReadyIds.value], versions = { ...selectedReadyVersions.value }
+  try { await proxy.$modal.confirm(tx('Publish the {count} selected cards?', { count: ids.length })) } catch { return }
+  if (!componentActive) return
+  batchPublishing.value = true; lastPublish.value = null
+  publishProgress.value = { requestedCount: ids.length, processedCount: 0, publishedCount: 0, failedCount: 0 }
   try {
-    await proxy.$modal.confirm(`Publish the ${selectedReadyIds.value.length} selected cards?`)
-  } catch {
-    return
-  }
-
-  batchPublishing.value = true
-  try {
-    const response = await publishSubmissionMediaBatch(selectedReadyIds.value)
-    const result = response.data
-    if (result.failedCount) {
-      const details = result.failures.slice(0, 5).map((item) => `${item.submissionId}: ${item.message}`).join('; ')
-      const suffix = result.failedCount > 5 ? tx('; refresh and retry the remaining failures') : ''
-      proxy.$modal.msgWarning(`${result.publishedCount} published, ${result.failedCount} failed. ${details}${suffix}`)
-    } else {
-      proxy.$modal.msgSuccess(`${result.publishedCount} cards published`)
-    }
-    await loadQueue()
-    loadSummary()
+    const response = await publishSubmissionMediaBatch(ids, versions, {
+      shouldContinue: () => componentActive,
+      onProgress: (result, phase) => { if (componentActive) publishProgress.value = { ...result, ...phase } }
+    })
+    lastPublish.value = response.data
   } catch (error) {
-    proxy.$modal.msgError(error?.message || tx('Batch publication failed'))
+    if (error?.publishSummary) {
+      lastPublish.value = error.publishSummary
+      uncertainPublication = error.publishSummary.unknownIds.length > 0
+    }
+    if (componentActive) proxy.$modal.msgError(localizeBackendMessage(error?.response?.data?.message || error?.response?.data?.msg || error?.message || 'Batch publication failed'))
   } finally {
     batchPublishing.value = false
+    if (componentActive) { await Promise.all([loadQueue(), loadSummary()]); armPublicationRefresh() }
   }
 }
+
+onBeforeUnmount(() => {
+  componentActive = false; queueRequestId++; summaryRequestId++
+  if (refreshTimer) clearTimeout(refreshTimer)
+})
 
 function mediaStateLabel(item) {
   if (item.hasPublishedFront && item.hasPublishedBack) {

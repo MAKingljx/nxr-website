@@ -1,4 +1,5 @@
 import request from '@/utils/request'
+import { executeMediaPublicationBatches, publicationSelection } from './mediaPublication'
 import {
   MEDIA_IMPORT_MAX_ATTEMPTS,
   createMediaImportProgress,
@@ -28,22 +29,27 @@ export function fetchMediaQueueSummary() {
 }
 
 // 发布单条媒体
-export function publishSubmissionMedia(submissionId) {
+export function publishSubmissionMedia(submissionId, expectedVersion) {
+  publicationSelection([submissionId], { [submissionId]: expectedVersion })
   return request({
     url: '/api/admin/media/submissions/' + submissionId + '/publish',
     method: 'post',
-    timeout: 1000 * 60 * 5
+    params: { expectedVersion },
+    suppressErrorMessage: true,
+    timeout: 90000
   })
 }
 
 // 批量发布媒体；服务端逐条提交并返回每条结果，单条失败不会隐藏其他成功项。
-export function publishSubmissionMediaBatch(submissionIds) {
-  return request({
+export async function publishSubmissionMediaBatch(submissionIds, expectedVersions, options = {}) {
+  const data = await executeMediaPublicationBatches(submissionIds, expectedVersions, (ids, versions) => request({
     url: '/api/admin/media/batch-publish',
     method: 'post',
-    data: { submissionIds },
-    timeout: 1000 * 60 * 30
-  })
+    data: { submissionIds: ids, expectedVersions: versions },
+    suppressErrorMessage: true,
+    timeout: 90000
+  }), options)
+  return { data }
 }
 
 export function markSubmissionClientPushed(submissionId) {

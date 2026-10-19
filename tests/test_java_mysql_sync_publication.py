@@ -152,6 +152,29 @@ class MySqlPublicationSyncTests(unittest.TestCase):
             triggered_by_user_id=777 WHERE submission_id=%s''', (str(uuid.uuid4()), front, back, self.sid), db)
         return front, back
 
+    def native_staged(self, *, sides=('front', 'back'), state='not_started', version='v2', connection=None):
+        db = connection or self.db
+        for side in sides:
+            self.execute("""UPDATE submission_media SET storage_provider_code='local',
+                storage_bucket='native-test',storage_key=%s,storage_object_version=%s,
+                checksum_sha256=%s,public_url=%s,is_active=1,updated_at=CURRENT_TIMESTAMP
+                WHERE submission_id=%s AND media_stage_code='staged' AND media_side_code=%s""",
+                (f'SYNC0001/{side}/{version}.webp', version,
+                 hashlib.sha256((side + version).encode()).hexdigest(),
+                 f'/media/staged/SYNC0001/{side}/{version}.webp', self.sid, side), db)
+        self.execute("""UPDATE submission_upload_state SET status_code=%s,claim_token=NULL,
+            claimed_front_media_id=NULL,claimed_back_media_id=NULL,started_at=NULL,completed_at=NULL,
+            error_message=%s,response_payload_json=%s,triggered_by_user_id=777,updated_at=CURRENT_TIMESTAMP
+            WHERE submission_id=%s""",
+            (state, 'Synthetic native upload failure' if state == 'failed' else None,
+             '{"native":"failed"}' if state == 'failed' else None, self.sid), db)
+
+    def source_upload_update(self, state='uploaded', *, label='Source metadata changed'):
+        with contextlib.closing(sqlite3.connect(self.fixture.temp_path)) as conn, conn:
+            conn.execute("""UPDATE temp_cards SET card_name=?,upload_status=?,
+                upload_completed='2026-10-19T09:00:00',updated_at='2026-10-19T09:00:00',
+                server_response='{"source":"python"}' WHERE cert_id='SYNC0001'""", (label, state))
+
     def publication_snapshot(self, *, include_staged=False):
         return {table: self.query(f'SELECT * FROM {table} WHERE submission_id=%s'
                                  + (" AND media_stage_code='published'" if table == 'submission_media' and not include_staged else '')
@@ -161,6 +184,172 @@ class MySqlPublicationSyncTests(unittest.TestCase):
     def target_snapshot(self):
         return {table: self.query(f'SELECT * FROM `{table}` ORDER BY 1')
                 for table in domain.TARGET_TABLES + domain.SYNC_TABLES + domain.UNTOUCHED_TABLES}
+
+    def test_native_pending_new_versions_survive_python_uploaded_and_future_changes(self):
+        self.java_publish()
+        # IDs are reused by Java import. An old snapshot of the same IDs must
+        # not cause the new storage key/hash to be treated as already published.
+        self.execute("""UPDATE published_certificate SET published_media_snapshot_json=
+            '{"front":{"sourceMediaId":1,"checksumSha256":"old-front"},"back":{"sourceMediaId":2,"checksumSha256":"old-back"}}'
+            WHERE submission_id=%s""", (self.sid,))
+        self.native_staged()
+        # Java keeps the previous successful response as immutable version
+        # evidence while a replacement is pending. Sync must retain that proof.
+        self.execute("""UPDATE submission_upload_state SET response_payload_json=
+            '{"statusCode":"published","frontVersion":"old-front","backVersion":"old-back"}'
+            WHERE submission_id=%s""", (self.sid,))
+        before = self.publication_snapshot(include_staged=True)
+        managed_before = self.query('SELECT * FROM nxr_python_sync_submission')
+        self.source_publish()
+        with contextlib.closing(sqlite3.connect(self.fixture.cards_path)) as conn, conn:
+            conn.execute("UPDATE cards SET final_grade=8.25,grade='8.5' WHERE cert_id='SYNC0001'")
+        self.run_sync()
+        self.assertEqual(self.publication_snapshot(include_staged=True), before)
+        self.assertEqual(self.scalar('SELECT status_code FROM submission_upload_state WHERE submission_id=%s', (self.sid,)), 'not_started')
+        self.assertEqual(float(self.scalar('SELECT final_grade_value FROM grading_score WHERE submission_id=%s', (self.sid,))), 8.25)
+        self.assertEqual(self.scalar('SELECT card_name FROM grading_submission WHERE id=%s', (self.sid,)), 'Python published title')
+        self.assertNotEqual(self.query('SELECT * FROM nxr_python_sync_submission'), managed_before)
+        managed = self.query('SELECT * FROM nxr_python_sync_submission')
+        self.run_sync()
+        self.assertEqual(self.publication_snapshot(include_staged=True), before)
+        self.assertEqual(self.query('SELECT * FROM nxr_python_sync_submission'), managed)
+        with contextlib.closing(sqlite3.connect(self.fixture.cards_path)) as conn, conn:
+            conn.execute("UPDATE cards SET card_name='Later Python metadata',updated_at='2026-10-19T10:00:00' WHERE cert_id='SYNC0001'")
+        self.args.mode='incremental'
+        self.run_sync()
+        self.assertEqual(self.publication_snapshot(include_staged=True), before)
+        self.assertEqual(self.scalar('SELECT card_name FROM grading_submission WHERE id=%s', (self.sid,)), 'Later Python metadata')
+
+    def test_native_failed_operation_preserves_result_without_publication(self):
+        self.native_staged(state='failed')
+        before = self.publication_snapshot(include_staged=True)
+        for state in ('uploaded', 'not_started', 'failed'):
+            with self.subTest(source_state=state):
+                self.source_upload_update(state, label='Source ' + state)
+                self.run_sync()
+                self.assertEqual(self.publication_snapshot(include_staged=True), before)
+                self.assertEqual(self.scalar('SELECT COUNT(*) FROM published_certificate'), 0)
+                self.assertEqual(self.scalar('SELECT card_name FROM grading_submission WHERE id=%s', (self.sid,)), 'Source ' + state)
+
+    def test_one_sided_native_update_is_not_marked_completed_from_python(self):
+        self.native_staged(sides=('front',))
+        before_upload = self.query('SELECT * FROM submission_upload_state')
+        before_front = self.query("SELECT * FROM submission_media WHERE media_stage_code='staged' AND media_side_code='front'")
+        self.source_publish()
+        self.run_sync()
+        self.assertEqual(self.query('SELECT * FROM submission_upload_state'), before_upload)
+        self.assertEqual(self.query("SELECT * FROM submission_media WHERE media_stage_code='staged' AND media_side_code='front'"), before_front)
+        self.assertEqual(self.scalar("SELECT COUNT(*) FROM submission_media WHERE media_stage_code='published' AND storage_provider_code<>'legacy-python'"), 0)
+
+    def test_native_pending_protection_rejects_non_native_or_out_of_scope_evidence(self):
+        for invalid in ('legacy', 'inactive', 'empty_key', 'wrong_cert', 'wrong_side', 'wrong_stage'):
+            with self.subTest(invalid=invalid):
+                self.execute("""UPDATE submission_media SET cert_id='SYNC0001',media_side_code='front',
+                    media_stage_code='staged',storage_provider_code='local',is_active=1,
+                    storage_key='valid-native-front' WHERE id=1""")
+                self.execute("UPDATE submission_upload_state SET status_code='not_started' WHERE submission_id=%s", (self.sid,))
+                modifications = {'legacy': "storage_provider_code='legacy-python'", 'inactive': 'is_active=0',
+                    'empty_key': "storage_key=''", 'wrong_cert': "cert_id='OTHER-CERT'",
+                    'wrong_side': "media_side_code='other'", 'wrong_stage': "media_stage_code='queue'"}
+                self.execute('UPDATE submission_media SET ' + modifications[invalid] + ' WHERE id=1')
+                self.source_upload_update(label='Negative ' + invalid)
+                self.run_sync()
+                self.assertEqual(self.scalar('SELECT status_code FROM submission_upload_state WHERE submission_id=%s', (self.sid,)), 'uploaded')
+
+    def test_native_upload_lease_is_preserved_only_while_active(self):
+        self.native_staged()
+        for expired in (False, True):
+            with self.subTest(expired=expired):
+                self.execute("""UPDATE submission_upload_state SET status_code='uploading',claim_token=%s,
+                    started_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP - INTERVAL %s MINUTE
+                    WHERE submission_id=%s""", (str(uuid.uuid4()), 20 if expired else 0, self.sid))
+                before = self.query('SELECT * FROM submission_upload_state')
+                self.source_upload_update(label='Lease expired ' + str(expired))
+                self.run_sync()
+                if expired:
+                    self.assertEqual(self.scalar('SELECT status_code FROM submission_upload_state WHERE submission_id=%s', (self.sid,)), 'uploaded')
+                else:
+                    self.assertEqual(self.query('SELECT * FROM submission_upload_state'), before)
+
+    def test_native_upload_and_version_corruption_fail_verification_and_roll_back(self):
+        self.native_staged(state='failed')
+        self.source_upload_update()
+        before = self.target_snapshot()
+        sid = self.sid
+        for field, expected in [('upload', 'preserved_native_upload'), ('media_version', 'preserved_native_staged')]:
+            with self.subTest(field=field):
+                class CorruptNative(sync.PythonToJavaSync):
+                    def verify_staging(self):
+                        with self.db.cursor() as cur:
+                            if field == 'upload':
+                                cur.execute("UPDATE submission_upload_state SET response_payload_json='corrupted' WHERE submission_id=%s", (sid,))
+                            else:
+                                cur.execute("UPDATE submission_media SET storage_key='wrong-same-id-version' WHERE submission_id=%s AND media_stage_code='staged' AND media_side_code='front'", (sid,))
+                        super().verify_staging()
+                with self.assertRaisesRegex(domain.MigrationError, expected + '_mismatches=1'):
+                    self.run_sync(CorruptNative)
+                self.assertEqual(self.target_snapshot(), before)
+
+    def test_native_pending_operation_survives_commit_failure_and_lost_commit_retry(self):
+        self.native_staged()
+        self.source_upload_update()
+        before = self.target_snapshot()
+        native = self.publication_snapshot(include_staged=True)
+        for after_commit in (False, True):
+            with self.subTest(after_commit=after_commit):
+                class CommitFault:
+                    def __init__(self, connection): self.connection = connection
+                    def __getattr__(self, name): return getattr(self.connection, name)
+                    def commit(self):
+                        if after_commit: self.connection.commit()
+                        raise domain.MigrationError('Synthetic lost commit acknowledgement' if after_commit else 'Synthetic commit failure')
+                class FaultedSync(sync.PythonToJavaSync):
+                    def connect(self):
+                        super().connect()
+                        self.connection = CommitFault(self.connection)
+                with self.assertRaisesRegex(domain.MigrationError, 'Synthetic'):
+                    self.run_sync(FaultedSync)
+                self.assertEqual(self.publication_snapshot(include_staged=True), native)
+                if not after_commit:
+                    self.assertEqual(self.target_snapshot(), before)
+                else:
+                    self.assertEqual(self.scalar('SELECT card_name FROM grading_submission WHERE id=%s', (self.sid,)), 'Source metadata changed')
+                    state = self.query('SELECT * FROM nxr_python_sync_submission')
+                    self.run_sync()
+                    self.assertEqual(self.publication_snapshot(include_staged=True), native)
+                    self.assertEqual(self.query('SELECT * FROM nxr_python_sync_submission'), state)
+
+    def test_concurrent_native_import_is_seen_after_upload_state_lock(self):
+        self.java_publish()
+        self.source_publish()
+        importer = self.connect()
+        self.addCleanup(importer.close)
+        importer.begin()
+        self.query('SELECT submission_id FROM submission_upload_state WHERE submission_id=%s FOR UPDATE', (self.sid,), importer)
+        self.native_staged(version='concurrent-v3', connection=importer)
+        entered, finished = threading.Event(), threading.Event()
+        errors=[]
+        class WaitForImport(sync.PythonToJavaSync):
+            def preserve_java_publications(self):
+                entered.set()
+                super().preserve_java_publications()
+        def run():
+            try: WaitForImport(self.args).run()
+            except Exception as exc: errors.append(exc)
+            finally: finished.set()
+        thread=threading.Thread(target=run)
+        thread.start()
+        try:
+            self.assertTrue(entered.wait(10))
+            self.assertFalse(finished.wait(.2))
+            importer.commit()
+            self.assertTrue(finished.wait(10))
+        finally:
+            importer.rollback()
+            thread.join(10)
+        self.assertEqual(errors, [])
+        self.assertEqual(self.scalar('SELECT status_code FROM submission_upload_state WHERE submission_id=%s', (self.sid,)), 'not_started')
+        self.assertEqual(self.scalar("SELECT COUNT(*) FROM submission_media WHERE media_stage_code='staged' AND storage_object_version='concurrent-v3'"), 2)
 
     def test_write_transaction_is_read_committed_and_retains_connection_lock(self):
         self.source_update()

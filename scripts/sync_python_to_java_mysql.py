@@ -658,7 +658,7 @@ class PythonToJavaSync:
             print(f"sync_retired_match_projections={cursor.rowcount}")
 
     def preserve_java_publications(self) -> None:
-        """Freeze established Java publication results for this changed batch.
+        """Freeze Java publication results and pending native media operations.
 
         Java locks upload state before media/certificate/submission writes. Take
         those same row locks before inspecting provenance, so a concurrent
@@ -694,6 +694,43 @@ class PythonToJavaSync:
                         f"Synchronization safety check failed: missing_upload_state={missing_count}; "
                         "existing submissions require upload-state row locks"
                     )
+
+            # Native staged rows belong to Java's current upload operation,
+            # including a one-sided replacement. Snapshot their actual object
+            # version, not just their reusable media ID. This is ownership
+            # evidence, never evidence that these objects are already published.
+            cursor.execute(
+                """
+                CREATE TEMPORARY TABLE tmp_nxr_native_staged (
+                    PRIMARY KEY (id), KEY (submission_id)
+                ) ENGINE=InnoDB AS
+                SELECT m.* FROM tmp_nxr_submission t
+                JOIN grading_submission s ON s.cert_id=t.cert_id
+                JOIN submission_media m ON m.submission_id=s.id AND m.cert_id=s.cert_id
+                WHERE t.sync_required=1 AND m.media_stage_code='staged'
+                  AND m.media_side_code IN ('front','back') AND m.sort_order=1
+                  AND m.is_active=1 AND m.storage_provider_code<>'legacy-python'
+                  AND NULLIF(TRIM(m.storage_provider_code),'') IS NOT NULL
+                  AND NULLIF(TRIM(m.storage_key),'') IS NOT NULL
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TEMPORARY TABLE tmp_nxr_native_upload (
+                    PRIMARY KEY (submission_id)
+                ) ENGINE=InnoDB AS
+                SELECT u.* FROM submission_upload_state u
+                WHERE EXISTS (
+                    SELECT 1 FROM tmp_nxr_native_staged n WHERE n.submission_id=u.submission_id
+                ) AND (
+                    u.status_code IN ('not_started','failed') OR (
+                        u.status_code='uploading' AND u.claim_token IS NOT NULL
+                        AND u.updated_at > CURRENT_TIMESTAMP - INTERVAL 15 MINUTE
+                    )
+                )
+                """
+            )
+            print(f"sync_preserved_native_uploads={cursor.rowcount}")
 
             # Python imports always use legacy-python. A linked, active Java
             # pair is positive provenance; a status flag alone is not proof.
@@ -866,7 +903,9 @@ class PythonToJavaSync:
             FROM tmp_nxr_submission t
             JOIN grading_submission s ON s.cert_id=t.cert_id
             LEFT JOIN tmp_nxr_java_publication j ON j.submission_id=s.id
+            LEFT JOIN tmp_nxr_native_upload n ON n.submission_id=s.id
             WHERE t.sync_required=1 AND COALESCE(j.preserve_upload,0)=0
+              AND n.submission_id IS NULL
             ON DUPLICATE KEY UPDATE
                 started_at=IF(
                     submission_upload_state.status_code='uploading'
@@ -1289,7 +1328,9 @@ class PythonToJavaSync:
                 JOIN grading_submission s ON s.cert_id=t.cert_id
                 LEFT JOIN submission_upload_state u ON u.submission_id=s.id
                 LEFT JOIN tmp_nxr_java_publication j ON j.submission_id=s.id
+                LEFT JOIN tmp_nxr_native_upload n ON n.submission_id=s.id
                 WHERE t.sync_required=1 AND COALESCE(j.preserve_upload,0)=0
+                  AND n.submission_id IS NULL
                   AND (u.submission_id IS NULL OR (
                     NOT (
                            u.status_code <=> t.upload_status
@@ -1346,6 +1387,45 @@ class PythonToJavaSync:
                     p.id IS NULL OR p.cert_id<>t.cert_id
                     OR p.verification_slug<>t.verification_slug
                     OR NOT (p.qr_url <=> t.qr_url)
+                )
+            """,
+            "preserved_native_upload": """
+                SELECT COUNT(*) AS count FROM tmp_nxr_native_upload n
+                LEFT JOIN submission_upload_state u ON u.submission_id=n.submission_id
+                WHERE u.submission_id IS NULL OR NOT (
+                       u.status_code <=> n.status_code
+                   AND u.claim_token <=> n.claim_token
+                   AND u.claimed_front_media_id <=> n.claimed_front_media_id
+                   AND u.claimed_back_media_id <=> n.claimed_back_media_id
+                   AND u.started_at <=> n.started_at
+                   AND u.completed_at <=> n.completed_at
+                   AND u.error_message <=> n.error_message
+                   AND u.response_payload_json <=> n.response_payload_json
+                   AND u.triggered_by_user_id <=> n.triggered_by_user_id
+                   AND u.created_at <=> n.created_at
+                   AND u.updated_at <=> n.updated_at
+                )
+            """,
+            "preserved_native_staged": """
+                SELECT COUNT(*) AS count FROM tmp_nxr_native_staged n
+                LEFT JOIN submission_media m ON m.id=n.id
+                WHERE m.id IS NULL OR NOT (
+                       m.submission_id <=> n.submission_id
+                   AND m.cert_id <=> n.cert_id
+                   AND m.media_side_code <=> n.media_side_code
+                   AND m.media_stage_code <=> n.media_stage_code
+                   AND m.storage_provider_code <=> n.storage_provider_code
+                   AND m.storage_bucket <=> n.storage_bucket
+                   AND m.storage_key <=> n.storage_key
+                   AND m.storage_object_version <=> n.storage_object_version
+                   AND m.public_url <=> n.public_url
+                   AND m.checksum_sha256 <=> n.checksum_sha256
+                   AND m.original_filename <=> n.original_filename
+                   AND m.mime_type <=> n.mime_type
+                   AND m.sort_order <=> n.sort_order
+                   AND m.is_active <=> n.is_active
+                   AND m.created_at <=> n.created_at
+                   AND m.updated_at <=> n.updated_at
                 )
             """,
             "preserved_java_publication": """

@@ -7,7 +7,6 @@ import com.ruoyi.common.core.domain.AjaxResult;
 import com.ruoyi.common.enums.BusinessType;
 import com.ruoyi.common.utils.SecurityUtils;
 import java.util.List;
-import java.util.function.LongPredicate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -54,13 +53,11 @@ public class AdminMediaController {
         @RequestParam(defaultValue = "1") int page,
         @RequestParam(defaultValue = "12") int pageSize
     ) {
-        return AjaxResult.success(
-            adminMediaService.loadQueue(
-                query, certId, cardName, cardCategory, productType, brand, language, finalGrade,
-                uploadStatus, imageStatus, showClientPushed, page, pageSize,
-                accessScopeService.cardSubmissionAccess(SecurityUtils.getUserId())
-            )
-        );
+        AccessScope scope=accessScopeService.cardScopeForUser(SecurityUtils.getUserId());
+        var result=adminMediaService.loadQueuePage(query,certId,cardName,cardCategory,productType,brand,language,finalGrade,
+            uploadStatus,imageStatus,showClientPushed,page,pageSize,scope);
+        return AjaxResult.success(new AdminMediaService.MediaQueueResponse(result.items(),adminMediaService.loadQueueSummary(scope),
+            result.page(),result.pageSize(),result.total()));
     }
 
     @PreAuthorize("@ss.hasPermi('nxr:media:list')")
@@ -82,11 +79,9 @@ public class AdminMediaController {
     ) {
         long userId = SecurityUtils.getUserId();
         AccessScope scope = accessScopeService.cardScopeForUser(userId);
-        LongPredicate access = scope.unrestricted()
-            ? ignored -> true : accessScopeService.cardSubmissionAccess(userId);
         return AjaxResult.success(adminMediaService.loadQueuePage(
             query, certId, cardName, cardCategory, productType, brand, language, finalGrade,
-            uploadStatus, imageStatus, showClientPushed, page, pageSize, scope.unrestricted(), access
+            uploadStatus, imageStatus, showClientPushed, page, pageSize, scope
         ));
     }
 
@@ -94,7 +89,7 @@ public class AdminMediaController {
     @GetMapping("/queue/summary")
     public AjaxResult mediaQueueSummary() {
         return AjaxResult.success(adminMediaService.loadQueueSummary(
-            accessScopeService.cardSubmissionAccess(SecurityUtils.getUserId())
+            accessScopeService.cardScopeForUser(SecurityUtils.getUserId())
         ));
     }
 
@@ -122,9 +117,9 @@ public class AdminMediaController {
     @PreAuthorize("@ss.hasPermi('nxr:media:publish')")
     @Log(title = "媒体发布", businessType = BusinessType.UPDATE)
     @PostMapping("/submissions/{submissionId}/publish")
-    public AjaxResult publishSubmission(@PathVariable long submissionId) {
+    public AjaxResult publishSubmission(@PathVariable long submissionId, @RequestParam(required = false) String expectedVersion) {
         accessScopeService.requireAccessibleCardSubmission(submissionId);
-        return AjaxResult.success(adminMediaService.publishSubmission(submissionId, SecurityUtils.getUserId()));
+        return AjaxResult.success(adminMediaService.publishSubmission(submissionId, SecurityUtils.getUserId(), expectedVersion));
     }
 
     @PreAuthorize("@ss.hasPermi('nxr:media:publish')")
@@ -143,7 +138,8 @@ public class AdminMediaController {
         return AjaxResult.success(
             adminMediaService.publishSubmissions(
                 request == null ? null : request.submissionIds(),
-                SecurityUtils.getUserId()
+                SecurityUtils.getUserId(),
+                request == null ? null : request.expectedVersions()
             )
         );
     }
