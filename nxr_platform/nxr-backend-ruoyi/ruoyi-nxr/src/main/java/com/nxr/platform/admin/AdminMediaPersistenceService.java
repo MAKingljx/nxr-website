@@ -2,6 +2,7 @@ package com.nxr.platform.admin;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.nxr.platform.admin.storage.MediaStorageProvider;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -153,6 +154,19 @@ public class AdminMediaPersistenceService {
             .query(Integer.class).single() > 0;
     }
 
+    @Transactional(readOnly = true)
+    public boolean isExistingMediaReferenced(ExistingMedia media) {
+        return jdbcClient.sql("""
+                SELECT COUNT(*) FROM submission_media
+                WHERE storage_provider_code=:provider
+                  AND COALESCE(storage_bucket, '')=:bucket AND storage_key=:storageKey
+                """)
+            .param("provider", media.storageProviderCode())
+            .param("bucket", media.storageBucket() == null ? "" : media.storageBucket())
+            .param("storageKey", media.storageKey())
+            .query(Integer.class).single() > 0;
+    }
+
     @Transactional
     public MediaReplaceResult replaceMediaRecord(
         long submissionId,
@@ -175,7 +189,7 @@ public class AdminMediaPersistenceService {
                 SET status_code='not_started', claim_token=NULL,
                     claimed_front_media_id=NULL, claimed_back_media_id=NULL,
                     started_at=NULL, completed_at=NULL, error_message=NULL,
-                    response_payload_json=NULL, updated_at=CURRENT_TIMESTAMP
+                    updated_at=CURRENT_TIMESTAMP
                 WHERE submission_id=:submissionId
                 """
             )
@@ -186,47 +200,76 @@ public class AdminMediaPersistenceService {
 
     @Transactional
     public MediaPublishClaim claimSubmissionForPublish(long submissionId, String claimToken, Long triggeredByUserId) {
-        SubmissionForPublish submission = loadSubmissionForPublish(submissionId);
+        MediaPublishStart start = startSubmissionForPublish(submissionId, claimToken, triggeredByUserId, null);
+        if (start.claim() == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "This submission is already published.");
+        }
+        return start.claim();
+    }
+
+    @Transactional
+    public MediaPublishStart startSubmissionForPublish(
+        long submissionId, String claimToken, Long triggeredByUserId, String expectedVersion
+    ) {
+        if (expectedVersion != null && !expectedVersion.matches("[a-f0-9]{64}")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Reload the images before publishing.");
+        }
         ensureUploadState(submissionId);
         UploadState currentState = loadUploadStateForUpdate(submissionId);
+        // Always use current reads after obtaining the same lock as imports.
+        // An unlocked preflight can mistake an older publication for this upload.
+        SubmissionForPublish submission = loadSubmissionForPublishForUpdate(submissionId);
+        Optional<CompletedPublication> provenCompletion = completedProof(currentState);
+        if (expectedVersion != null && provenCompletion.filter(p -> expectedVersion.equals(p.stagedVersion())).isPresent()) {
+            return new MediaPublishStart(null, provenCompletion.get());
+        }
+        ExistingMedia stagedFront = findExistingMediaInternal(submissionId, "staged", "front", true).orElse(null);
+        ExistingMedia stagedBack = findExistingMediaInternal(submissionId, "staged", "back", true).orElse(null);
+        String stagedVersion = MediaStageVersion.of(stagedFront, stagedBack);
+        if (expectedVersion != null && !expectedVersion.equals(stagedVersion)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "The images changed. Reload before publishing.");
+        }
         if ("uploading".equals(currentState.statusCode())
             && currentState.startedAt() != null
             && currentState.startedAt().isAfter(LocalDateTime.now().minusMinutes(15))) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This submission is already being published.");
         }
-
-        ExistingMedia stagedFront = findExistingMediaInternal(submissionId, "staged", "front")
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Front staged media is required."));
-        ExistingMedia stagedBack = findExistingMediaInternal(submissionId, "staged", "back")
-            .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST, "Back staged media is required."));
+        if (stagedFront == null && stagedBack == null && "uploaded".equals(currentState.statusCode())) {
+            CompletedPublication completed = findCompletedPublicationInternal(submissionId).orElse(null);
+            if (completed != null) {
+                return new MediaPublishStart(null, provenCompletion.orElse(completed));
+            }
+        }
+        if (stagedFront == null || stagedBack == null) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                stagedFront == null ? "Front staged media is required." : "Back staged media is required.");
+        }
         LocalDateTime startedAt = LocalDateTime.now();
-        jdbcClient.sql(
-                """
+        jdbcClient.sql("""
                 UPDATE submission_upload_state
                 SET status_code='uploading', claim_token=:claimToken,
                     claimed_front_media_id=:frontMediaId, claimed_back_media_id=:backMediaId,
                     started_at=:startedAt, completed_at=NULL, error_message=NULL,
-                    response_payload_json=NULL, triggered_by_user_id=:triggeredByUserId,
-                    updated_at=CURRENT_TIMESTAMP
+                    triggered_by_user_id=:triggeredByUserId, updated_at=CURRENT_TIMESTAMP
                 WHERE submission_id=:submissionId
-                """
-            )
-            .params(Map.of(
-                "submissionId", submissionId,
-                "claimToken", claimToken,
-                "frontMediaId", stagedFront.id(),
-                "backMediaId", stagedBack.id(),
-                "startedAt", startedAt
-            ))
+                """)
+            .params(Map.of("submissionId", submissionId, "claimToken", claimToken,
+                "frontMediaId", stagedFront.id(), "backMediaId", stagedBack.id(), "startedAt", startedAt))
             .param("triggeredByUserId", triggeredByUserId)
             .update();
-        return new MediaPublishClaim(claimToken, submission, stagedFront, stagedBack, startedAt);
+        return new MediaPublishStart(new MediaPublishClaim(claimToken, submission, stagedFront, stagedBack, startedAt), null);
     }
 
-    @Transactional(readOnly = true)
-    public Optional<CompletedPublication> findCompletedPublication(long submissionId) {
-        return jdbcClient.sql(
-                """
+    @Transactional
+    public Optional<CompletedPublication> resolvePublicationAttempt(long submissionId, String stagedVersion) {
+        // Wait for the original transaction to commit or roll back before any
+        // compensation. A dropped COMMIT reply is not evidence of rollback.
+        return completedProof(loadUploadStateForUpdate(submissionId))
+            .filter(completed -> stagedVersion.equals(completed.stagedVersion()));
+    }
+
+    private Optional<CompletedPublication> findCompletedPublicationInternal(long submissionId) {
+        return jdbcClient.sql("""
                 SELECT s.id,s.cert_id,u.status_code,u.completed_at,
                        u.claimed_front_media_id,u.claimed_back_media_id,
                        front.public_url AS front_url,back.public_url AS back_url
@@ -236,20 +279,66 @@ public class AdminMediaPersistenceService {
                 JOIN submission_media front ON front.id=p.published_front_media_id AND front.is_active=1
                 JOIN submission_media back ON back.id=p.published_back_media_id AND back.is_active=1
                 WHERE s.id=:submissionId AND u.status_code='uploaded'
-                """
-            )
+                """)
             .param("submissionId", submissionId)
-            .query((rs, rowNum) -> new CompletedPublication(
-                rs.getLong("id"),
-                rs.getString("cert_id"),
-                rs.getString("status_code"),
-                rs.getObject("completed_at", LocalDateTime.class),
-                rs.getObject("claimed_front_media_id", Long.class),
-                rs.getObject("claimed_back_media_id", Long.class),
-                rs.getString("front_url"),
-                rs.getString("back_url")
-            ))
+            .query((rs, rowNum) -> new CompletedPublication(rs.getLong("id"), rs.getString("cert_id"),
+                rs.getString("status_code"), rs.getObject("completed_at", LocalDateTime.class),
+                rs.getObject("claimed_front_media_id", Long.class), rs.getObject("claimed_back_media_id", Long.class),
+                rs.getString("front_url"), rs.getString("back_url"), null))
             .optional();
+    }
+
+    private Optional<CompletedPublication> completedProof(UploadState state) {
+        if (state.responsePayloadJson() == null) {
+            return Optional.empty();
+        }
+        try {
+            JsonNode payload = objectMapper.readTree(state.responsePayloadJson());
+            if (payload == null || !payload.isObject()) {
+                return Optional.empty();
+            }
+            String version = payload.path("stagedVersion").asText("");
+            if (!version.matches("[a-f0-9]{64}") || payload.path("submissionId").asLong(-1) != state.submissionId()
+                || !"published".equals(payload.path("statusCode").asText())
+                || !payload.path("stagedFront").isObject() || !payload.path("stagedBack").isObject()) {
+                return Optional.empty();
+            }
+            String sourceVersion = MediaStageVersion.of(
+                objectMapper.treeToValue(payload.path("stagedFront"), MediaStageVersion.Source.class),
+                objectMapper.treeToValue(payload.path("stagedBack"), MediaStageVersion.Source.class));
+            if (!version.equals(sourceVersion)) {
+                return Optional.empty();
+            }
+            CompletedPublication completed = new CompletedPublication(state.submissionId(), payload.path("certId").asText(),
+                "uploaded", LocalDateTime.parse(payload.path("publishedAt").asText()),
+                null, null, payload.path("publishedFrontUrl").asText(), payload.path("publishedBackUrl").asText(), version);
+            int stillPublished = jdbcClient.sql("""
+                    SELECT COUNT(*) FROM published_certificate p
+                    JOIN grading_submission s ON s.id=p.submission_id
+                    JOIN submission_media front ON front.id=p.published_front_media_id AND front.is_active=1
+                    JOIN submission_media back ON back.id=p.published_back_media_id AND back.is_active=1
+                    WHERE p.submission_id=:submissionId AND s.cert_id=:certId
+                      AND front.public_url=:frontUrl AND back.public_url=:backUrl
+                    """)
+                .params(Map.of("submissionId", state.submissionId(), "certId", completed.certId(),
+                    "frontUrl", completed.publishedFrontUrl(), "backUrl", completed.publishedBackUrl()))
+                .query(Integer.class).single();
+            return stillPublished == 1 ? Optional.of(completed) : Optional.empty();
+        } catch (JsonProcessingException | IllegalArgumentException | java.time.DateTimeException exc) {
+            // Legacy or damaged proof must never authorize a new version's retry.
+            return Optional.empty();
+        }
+    }
+
+    private SubmissionForPublish loadSubmissionForPublishForUpdate(long submissionId) {
+        return jdbcClient.sql("""
+                SELECT id, cert_id, status_code FROM grading_submission
+                WHERE id=:submissionId AND status_code IN ('approved', 'published') FOR UPDATE
+                """)
+            .param("submissionId", submissionId)
+            .query((rs, rowNum) -> new SubmissionForPublish(rs.getLong("id"), rs.getString("cert_id"), rs.getString("status_code")))
+            .optional()
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Approved submission not found."));
     }
 
     @Transactional
@@ -285,7 +374,7 @@ public class AdminMediaPersistenceService {
                 SET status_code='client_pushed', claim_token=NULL,
                     claimed_front_media_id=NULL, claimed_back_media_id=NULL,
                     completed_at=CURRENT_TIMESTAMP, error_message=NULL,
-                    response_payload_json=NULL, triggered_by_user_id=:triggeredByUserId,
+                    triggered_by_user_id=:triggeredByUserId,
                     updated_at=CURRENT_TIMESTAMP
                 WHERE submission_id=:submissionId
                 """
@@ -310,11 +399,11 @@ public class AdminMediaPersistenceService {
         if (!"uploading".equals(uploadState.statusCode()) || !claimToken.equals(uploadState.claimToken())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "The media publish claim is no longer valid.");
         }
-        ExistingMedia currentStagedFront = findExistingMediaInternal(submissionId, "staged", "front")
+        ExistingMedia currentStagedFront = findExistingMediaInternal(submissionId, "staged", "front", true)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "The staged front image changed during publication."));
-        ExistingMedia currentStagedBack = findExistingMediaInternal(submissionId, "staged", "back")
+        ExistingMedia currentStagedBack = findExistingMediaInternal(submissionId, "staged", "back", true)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT, "The staged back image changed during publication."));
-        if (currentStagedFront.id() != stagedFront.id() || currentStagedBack.id() != stagedBack.id()
+        if (!MediaStageVersion.of(currentStagedFront, currentStagedBack).equals(MediaStageVersion.of(stagedFront, stagedBack))
             || uploadState.claimedFrontMediaId() == null || uploadState.claimedFrontMediaId() != stagedFront.id()
             || uploadState.claimedBackMediaId() == null || uploadState.claimedBackMediaId() != stagedBack.id()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "The staged images changed during publication.");
@@ -416,6 +505,9 @@ public class AdminMediaPersistenceService {
         responsePayload.put("publishedAt", publishedAt.toString());
         responsePayload.put("publishedFrontUrl", currentPublishedFront.publicUrl());
         responsePayload.put("publishedBackUrl", currentPublishedBack.publicUrl());
+        responsePayload.put("stagedVersion", MediaStageVersion.of(stagedFront, stagedBack));
+        responsePayload.put("stagedFront", MediaStageVersion.source(stagedFront));
+        responsePayload.put("stagedBack", MediaStageVersion.source(stagedBack));
         jdbcClient.sql(
                 """
                 UPDATE submission_upload_state
@@ -434,6 +526,15 @@ public class AdminMediaPersistenceService {
             ))
             .update();
 
+        // Retire only the validated pair atomically with the public result. Row
+        // IDs are reused by imports, so an after-commit ID-only delete is unsafe.
+        jdbcClient.sql("""
+                DELETE FROM submission_media WHERE submission_id=:submissionId
+                  AND media_stage_code='staged' AND (id=:frontId OR id=:backId)
+                """)
+            .params(Map.of("submissionId", submissionId, "frontId", stagedFront.id(), "backId", stagedBack.id()))
+            .update();
+
         return new MediaPublishTransactionResult(
             publishedAt,
             existingPublishedFront,
@@ -443,25 +544,11 @@ public class AdminMediaPersistenceService {
         );
     }
 
-    @Transactional
-    public void deleteClaimedStagedRecords(long submissionId, Long frontMediaId, Long backMediaId) {
-        if (frontMediaId == null && backMediaId == null) {
-            return;
-        }
-        jdbcClient.sql(
-                """
-                DELETE FROM submission_media
-                WHERE submission_id=:submissionId AND media_stage_code='staged'
-                  AND (id=:frontMediaId OR id=:backMediaId)
-                """
-            )
-            .param("submissionId", submissionId)
-            .param("frontMediaId", frontMediaId == null ? -1L : frontMediaId)
-            .param("backMediaId", backMediaId == null ? -1L : backMediaId)
-            .update();
+    private Optional<ExistingMedia> findExistingMediaInternal(long submissionId, String stage, String sideCode) {
+        return findExistingMediaInternal(submissionId, stage, sideCode, false);
     }
 
-    private Optional<ExistingMedia> findExistingMediaInternal(long submissionId, String stage, String sideCode) {
+    private Optional<ExistingMedia> findExistingMediaInternal(long submissionId, String stage, String sideCode, boolean forUpdate) {
         return jdbcClient.sql(
                 """
                 SELECT
@@ -484,8 +571,7 @@ public class AdminMediaPersistenceService {
                   AND media_stage_code = :stage
                   AND media_side_code = :sideCode
                   AND sort_order = 1
-                LIMIT 1
-                """
+                """ + (forUpdate ? " AND is_active=1" : "") + " LIMIT 1" + (forUpdate ? " FOR UPDATE" : "")
             )
             .params(Map.of(
                 "submissionId", submissionId,
@@ -791,6 +877,9 @@ public class AdminMediaPersistenceService {
     ) {
     }
 
+    public record MediaPublishStart(MediaPublishClaim claim, CompletedPublication completed) {
+    }
+
     public record CompletedPublication(
         long submissionId,
         String certId,
@@ -799,7 +888,8 @@ public class AdminMediaPersistenceService {
         Long claimedFrontMediaId,
         Long claimedBackMediaId,
         String publishedFrontUrl,
-        String publishedBackUrl
+        String publishedBackUrl,
+        String stagedVersion
     ) {
     }
 

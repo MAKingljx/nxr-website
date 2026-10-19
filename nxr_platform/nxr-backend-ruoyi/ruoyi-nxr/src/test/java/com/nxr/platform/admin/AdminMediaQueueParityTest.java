@@ -275,6 +275,7 @@ class AdminMediaQueueParityTest {
                 storage_bucket VARCHAR(128),
                 storage_key VARCHAR(255),
                 storage_object_version VARCHAR(128),
+                checksum_sha256 VARCHAR(128),
                 public_url VARCHAR(255),
                 sort_order INT NOT NULL DEFAULT 1,
                 is_active TINYINT NOT NULL DEFAULT 1

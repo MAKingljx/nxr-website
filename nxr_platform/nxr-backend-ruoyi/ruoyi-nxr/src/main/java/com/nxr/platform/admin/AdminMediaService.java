@@ -3,6 +3,7 @@ package com.nxr.platform.admin;
 import com.nxr.platform.admin.storage.MediaStorageProvider;
 import com.nxr.platform.admin.storage.MediaStorageRegistry;
 import com.nxr.platform.shared.ProductTypePolicy;
+import com.nxr.platform.commerce.OrderAccessScopeService.AccessScope;
 import java.io.IOException;
 import java.io.DataInputStream;
 import java.io.InputStream;
@@ -35,6 +36,7 @@ import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -170,7 +172,7 @@ public class AdminMediaService {
     }
 
     /** Returns the page independently of the expensive, exact filesystem-backed global summary. */
-    @Transactional(readOnly = true)
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public MediaQueuePage loadQueuePage(
         String query, String certId, String cardName, String cardCategory, String productType,
         String brand, String language, String finalGrade, String uploadStatus, String imageStatus,
@@ -183,47 +185,43 @@ public class AdminMediaService {
             normalizeFilter(language), normalizeFilter(finalGrade),
             normalizeUploadStatus(uploadStatus), normalizeImageStatus(imageStatus), showClientPushed
         );
-        // The common unfiltered/certificate lookup can be counted and paged in SQL.
-        // Media-dependent filters and scoped reads retain the original exact scan.
-        if (!unrestricted || filters.query() != null || filters.cardName() != null
-            || filters.cardCategory() != null || filters.productType() != null
-            || filters.brand() != null || filters.language() != null
-            || filters.finalGrade() != null || filters.uploadStatus() != null
-            || filters.imageStatus() != null
-            || (filters.certId() != null && !filters.certId().matches("[A-Za-z0-9_-]+"))) {
-            MediaQueueResponse response = loadQueue(
-                query, certId, cardName, cardCategory, productType, brand, language, finalGrade,
-                uploadStatus, imageStatus, showClientPushed, page, pageSize, submissionAccess
-            );
-            return new MediaQueuePage(response.items(), response.page(), response.pageSize(), response.total());
+        if (!unrestricted) {
+            MediaQueueResponse response=loadQueue(query,certId,cardName,cardCategory,productType,brand,language,finalGrade,
+                uploadStatus,imageStatus,showClientPushed,page,pageSize,submissionAccess);
+            return new MediaQueuePage(response.items(),response.page(),response.pageSize(),response.total());
         }
+        return queuePage(filters,page,pageSize,new AccessScope(true,List.of(),List.of()));
+    }
 
-        int normalizedPageSize = Math.min(Math.max(pageSize, 1), 200);
-        String where = " WHERE s.status_code IN ('approved', 'published')"
-            + (showClientPushed ? "" : " AND COALESCE(us.status_code, 'not_started') <> 'client_pushed'")
-            + (filters.certId() == null ? "" : " AND UPPER(s.cert_id) LIKE :certPattern ESCAPE '!'");
-        String from = " FROM grading_submission s LEFT JOIN submission_upload_state us ON us.submission_id=s.id";
-        String certPattern = filters.certId() == null ? null
-            : "%" + filters.certId().toUpperCase(Locale.ROOT).replace("!", "!!")
-                .replace("%", "!%").replace("_", "!_") + "%";
-        var countQuery = jdbcClient.sql("SELECT COUNT(*)" + from + where);
-        if (certPattern != null) countQuery = countQuery.param("certPattern", certPattern);
-        int total = countQuery.query(Integer.class).single();
-        int totalPages = Math.max(1, (int) Math.ceil((double) total / normalizedPageSize));
-        int normalizedPage = Math.min(Math.max(page, 1), totalPages);
-        long offset = (long) (normalizedPage - 1) * normalizedPageSize;
-        var idsQuery = jdbcClient.sql("SELECT s.id" + from + where
-            + " ORDER BY COALESCE(s.approved_at, s.published_at, s.updated_at) DESC, s.id DESC"
-            + " LIMIT :limit OFFSET :offset")
-            .param("limit", normalizedPageSize).param("offset", offset);
-        if (certPattern != null) idsQuery = idsQuery.param("certPattern", certPattern);
-        List<Long> ids = idsQuery.query(Long.class).list();
-        if (ids.isEmpty()) return new MediaQueuePage(List.of(), normalizedPage, normalizedPageSize, total);
+    /**
+     * SQL-scoped reads use a separate transaction for private temporary evidence.
+     * Connector/J rejects temp-table statements on a readOnly connection; this
+     * boundary also prevents our temporary DDL from disturbing a caller's work.
+     */
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public MediaQueuePage loadQueuePage(
+        String query,String certId,String cardName,String cardCategory,String productType,String brand,String language,
+        String finalGrade,String uploadStatus,String imageStatus,boolean showClientPushed,int page,int pageSize,AccessScope scope
+    ) {
+        QueueFilters filters=new QueueFilters(normalizeFilter(query),normalizeFilter(certId),normalizeFilter(cardName),
+            normalizeCode(cardCategory),normalizeCode(productType),normalizeFilter(brand),normalizeFilter(language),
+            normalizeFilter(finalGrade),normalizeUploadStatus(uploadStatus),normalizeImageStatus(imageStatus),showClientPushed);
+        return queuePage(filters,page,pageSize,scope);
+    }
 
-        List<MediaQueueItem> items = new ArrayList<>(ids.size());
-        String idList = ids.stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
-        scanQueueItems(items::add, " AND s.id IN (" + idList + ")");
-        return new MediaQueuePage(items, normalizedPage, normalizedPageSize, total);
+    private MediaQueuePage queuePage(QueueFilters filters,int page,int size,AccessScope scope) {
+        var result=new AdminMediaQueueReader(jdbcTemplate,mediaStorageRegistry,this::isReferenceAvailable).page(filters,page,size,scope);
+        List<MediaQueueItem> items=new ArrayList<>(result.ids().size());
+        if(!result.ids().isEmpty()) {
+            String ids=result.ids().stream().map(String::valueOf).collect(java.util.stream.Collectors.joining(","));
+            scanQueueItems(items::add," AND s.id IN ("+ids+")");
+        }
+        return new MediaQueuePage(items,result.page(),result.pageSize(),result.total());
+    }
+
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
+    public MediaQueueSummary loadQueueSummary(AccessScope scope) {
+        return new AdminMediaQueueReader(jdbcTemplate,mediaStorageRegistry,this::isReferenceAvailable).summary(scope);
     }
 
     @Transactional(readOnly = true)
@@ -264,8 +262,10 @@ public class AdminMediaService {
                     us.error_message AS upload_error,
                     g.final_grade_value,
                     g.final_grade_label,
+                    sf.id AS sf_id, sf.checksum_sha256 AS sf_checksum,
                     sf.storage_provider_code AS sf_provider, sf.storage_bucket AS sf_bucket,
                     sf.storage_key AS sf_key, sf.storage_object_version AS sf_version, sf.public_url AS sf_url,
+                    sb.id AS sb_id, sb.checksum_sha256 AS sb_checksum,
                     sb.storage_provider_code AS sb_provider, sb.storage_bucket AS sb_bucket,
                     sb.storage_key AS sb_key, sb.storage_object_version AS sb_version, sb.public_url AS sb_url,
                     pf.storage_provider_code AS pf_provider, pf.storage_bucket AS pf_bucket,
@@ -337,8 +337,14 @@ public class AdminMediaService {
                     publishedBack.missing(),
                     stagedFront.available() && stagedBack.available()
                         && !"uploading".equals(uploadState)
-                        && !"client_pushed".equals(uploadState)
+                        && !"client_pushed".equals(uploadState),
+                    MediaStageVersion.of(stageVersionSource(rs,"sf"),stageVersionSource(rs,"sb"))
                 );
+    }
+
+    private MediaStageVersion.Source stageVersionSource(ResultSet rs,String prefix)throws SQLException {
+        return new MediaStageVersion.Source(rs.getObject(prefix+"_id",Long.class),rs.getString(prefix+"_provider"),
+            rs.getString(prefix+"_bucket"),rs.getString(prefix+"_key"),rs.getString(prefix+"_version"),rs.getString(prefix+"_checksum"));
     }
 
     private MediaReference inspectReference(ResultSet rs, String prefix, String stage) throws SQLException {
@@ -662,18 +668,21 @@ public class AdminMediaService {
     }
 
     public MediaPublishResponse publishSubmission(long submissionId, Long triggeredByUserId) {
-        Optional<AdminMediaPersistenceService.CompletedPublication> completed =
-            adminMediaPersistenceService.findCompletedPublication(submissionId);
-        if (completed.isPresent()) {
-            return completedResponse(completed.get());
-        }
+        return publishSubmission(submissionId, triggeredByUserId, null);
+    }
 
+    public MediaPublishResponse publishSubmission(long submissionId, Long triggeredByUserId, String expectedVersion) {
         String claimToken = UUID.randomUUID().toString();
-        AdminMediaPersistenceService.MediaPublishClaim claim =
-            adminMediaPersistenceService.claimSubmissionForPublish(submissionId, claimToken, triggeredByUserId);
+        AdminMediaPersistenceService.MediaPublishStart start = adminMediaPersistenceService.startSubmissionForPublish(
+            submissionId, claimToken, triggeredByUserId, expectedVersion);
+        if (start.completed() != null) {
+            return completedResponse(start.completed());
+        }
+        AdminMediaPersistenceService.MediaPublishClaim claim = start.claim();
         AdminMediaPersistenceService.SubmissionForPublish submission = claim.submission();
         AdminMediaPersistenceService.ExistingMedia stagedFront = claim.stagedFront();
         AdminMediaPersistenceService.ExistingMedia stagedBack = claim.stagedBack();
+        String stagedVersion = MediaStageVersion.of(stagedFront, stagedBack);
 
         MediaStorageProvider.StoredMediaObject publishedFront = null;
         MediaStorageProvider.StoredMediaObject publishedBack = null;
@@ -682,41 +691,69 @@ public class AdminMediaService {
             publishedFront = copyManagedMedia(stagedFront, submission.certId(), "front", "published");
             publishedBack = copyManagedMedia(stagedBack, submission.certId(), "back", "published");
             publishResult = adminMediaPersistenceService.publishSubmissionRecords(
-                submissionId,
-                submission.certId(),
-                claimToken,
-                stagedFront,
-                stagedBack,
-                publishedFront,
-                publishedBack
-            );
+                submissionId, submission.certId(), claimToken, stagedFront, stagedBack, publishedFront, publishedBack);
         } catch (RuntimeException exc) {
-            deleteStoredMedia("published", publishedFront);
-            deleteStoredMedia("published", publishedBack);
-            adminMediaPersistenceService.markPublishFailed(
-                submissionId,
-                claimToken,
-                exc instanceof ResponseStatusException response && response.getReason() != null
-                    ? response.getReason()
-                    : exc.getMessage()
-            );
+            boolean resolved = false;
+            Optional<AdminMediaPersistenceService.CompletedPublication> completed = Optional.empty();
+            try {
+                completed = adminMediaPersistenceService.resolvePublicationAttempt(submissionId, stagedVersion);
+                resolved = true;
+            } catch (RuntimeException verificationFailure) {
+                log.warn("Retaining media after an uncertain publish transaction for submission {}", submissionId, verificationFailure);
+            }
+            if (resolved) {
+                deleteUnreferencedPublishedMedia(publishedFront);
+                deleteUnreferencedPublishedMedia(publishedBack);
+                if (completed.isPresent()) {
+                    deleteUnreferencedExistingMedia(stagedFront);
+                    deleteUnreferencedExistingMedia(stagedBack);
+                    return completedResponse(completed.get());
+                }
+                try {
+                    adminMediaPersistenceService.markPublishFailed(submissionId, claimToken,
+                        exc instanceof ResponseStatusException response && response.getReason() != null
+                            ? response.getReason() : exc.getMessage());
+                } catch (RuntimeException failureStateError) {
+                    log.warn("Unable to record media publish failure for submission {}", submissionId, failureStateError);
+                }
+            }
             throw exc;
         }
 
-        deleteStoredMediaIfReplaced(publishResult.replacedFrontMedia(), publishedFront.storageKey());
-        deleteStoredMediaIfReplaced(publishResult.replacedBackMedia(), publishedBack.storageKey());
-        adminMediaPersistenceService.deleteClaimedStagedRecords(submissionId, stagedFront.id(), stagedBack.id());
-        deleteExistingMedia(stagedFront);
-        deleteExistingMedia(stagedBack);
+        // Cleanup cannot turn a committed publication into an apparent failure.
+        // Fresh reference checks also protect concurrent imports reusing a row.
+        deleteUnreferencedExistingMedia(publishResult.replacedFrontMedia());
+        deleteUnreferencedExistingMedia(publishResult.replacedBackMedia());
+        deleteUnreferencedExistingMedia(stagedFront);
+        deleteUnreferencedExistingMedia(stagedBack);
+        return new MediaPublishResponse(submissionId, submission.certId(), "published", publishResult.publishedAt(),
+            publishedFront.publicUrl(), publishedBack.publicUrl(), stagedVersion);
+    }
 
-        return new MediaPublishResponse(
-            submissionId,
-            submission.certId(),
-            "published",
-            publishResult.publishedAt(),
-            publishedFront.publicUrl(),
-            publishedBack.publicUrl()
-        );
+    private void deleteUnreferencedPublishedMedia(MediaStorageProvider.StoredMediaObject media) {
+        if (media == null) {
+            return;
+        }
+        try {
+            if (!adminMediaPersistenceService.isStoredMediaReferenced(media)) {
+                deleteStoredMedia("published", media);
+            }
+        } catch (RuntimeException cleanupFailure) {
+            log.warn("Retaining a published media object after a failed reference check or cleanup", cleanupFailure);
+        }
+    }
+
+    private void deleteUnreferencedExistingMedia(AdminMediaPersistenceService.ExistingMedia media) {
+        if (media == null) {
+            return;
+        }
+        try {
+            if (!adminMediaPersistenceService.isExistingMediaReferenced(media)) {
+                deleteExistingMedia(media);
+            }
+        } catch (RuntimeException cleanupFailure) {
+            log.warn("Publication completed; obsolete media cleanup can be retried", cleanupFailure);
+        }
     }
 
     public AdminMediaPersistenceService.UploadState markClientPushed(long submissionId, Long triggeredByUserId) {
@@ -728,6 +765,12 @@ public class AdminMediaService {
     }
 
     public MediaBatchPublishResponse publishSubmissions(List<Long> submissionIds, Long triggeredByUserId) {
+        return publishSubmissions(submissionIds, triggeredByUserId, null);
+    }
+
+    public MediaBatchPublishResponse publishSubmissions(
+        List<Long> submissionIds, Long triggeredByUserId, Map<Long, String> expectedVersions
+    ) {
         LinkedHashSet<Long> uniqueIds = new LinkedHashSet<>();
         if (submissionIds != null) {
             for (Long submissionId : submissionIds) {
@@ -751,9 +794,9 @@ public class AdminMediaService {
         for (Long submissionId : uniqueIds) {
             try {
                 published.add(
-                    triggeredByUserId == null
-                        ? publishSubmission(submissionId)
-                        : publishSubmission(submissionId, triggeredByUserId)
+                    expectedVersions != null
+                        ? publishSubmission(submissionId, triggeredByUserId, requiredExpectedVersion(expectedVersions, submissionId))
+                        : triggeredByUserId == null ? publishSubmission(submissionId) : publishSubmission(submissionId, triggeredByUserId)
                 );
             } catch (ResponseStatusException exc) {
                 failures.add(new MediaBatchPublishFailure(
@@ -773,6 +816,14 @@ public class AdminMediaService {
             published,
             failures
         );
+    }
+
+    private String requiredExpectedVersion(Map<Long, String> expectedVersions, long submissionId) {
+        String version = expectedVersions.get(submissionId);
+        if (version == null || version.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Reload the images before publishing.");
+        }
+        return version;
     }
 
     public ResolvedMediaAsset resolveMediaAsset(String stage, String filename) {
@@ -1207,29 +1258,10 @@ public class AdminMediaService {
     }
 
     private MediaPublishResponse completedResponse(AdminMediaPersistenceService.CompletedPublication completed) {
-        AdminMediaPersistenceService.ExistingMedia stagedFront = adminMediaPersistenceService
-            .findExistingMedia(completed.submissionId(), "staged", "front")
-            .filter(media -> completed.claimedFrontMediaId() != null && media.id() == completed.claimedFrontMediaId())
-            .orElse(null);
-        AdminMediaPersistenceService.ExistingMedia stagedBack = adminMediaPersistenceService
-            .findExistingMedia(completed.submissionId(), "staged", "back")
-            .filter(media -> completed.claimedBackMediaId() != null && media.id() == completed.claimedBackMediaId())
-            .orElse(null);
-        adminMediaPersistenceService.deleteClaimedStagedRecords(
-            completed.submissionId(),
-            completed.claimedFrontMediaId(),
-            completed.claimedBackMediaId()
-        );
-        deleteExistingMedia(stagedFront);
-        deleteExistingMedia(stagedBack);
-        return new MediaPublishResponse(
-            completed.submissionId(),
-            completed.certId(),
-            "published",
-            completed.completedAt(),
-            completed.publishedFrontUrl(),
-            completed.publishedBackUrl()
-        );
+        // A completed retry never touches current staging. The successful
+        // transaction already retired its exact pair; any newer pair is pending.
+        return new MediaPublishResponse(completed.submissionId(), completed.certId(), "published", completed.completedAt(),
+            completed.publishedFrontUrl(), completed.publishedBackUrl(), completed.stagedVersion());
     }
 
     private String normalizeFilter(String value) {
@@ -1361,14 +1393,15 @@ public class AdminMediaService {
         boolean stagedBackMissing,
         boolean publishedFrontMissing,
         boolean publishedBackMissing,
-        boolean readyToPublish
+        boolean readyToPublish,
+        String stagedVersion
     ) {
     }
 
     private record MediaReference(String publicUrl, boolean available, boolean missing) {
     }
 
-    private record QueueFilters(
+    record QueueFilters(
         String query,
         String certId,
         String cardName,
@@ -1400,11 +1433,19 @@ public class AdminMediaService {
         String statusCode,
         LocalDateTime publishedAt,
         String publishedFrontUrl,
-        String publishedBackUrl
+        String publishedBackUrl,
+        String stagedVersion
     ) {
+        public MediaPublishResponse(long submissionId, String certId, String statusCode, LocalDateTime publishedAt,
+            String publishedFrontUrl, String publishedBackUrl) {
+            this(submissionId, certId, statusCode, publishedAt, publishedFrontUrl, publishedBackUrl, null);
+        }
     }
 
-    public record MediaBatchPublishRequest(List<Long> submissionIds) {
+    public record MediaBatchPublishRequest(List<Long> submissionIds, Map<Long, String> expectedVersions) {
+        public MediaBatchPublishRequest(List<Long> submissionIds) {
+            this(submissionIds, null);
+        }
     }
 
     public record MediaBatchPublishFailure(long submissionId, String message) {

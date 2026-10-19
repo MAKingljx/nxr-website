@@ -131,8 +131,8 @@ TARGET_REQUIRED_COLUMNS = {
     "submission_media": {
         "id", "submission_id", "cert_id", "media_side_code",
         "media_stage_code", "storage_provider_code", "storage_bucket",
-        "storage_key", "public_url", "sort_order", "is_active",
-        "original_filename", "mime_type", "created_at", "updated_at",
+        "storage_key", "storage_object_version", "public_url", "sort_order", "is_active",
+        "original_filename", "mime_type", "checksum_sha256", "created_at", "updated_at",
     },
     "published_certificate": {
         "id", "submission_id", "cert_id", "verification_slug", "qr_url",

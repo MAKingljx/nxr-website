@@ -7,6 +7,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nxr.platform.admin.storage.MediaStorageProvider;
 import com.nxr.platform.admin.storage.MediaStorageRegistry;
 import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import org.springframework.aop.framework.ProxyFactory;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
+import org.springframework.transaction.interceptor.TransactionInterceptor;
+import org.springframework.transaction.support.TransactionTemplate;
 import java.util.Set;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,6 +34,8 @@ class AdminMediaPublishWorkflowTest {
     private AdminMediaPersistenceService persistenceService;
     private AdminMediaService mediaService;
     private FakeR2StorageProvider storageProvider;
+    private JdbcClient jdbcClient;
+    private TransactionTemplate transactions;
 
     @BeforeEach
     void setUp() {
@@ -34,12 +46,14 @@ class AdminMediaPublishWorkflowTest {
         createSchema();
         seedReadySubmission();
 
-        JdbcClient jdbcClient = JdbcClient.create(jdbcTemplate);
-        persistenceService = new AdminMediaPersistenceService(
-            jdbcClient,
-            new ObjectMapper(),
-            "https://nxrgrading.com/"
-        );
+        jdbcClient = JdbcClient.create(jdbcTemplate);
+        DataSourceTransactionManager transactionManager = new DataSourceTransactionManager(dataSource);
+        transactions = new TransactionTemplate(transactionManager);
+        ProxyFactory persistenceProxy = new ProxyFactory(new AdminMediaPersistenceService(
+            jdbcClient, new ObjectMapper(), "https://nxrgrading.com/"));
+        persistenceProxy.setProxyTargetClass(true);
+        persistenceProxy.addAdvice(new TransactionInterceptor(transactionManager, new AnnotationTransactionAttributeSource()));
+        persistenceService = (AdminMediaPersistenceService) persistenceProxy.getProxy();
         storageProvider = new FakeR2StorageProvider();
         storageProvider.objects.add("staged-front");
         storageProvider.objects.add("staged-back");
@@ -192,6 +206,352 @@ class AdminMediaPublishWorkflowTest {
         assertThat(countWhere("submission_media", "media_stage_code='published' AND storage_provider_code='r2'")).isEqualTo(2);
     }
 
+    @Test
+    void legacyUploadedStateWithFreshStagingPublishesTheNewPair() {
+        AdminMediaService.MediaPublishResponse old = mediaService.publishSubmission(1L, 7L);
+        importPair("fresh");
+        jdbcTemplate.update("UPDATE submission_upload_state SET status_code='uploaded' WHERE submission_id=1");
+        storageProvider.uniqueKeys = true;
+
+        AdminMediaService.MediaPublishResponse fresh = mediaService.publishSubmission(1L, 7L);
+
+        assertThat(fresh.stagedVersion()).isNotEqualTo(old.stagedVersion());
+        assertThat(fresh.publishedFrontUrl()).isNotEqualTo(old.publishedFrontUrl());
+        assertThat(storageProvider.copyCount).isEqualTo(4);
+        assertThat(countWhere("submission_media", "media_stage_code='staged'")).isZero();
+        assertThat(storageProvider.objects).doesNotContain("fresh-front", "fresh-back");
+    }
+
+    @Test
+    void expectedCompletedVersionReturnsOldResultAndNeverTouchesFreshStagingOrActiveClaim() {
+        AdminMediaService.MediaPublishResponse old = mediaService.publishSubmission(1L, 7L);
+        importPair("fresh");
+        String freshVersion = currentVersion();
+        String retainedProof = value("SELECT response_payload_json FROM submission_upload_state WHERE submission_id=1");
+        persistenceService.claimSubmissionForPublish(1L, "new-publisher", 8L);
+
+        AdminMediaService.MediaPublishResponse retried = mediaService.publishSubmission(1L, 7L, old.stagedVersion());
+
+        assertThat(retried).isEqualTo(old);
+        assertThat(currentVersion()).isEqualTo(freshVersion);
+        assertThat(storageProvider.copyCount).isEqualTo(2);
+        assertThat(storageProvider.objects).contains("fresh-front", "fresh-back");
+        assertThat(value("SELECT status_code FROM submission_upload_state WHERE submission_id=1")).isEqualTo("uploading");
+        assertThat(value("SELECT claim_token FROM submission_upload_state WHERE submission_id=1")).isEqualTo("new-publisher");
+        assertThat(value("SELECT response_payload_json FROM submission_upload_state WHERE submission_id=1")).isEqualTo(retainedProof);
+    }
+
+    @Test
+    void reusedRowIdWithDifferentObjectOrChecksumInvalidatesTheSelectedVersion() {
+        String selectedVersion = currentVersion();
+        long frontId = persistenceService.findExistingMedia(1L, "staged", "front").orElseThrow().id();
+        importPair("fresh");
+        assertThat(persistenceService.findExistingMedia(1L, "staged", "front").orElseThrow().id()).isEqualTo(frontId);
+        assertConflict(() -> mediaService.publishSubmission(1L, 7L, selectedVersion));
+        assertThat(storageProvider.copyCount).isZero();
+        assertThat(count("published_certificate")).isZero();
+        String beforeChecksumChange = currentVersion();
+        jdbcTemplate.update("UPDATE submission_media SET checksum_sha256='different-checksum' WHERE id=?", frontId);
+        assertThat(currentVersion()).isNotEqualTo(beforeChecksumChange);
+        assertConflict(() -> mediaService.publishSubmission(1L, 7L, beforeChecksumChange));
+        assertThat(countWhere("submission_media", "media_stage_code='staged'")).isEqualTo(2);
+    }
+
+    @Test
+    void commitChecksFullClaimedObjectIdentityRatherThanReusedRowIds() {
+        AdminMediaPersistenceService.MediaPublishClaim claim = persistenceService.claimSubmissionForPublish(1L, "claimed", 7L);
+        jdbcTemplate.update("UPDATE submission_media SET storage_object_version='new-version', checksum_sha256='new-checksum' WHERE id=?",
+            claim.stagedFront().id());
+        assertConflict(() -> persistenceService.publishSubmissionRecords(1L, "CERT001", "claimed", claim.stagedFront(), claim.stagedBack(),
+            storageProvider.object("new-public-front", "front"), storageProvider.object("new-public-back", "back")));
+        assertThat(count("published_certificate")).isZero();
+        assertThat(countWhere("submission_media", "media_stage_code='published'")).isZero();
+        assertThat(countWhere("submission_media", "media_stage_code='staged'")).isEqualTo(2);
+    }
+
+    @Test
+    void legacyCompletedRowIdsCannotAuthorizeDeletingAOneSidedNewImport() {
+        AdminMediaService.MediaPublishResponse old = mediaService.publishSubmission(1L, 7L);
+        persistenceService.replaceImportedMedia(List.of(replacement("new-front", "front")), true);
+        jdbcTemplate.update("UPDATE submission_upload_state SET status_code='uploaded',response_payload_json=NULL WHERE submission_id=1");
+        String originalPublic = value("SELECT published_media_snapshot_json FROM published_certificate WHERE submission_id=1");
+
+        assertThatThrownBy(() -> mediaService.publishSubmission(1L, 7L)).isInstanceOf(ResponseStatusException.class)
+            .hasMessageContaining("Back staged media is required");
+        assertThat(storageProvider.copyCount).isEqualTo(2);
+        assertThat(storageProvider.objects).contains("new-front");
+        assertThat(value("SELECT published_media_snapshot_json FROM published_certificate WHERE submission_id=1")).isEqualTo(originalPublic);
+        assertThat(old.publishedFrontUrl()).contains("published-CERT001-front");
+        assertConflict(() -> mediaService.publishSubmission(1L, 7L, old.stagedVersion()));
+    }
+
+    @Test
+    void copyFailurePreservesThePreviousPublicationAndEveryNewStagedObject() {
+        mediaService.publishSubmission(1L, 7L);
+        importPair("fresh");
+        storageProvider.uniqueKeys = true;
+        storageProvider.failNextBackCopy = true;
+        String originalPublic = value("SELECT published_media_snapshot_json FROM published_certificate WHERE submission_id=1");
+        String selectedVersion = currentVersion();
+
+        assertThatThrownBy(() -> mediaService.publishSubmission(1L, 7L, selectedVersion))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("Simulated R2 failure");
+
+        assertThat(storageProvider.objects).contains("published-CERT001-front", "published-CERT001-back", "fresh-front", "fresh-back")
+            .doesNotContain("published-CERT001-front-3");
+        assertThat(value("SELECT published_media_snapshot_json FROM published_certificate WHERE submission_id=1")).isEqualTo(originalPublic);
+        assertThat(currentVersion()).isEqualTo(selectedVersion);
+        assertThat(value("SELECT status_code FROM submission_upload_state WHERE submission_id=1")).isEqualTo("failed");
+    }
+
+    @Test
+    void storageCleanupFailureCannotTurnCommittedSuccessIntoAFailureOrCauseDuplicateCopies() {
+        String selectedVersion = currentVersion();
+        storageProvider.failDeletes = true;
+        AdminMediaService.MediaPublishResponse published = mediaService.publishSubmission(1L, 7L, selectedVersion);
+        AdminMediaService.MediaPublishResponse retried = mediaService.publishSubmission(1L, 7L, selectedVersion);
+
+        assertThat(retried).isEqualTo(published);
+        assertThat(storageProvider.copyCount).isEqualTo(2);
+        assertThat(countWhere("submission_media", "media_stage_code='staged'")).isZero();
+        assertThat(storageProvider.objects).contains("staged-front", "staged-back", "published-CERT001-front", "published-CERT001-back");
+        assertThat(value("SELECT status_code FROM submission_upload_state WHERE submission_id=1")).isEqualTo("uploaded");
+    }
+
+    @Test
+    void droppedCommitReplyIsResolvedBeforeCompensationAndDoesNotDeleteTheCommittedObjects() {
+        String selectedVersion = currentVersion();
+        AdminMediaPersistenceService delegate = persistenceService;
+        usePersistence(new AdminMediaPersistenceService(jdbcClient, new ObjectMapper(), "https://nxrgrading.com/") {
+            @Override public MediaPublishStart startSubmissionForPublish(long id, String token, Long userId, String version) {
+                return delegate.startSubmissionForPublish(id, token, userId, version);
+            }
+            @Override public MediaPublishTransactionResult publishSubmissionRecords(long id, String certId, String token,
+                ExistingMedia front, ExistingMedia back, MediaStorageProvider.StoredMediaObject publishedFront,
+                MediaStorageProvider.StoredMediaObject publishedBack) {
+                delegate.publishSubmissionRecords(id, certId, token, front, back, publishedFront, publishedBack);
+                importPair("concurrent");
+                throw new IllegalStateException("COMMIT response lost");
+            }
+            @Override public java.util.Optional<CompletedPublication> resolvePublicationAttempt(long id, String version) {
+                return delegate.resolvePublicationAttempt(id, version);
+            }
+        });
+
+        AdminMediaService.MediaPublishResponse published = mediaService.publishSubmission(1L, 7L, selectedVersion);
+        AdminMediaService.MediaPublishResponse retried = mediaService.publishSubmission(1L, 7L, selectedVersion);
+
+        assertThat(retried).isEqualTo(published);
+        assertThat(storageProvider.copyCount).isEqualTo(2);
+        assertThat(storageProvider.objects).contains("published-CERT001-front", "published-CERT001-back", "concurrent-front", "concurrent-back");
+        assertThat(countWhere("submission_media", "media_stage_code='staged'")).isEqualTo(2);
+        assertThat(value("SELECT status_code FROM submission_upload_state WHERE submission_id=1")).isEqualTo("not_started");
+    }
+
+    @Test
+    void uncertainReadbackRetainsAllObjectsAndDoesNotMarkACommittedPublicationFailed() {
+        AdminMediaPersistenceService delegate = persistenceService;
+        usePersistence(new AdminMediaPersistenceService(jdbcClient, new ObjectMapper(), "https://nxrgrading.com/") {
+            @Override public MediaPublishStart startSubmissionForPublish(long id, String token, Long userId, String version) {
+                return delegate.startSubmissionForPublish(id, token, userId, version);
+            }
+            @Override public MediaPublishTransactionResult publishSubmissionRecords(long id, String certId, String token,
+                ExistingMedia front, ExistingMedia back, MediaStorageProvider.StoredMediaObject publishedFront,
+                MediaStorageProvider.StoredMediaObject publishedBack) {
+                delegate.publishSubmissionRecords(id, certId, token, front, back, publishedFront, publishedBack);
+                throw new IllegalStateException("COMMIT response lost");
+            }
+            @Override public java.util.Optional<CompletedPublication> resolvePublicationAttempt(long id, String version) {
+                throw new IllegalStateException("Database unavailable");
+            }
+        });
+        assertThatThrownBy(() -> mediaService.publishSubmission(1L, 7L, currentVersion())).hasMessage("COMMIT response lost");
+        assertThat(storageProvider.objects).contains("published-CERT001-front", "published-CERT001-back", "staged-front", "staged-back");
+        assertThat(value("SELECT status_code FROM submission_upload_state WHERE submission_id=1")).isEqualTo("uploaded");
+        assertThat(count("published_certificate")).isOne();
+    }
+
+    @Test
+    void concurrentImportCommitsBeforeVersionDecisionAndStalePublisherHasZeroEffect() throws Exception {
+        jdbcTemplate.update("INSERT INTO submission_upload_state(submission_id,status_code) VALUES (1,'not_started')");
+        String selectedVersion = currentVersion();
+        var executor = Executors.newFixedThreadPool(2);
+        CountDownLatch imported = new CountDownLatch(1);
+        CountDownLatch commitImport = new CountDownLatch(1);
+        CountDownLatch publisherStarted = new CountDownLatch(1);
+        try {
+            var importing = executor.submit(() -> transactions.execute(status -> {
+                importPair("concurrent");
+                imported.countDown();
+                await(commitImport);
+                return null;
+            }));
+            assertThat(imported.await(5, TimeUnit.SECONDS)).isTrue();
+            var publishing = executor.submit(() -> {
+                publisherStarted.countDown();
+                assertConflict(() -> mediaService.publishSubmission(1L, 7L, selectedVersion));
+            });
+            assertThat(publisherStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            Thread.sleep(100);
+            assertThat(publishing.isDone()).isFalse();
+            commitImport.countDown();
+            importing.get(5, TimeUnit.SECONDS);
+            publishing.get(5, TimeUnit.SECONDS);
+            assertThat(storageProvider.copyCount).isZero();
+            assertThat(count("published_certificate")).isZero();
+            assertThat(storageProvider.objects).contains("concurrent-front", "concurrent-back");
+            assertThat(countWhere("submission_media", "media_stage_code='staged'")).isEqualTo(2);
+        } finally {
+            commitImport.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void versionedBatchRequiresEverySelectedVersionAndKeepsPerItemFailureIsolation() {
+        AdminMediaService.MediaBatchPublishResponse missing = mediaService.publishSubmissions(List.of(1L), 7L, Map.of());
+        assertThat(missing.failedCount()).isOne();
+        assertThat(storageProvider.copyCount).isZero();
+        AdminMediaService.MediaBatchPublishResponse good = mediaService.publishSubmissions(List.of(1L), 7L, Map.of(1L, currentVersion()));
+        assertThat(good.publishedCount()).isOne();
+        assertThat(good.failedCount()).isZero();
+        assertThat(good.published()).singleElement().extracting(AdminMediaService.MediaPublishResponse::stagedVersion).isNotNull();
+    }
+
+    @Test
+    void readbackWaitsForALateCommitBeforeDecidingWhetherObjectsAreReferenced() throws Exception {
+        var claim = persistenceService.claimSubmissionForPublish(1L, "late-commit", 7L);
+        String version = currentVersion();
+        var executor = Executors.newFixedThreadPool(2);
+        CountDownLatch persisted = new CountDownLatch(1);
+        CountDownLatch commit = new CountDownLatch(1);
+        CountDownLatch readbackStarted = new CountDownLatch(1);
+        try {
+            var publishing = executor.submit(() -> transactions.execute(status -> {
+                persistenceService.publishSubmissionRecords(1L, "CERT001", "late-commit", claim.stagedFront(), claim.stagedBack(),
+                    storageProvider.object("committed-front", "front"), storageProvider.object("committed-back", "back"));
+                persisted.countDown();
+                await(commit);
+                return null;
+            }));
+            assertThat(persisted.await(5, TimeUnit.SECONDS)).isTrue();
+            var readback = executor.submit(() -> {
+                readbackStarted.countDown();
+                return persistenceService.resolvePublicationAttempt(1L, version);
+            });
+            assertThat(readbackStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            Thread.sleep(100);
+            assertThat(readback.isDone()).isFalse();
+            commit.countDown();
+            publishing.get(5, TimeUnit.SECONDS);
+            assertThat(readback.get(5, TimeUnit.SECONDS)).isPresent()
+                .get().extracting(AdminMediaPersistenceService.CompletedPublication::stagedVersion).isEqualTo(version);
+        } finally {
+            commit.countDown();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void fullTransactionRollbackRestoresOldPublicRowsAndKeepsStagingAfterAnUpsertFailure() {
+        mediaService.publishSubmission(1L, 7L);
+        importPair("fresh");
+        storageProvider.uniqueKeys = true;
+        String originalPublic = value("SELECT published_media_snapshot_json FROM published_certificate WHERE submission_id=1");
+        String selectedVersion = currentVersion();
+        ObjectMapper brokenMapper = new ObjectMapper() {
+            @Override public String writeValueAsString(Object value) throws com.fasterxml.jackson.core.JsonProcessingException {
+                throw new com.fasterxml.jackson.core.JsonProcessingException("Snapshot serialization failed") { };
+            }
+        };
+        var transactionManager = new DataSourceTransactionManager(jdbcTemplate.getDataSource());
+        ProxyFactory proxy = new ProxyFactory(new AdminMediaPersistenceService(jdbcClient, brokenMapper, "https://nxrgrading.com/"));
+        proxy.setProxyTargetClass(true);
+        proxy.addAdvice(new TransactionInterceptor(transactionManager, new AnnotationTransactionAttributeSource()));
+        usePersistence((AdminMediaPersistenceService) proxy.getProxy());
+
+        assertThatThrownBy(() -> mediaService.publishSubmission(1L, 7L, selectedVersion))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("serialize publish snapshot");
+
+        assertThat(value("SELECT published_media_snapshot_json FROM published_certificate WHERE submission_id=1")).isEqualTo(originalPublic);
+        assertThat(value("SELECT storage_key FROM submission_media WHERE media_stage_code='published' AND media_side_code='front'"))
+            .isEqualTo("published-CERT001-front");
+        assertThat(currentVersion()).isEqualTo(selectedVersion);
+        assertThat(storageProvider.objects).contains("published-CERT001-front", "published-CERT001-back", "fresh-front", "fresh-back")
+            .doesNotContain("published-CERT001-front-3", "published-CERT001-back-4");
+    }
+
+    @Test
+    void postCommitCleanupRetainsAnObjectReferencedByAConcurrentFreshImport() {
+        String selectedVersion = currentVersion();
+        AdminMediaPersistenceService delegate = persistenceService;
+        usePersistence(new AdminMediaPersistenceService(jdbcClient, new ObjectMapper(), "https://nxrgrading.com/") {
+            @Override public MediaPublishStart startSubmissionForPublish(long id, String token, Long userId, String version) {
+                return delegate.startSubmissionForPublish(id, token, userId, version);
+            }
+            @Override public MediaPublishTransactionResult publishSubmissionRecords(long id, String certId, String token,
+                ExistingMedia front, ExistingMedia back, MediaStorageProvider.StoredMediaObject publishedFront,
+                MediaStorageProvider.StoredMediaObject publishedBack) {
+                var result = delegate.publishSubmissionRecords(id, certId, token, front, back, publishedFront, publishedBack);
+                delegate.replaceImportedMedia(List.of(replacement("staged-front", "front"), replacement("new-back", "back")), true);
+                return result;
+            }
+        });
+        AdminMediaService.MediaPublishResponse response = mediaService.publishSubmission(1L, 7L, selectedVersion);
+        assertThat(response.stagedVersion()).isEqualTo(selectedVersion);
+        assertThat(storageProvider.objects).contains("staged-front", "new-back", "published-CERT001-front", "published-CERT001-back");
+        assertThat(countWhere("submission_media", "media_stage_code='staged'")).isEqualTo(2);
+        assertThat(value("SELECT status_code FROM submission_upload_state WHERE submission_id=1")).isEqualTo("not_started");
+    }
+
+    @Test
+    void missingOrDamagedCompletionProofCannotStartAStaleRetryOrDeleteANewerPair() {
+        String completedVersion = mediaService.publishSubmission(1L, 7L).stagedVersion();
+        importPair("fresh");
+        for (String invalidProof : List.of("", "null", "{}", "{broken", "{\"stagedVersion\":\"" + completedVersion + "\"}")) {
+            jdbcTemplate.update("UPDATE submission_upload_state SET response_payload_json=? WHERE submission_id=1", invalidProof);
+            assertConflict(() -> mediaService.publishSubmission(1L, 7L, completedVersion));
+        }
+        assertThat(storageProvider.copyCount).isEqualTo(2);
+        assertThat(storageProvider.objects).contains("fresh-front", "fresh-back");
+        assertThat(countWhere("submission_media", "media_stage_code='staged'")).isEqualTo(2);
+    }
+
+    private void importPair(String prefix) {
+        persistenceService.replaceImportedMedia(List.of(replacement(prefix + "-front", "front"), replacement(prefix + "-back", "back")), true);
+    }
+
+    private AdminMediaPersistenceService.ImportedMediaReplacement replacement(String key, String side) {
+        storageProvider.objects.add(key);
+        return new AdminMediaPersistenceService.ImportedMediaReplacement(1L, "CERT001", side, storageProvider.object(key, side));
+    }
+
+    private String currentVersion() {
+        return MediaStageVersion.of(persistenceService.findExistingMedia(1L, "staged", "front").orElse(null),
+            persistenceService.findExistingMedia(1L, "staged", "back").orElse(null));
+    }
+
+    private void usePersistence(AdminMediaPersistenceService persistence) {
+        mediaService = new AdminMediaService(jdbcClient, jdbcTemplate, persistence,
+            new MediaStorageRegistry(List.of(storageProvider), "r2"), 12, 24L * 1024 * 1024, 24L * 1024 * 1024, 100_000_000L);
+    }
+
+    private static void assertConflict(Runnable action) {
+        assertThatThrownBy(action::run).isInstanceOf(ResponseStatusException.class)
+            .satisfies(exc -> assertThat(((ResponseStatusException) exc).getStatusCode()).isEqualTo(HttpStatus.CONFLICT));
+    }
+
+    private static void await(CountDownLatch latch) {
+        try {
+            if (!latch.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("Timed out waiting for test transaction");
+            }
+        } catch (InterruptedException exc) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(exc);
+        }
+    }
+
     private void createSchema() {
         jdbcTemplate.execute(
             """
@@ -310,6 +670,8 @@ class AdminMediaPublishWorkflowTest {
         private int storeCount;
         private int copyCount;
         private boolean failNextBackCopy;
+        private boolean uniqueKeys;
+        private boolean failDeletes;
 
         @Override
         public String providerCode() {
@@ -352,7 +714,7 @@ class AdminMediaPublishWorkflowTest {
                 failNextBackCopy = false;
                 throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Simulated R2 failure");
             }
-            StoredMediaObject stored = object(targetStage + "-" + certId + "-" + sideCode, sideCode);
+            StoredMediaObject stored = object(targetStage + "-" + certId + "-" + sideCode + (uniqueKeys ? "-" + copyCount : ""), sideCode);
             objects.add(stored.storageKey());
             return stored;
         }
@@ -384,6 +746,7 @@ class AdminMediaPublishWorkflowTest {
 
         @Override
         public void deleteIfPresent(StoredMediaLocation location) {
+            if (failDeletes) { throw new IllegalStateException("Simulated cleanup failure"); }
             objects.remove(location.storageKey());
         }
     }
