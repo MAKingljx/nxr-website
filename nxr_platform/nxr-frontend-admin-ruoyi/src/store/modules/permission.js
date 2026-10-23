@@ -40,7 +40,7 @@ const usePermissionStore = defineStore(
         return new Promise(resolve => {
           // 向后端请求路由数据
           getRouters().then(res => {
-            const businessRoutes = prepareNxrBusinessRoutes(res.data)
+            const businessRoutes = prepareNxrBusinessRoutes(res.data, useUserStore().roles)
             const sdata = JSON.parse(JSON.stringify(businessRoutes))
             const rdata = JSON.parse(JSON.stringify(businessRoutes))
             const defaultData = JSON.parse(JSON.stringify(businessRoutes))

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import vm from 'node:vm'
 import { readFileSync } from 'node:fs'
-import { orderDetailSection, orderManualStatuses } from '../src/views/nxr/orders/orderPresentation.js'
+import { orderDetailSection, orderManualStatuses, isPartnerOrder, paymentOrderStatuses } from '../src/views/nxr/orders/orderPresentation.js'
 
 const source = readFileSync(new URL('../src/views/nxr/orders/index.vue', import.meta.url), 'utf8')
 const loadOrdersSource = source.slice(source.indexOf('function loadOrders('), source.indexOf('function resetQuery('))
@@ -58,4 +58,16 @@ test('master-batch orders keep grading transitions and exclude independent logis
   assert.deepEqual(orderManualStatuses(statuses, { batchId: 1 }).map(option => option.value), ['received', 'grading', 'completed', 'cancelled'])
   assert.equal(orderManualStatuses(statuses, null), statuses)
   assert.equal(statuses.length, 7)
+})
+
+test('partner orders cannot enter payment sections or select payment states; individual orders retain them', () => {
+  const partner = { orderChannel: 'partner', merchantBatch: {batchId: 30}, statusCode: 'awaiting_inbound' }
+  assert.equal(isPartnerOrder(partner), true)
+  assert.equal(isPartnerOrder({ orderChannel:'individual', merchantBatch:{batchId:30} }), false)
+  assert.equal(orderDetailSection(partner, 'finance'), 'warehouse')
+  assert.equal(orderDetailSection({ ...partner, statusCode: 'terms_confirmation' }, 'finance'), 'admission')
+  const statuses = [...paymentOrderStatuses, 'received', 'grading'].map(value => ({ value }))
+  assert.deepEqual(orderManualStatuses(statuses, partner.merchantBatch).map(item => item.value), ['received','grading'])
+  assert.equal(orderDetailSection({orderChannel:'individual',statusCode:'payment_review'}, 'finance'), 'finance')
+  assert.equal(orderManualStatuses(statuses, null), statuses)
 })

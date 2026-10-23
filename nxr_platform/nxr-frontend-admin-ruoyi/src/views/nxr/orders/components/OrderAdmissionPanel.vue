@@ -9,14 +9,14 @@
           </el-tag>
           <el-tag v-if="admission?.legacyOrder" type="info">{{ $tx('Legacy order') }}</el-tag>
         </div>
-        <p>{{ $tx('Approve the submitted card list and frozen quote before payment opens.') }}</p>
+        <p>{{ $tx(paymentRequired ? 'Approve the submitted card list and frozen quote before payment opens.' : 'Review the submitted card list and service terms.') }}</p>
       </div>
       <el-button icon="Refresh" plain :loading="loading" @click="load">{{ $tx('Refresh') }}</el-button>
     </div>
 
     <template v-if="admission">
       <el-alert
-        v-if="admission.paymentExpired"
+        v-if="paymentRequired && admission.paymentExpired"
         type="warning"
         :closable="false"
         show-icon
@@ -36,10 +36,10 @@
         <el-descriptions-item :label="$tx('Review revision')">{{ admission.admissionRevision }}</el-descriptions-item>
         <el-descriptions-item :label="$tx('Submitted At')">{{ formatTime(admission.submittedAt) }}</el-descriptions-item>
         <el-descriptions-item :label="$tx('Reviewed At')">{{ formatTime(admission.decidedAt) }}</el-descriptions-item>
-        <el-descriptions-item :label="$tx('Order quote')">
+        <el-descriptions-item v-if="paymentRequired" :label="$tx('Order quote')">
           {{ admission.quoteCurrency || currencyCode || '-' }} {{ money(admission.quoteAmount ?? orderAmount) }}
         </el-descriptions-item>
-        <el-descriptions-item :label="$tx('Payment deadline')">
+        <el-descriptions-item v-if="paymentRequired" :label="$tx('Payment deadline')">
           {{ formatTime(admission.paymentDueAtIso || admission.paymentDueAt) }}
         </el-descriptions-item>
         <el-descriptions-item :label="$tx('Customer confirmation')">
@@ -109,7 +109,7 @@
             :disabled="!!savingDecision"
             :loading="savingDecision === 'approve'"
             @click="submitDecision('approve')"
-          >{{ admission.paymentExpired ? $tx('Renew payment deadline') : $tx('Approve for payment') }}</el-button>
+          >{{ !paymentRequired ? $tx('Approve application') : admission.paymentExpired ? $tx('Renew payment deadline') : $tx('Approve for payment') }}</el-button>
         </div>
       </el-form>
 
@@ -136,7 +136,7 @@
         <el-form v-loading="configLoading" :model="configForm" label-position="top">
           <el-row :gutter="16">
             <el-col :xs="24" :sm="12">
-              <el-form-item :label="$tx('Payment deadline (hours)')">
+              <el-form-item :label="$tx('Individual payment deadline (hours)')">
                 <el-input-number v-model="configForm.paymentDeadlineHours" :min="1" :max="720" />
               </el-form-item>
             </el-col>
@@ -172,6 +172,7 @@ const props = defineProps({
   orderId: { type: Number, required: true },
   orderAmount: { type: [Number, String], default: null },
   currencyCode: { type: String, default: '' },
+  paymentRequired: { type: Boolean, default: true },
   showConfig: { type: Boolean, default: true }
 })
 const emit = defineEmits(['changed'])
@@ -185,7 +186,8 @@ const configLoaded = ref(false)
 const savingConfig = ref(false)
 const configForm = reactive({ paymentDeadlineHours: 48, maxCardsPerOrder: 500, termsVersion: '', termsText: '', turnaroundText: '' })
 
-const canDecide = computed(() => admission.value?.admissionStatus === 'pending_review' || admission.value?.paymentExpired)
+const paymentRequired = computed(() => props.paymentRequired !== false && admission.value?.paymentRequired !== false)
+const canDecide = computed(() => admission.value?.admissionStatus === 'pending_review' || (paymentRequired.value && admission.value?.paymentExpired))
 
 function statusLabel(value) {
   return {
@@ -237,7 +239,7 @@ async function submitDecision(decision) {
     return
   }
   const labels = {
-    approve: proxy.$tx('Approve this order for customer confirmation and payment?'),
+    approve: proxy.$tx(paymentRequired.value ? 'Approve this order for customer confirmation and payment?' : 'Approve this order application?'),
     reject: proxy.$tx('Reject this order application?'),
     request_information: proxy.$tx('Request additional information from the customer?')
   }

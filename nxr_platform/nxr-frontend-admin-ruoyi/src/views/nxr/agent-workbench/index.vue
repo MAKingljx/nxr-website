@@ -7,6 +7,7 @@ import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
 import { resolveWorkspaceView, workspacePath } from '@/utils/submissionWorkspace'
 import AgentWorkspace from './components/AgentWorkspace.vue'
 import AgentOverviewPanel from './components/AgentOverviewPanel.vue'
+import AdminOrderTabs from '../orders/components/AdminOrderTabs.vue'
 import { createAgentApi, type AgentApi, type Company } from './lib/agentWorkbench'
 import type { AgentOverviewRow } from './lib/agentOverview'
 
@@ -16,8 +17,8 @@ const management = shallowRef(createAgentApi()), activeApi = shallowRef<AgentApi
 const company = ref<Company | null>(null), platformManager = ref(false), companies = ref<Company[]>([])
 const selectedId = ref<number>(), loading = ref(true), searching = ref(false), error = ref('')
 const view = computed(() => resolveWorkspaceView(route))
-const titles: Record<string, string> = { orders:'Order', clients:'Customer records', cards:'Card data', intakes:'Intakes and inventory', batches:'Submit', returns:'Customer returns', wallet:'Enterprise credits', addresses:'Return addresses' }
-const title = computed(() => tx(titles[view.value]))
+const titles: Record<string, string> = { orders:'Order', clients:'Customer records', cards:'Card data', intakes:'Intakes and inventory', batches:'Submit', returns:'Customer returns', wallet:'Enterprise credits', addresses:'My addresses' }
+const title = computed(() => route.meta.adminUnified && view.value === 'orders' ? tx('Order Management') : tx(titles[view.value]))
 let generation = 0, searchGeneration = 0, initialization = 0, initializing = false, visible = true
 let scopeCompanyId: number | undefined
 function requestedCompany() { const id = Number(route.query.company); return Number.isSafeInteger(id) && id > 0 ? id : undefined }
@@ -94,6 +95,7 @@ onBeforeUnmount(dispose)
 <template>
   <main class="nxr-workspace agent-admin-page" data-testid="agent-admin-workbench">
     <NxrPageHeader :title="title" :summary="company ? company.companyName || company.displayName : platformManager ? $tx('All partner companies') : ''" />
+    <AdminOrderTabs v-if="view === 'orders'" />
     <el-card v-if="platformManager" shadow="never" class="agent-company-card">
       <el-form inline>
         <el-form-item :label="$tx('Partner company')">
@@ -111,6 +113,7 @@ onBeforeUnmount(dispose)
     <el-button v-if="error" @click="initialize">{{ $tx('Retry') }}</el-button>
     <p v-if="loading" class="agent-loading" role="status">{{ $tx('Loading…') }}</p>
     <AgentWorkspace v-else-if="activeApi && company" :key="`${company.id}-${generation}`" :api="activeApi" />
+    <el-empty v-else-if="platformManager && !error && view === 'addresses'" :description="$tx('Select a partner company to manage its addresses.')" />
     <AgentOverviewPanel v-else-if="platformManager && !error" :key="view" :view="view" :finance-allowed="auth.hasPermi('nxr:customer:finance')" @open="openRecord" />
     <el-empty v-else-if="!error" :description="$tx('This account is not linked to a sub-agent company. Please contact the platform administrator.')" data-testid="agent-binding-required" />
   </main>

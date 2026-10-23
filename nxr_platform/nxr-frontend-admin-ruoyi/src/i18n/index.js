@@ -19,6 +19,9 @@ export const supportedLocales = [
 ]
 
 const STORAGE_KEY = 'nxr-admin-locale'
+const LOCAL_DEFAULT_LOCALE = 'zh-CN'
+const LOCAL_LOCALE_POLICY_KEY = 'nxr-admin-locale-policy'
+const LOCAL_LOCALE_POLICY_VERSION = 'zh-default-20261021'
 const BACKEND_MESSAGE_SOURCES = {
   '操作成功': 'Operation completed successfully',
   '操作失败': 'Operation failed',
@@ -53,9 +56,13 @@ const ENGLISH_CARD_CODE_LABELS = new Map([
 function resolveInitialLocale() {
   // Hosted builds have no language selector, so stale local choices must not change their language.
   if (!allowLocaleSelection) return 'en'
-  if (typeof window === 'undefined') return 'en'
+  if (typeof window === 'undefined') return LOCAL_DEFAULT_LOCALE
   const savedLocale = window.localStorage.getItem(STORAGE_KEY)
-  return supportedLocales.some((item) => item.code === savedLocale) ? savedLocale : 'en'
+  const savedPolicy = window.localStorage.getItem(LOCAL_LOCALE_POLICY_KEY)
+  // Migrate existing local sessions once so every administrator starts from Chinese.
+  // Later explicit language choices remain respected under the current policy version.
+  if (savedPolicy !== LOCAL_LOCALE_POLICY_VERSION) return LOCAL_DEFAULT_LOCALE
+  return supportedLocales.some((item) => item.code === savedLocale) ? savedLocale : LOCAL_DEFAULT_LOCALE
 }
 
 export const i18n = createI18n({
@@ -72,6 +79,7 @@ export const i18n = createI18n({
 export function persistLocale(locale) {
   if (!supportedLocales.some((item) => item.code === locale)) return
   window.localStorage.setItem(STORAGE_KEY, locale)
+  if (allowLocaleSelection) window.localStorage.setItem(LOCAL_LOCALE_POLICY_KEY, LOCAL_LOCALE_POLICY_VERSION)
   document.documentElement.lang = locale
 }
 

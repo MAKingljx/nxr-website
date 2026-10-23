@@ -3,7 +3,7 @@
     <el-form :model="form" label-position="top">
       <el-row :gutter="16">
         <el-col :xs="24" :sm="12">
-          <el-form-item :label="$tx('Payment deadline (hours)')">
+          <el-form-item :label="$tx('Individual payment deadline (hours)')">
             <el-input-number v-model="form.paymentDeadlineHours" :min="1" :max="720" />
           </el-form-item>
         </el-col>

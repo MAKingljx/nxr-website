@@ -86,6 +86,7 @@ function resolvePath(routePath) {
   if (isExternal(props.basePath)) {
     return props.basePath
   }
+  if (routePath.startsWith('/')) return getNormalPath(routePath)
   return getNormalPath(props.basePath + '/' + routePath)
 }
 

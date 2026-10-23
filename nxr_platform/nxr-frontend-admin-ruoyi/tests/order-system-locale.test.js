@@ -15,7 +15,7 @@ import enterpriseWalletZhCN from '../src/i18n/enterprise-wallet-zh-CN.js'
 import cardOperatorsZhCN from '../src/i18n/card-operators-zh-CN.js'
 import partnerReturnsZhCN from '../src/i18n/partner-returns-zh-CN.js'
 import { orderSystemZhCN, localizeKnownOrderText, localizeDefaultOrderText, localizeOrderEventDetail, orderCodeSource } from '../src/i18n/order-system-text.js'
-import { orderManualStatuses } from '../src/views/nxr/orders/orderPresentation.js'
+import { orderManualStatuses, paymentOrderStatuses } from '../src/views/nxr/orders/orderPresentation.js'
 
 const orderBackendServices = ['customer/AgentOrderService', 'customer/AgentWorkbenchService', 'customer/MerchantBatchService', 'customer/PartnerReturnService', 'customer/OrderWorkbenchService', 'customer/OrderFulfillmentService', 'admission/OrderAdmissionService', 'customer/CustomerOrderPhotoService', 'commerce/OrderAccessScopeService', 'commerce/ScopedOrderSubmissionService', 'customer/OrderCardIdentityService', 'customer/AgentOrderCancellationService']
 const backendRoot = new URL('../../nxr-backend-ruoyi/ruoyi-nxr/src/main/java/com/nxr/platform/', import.meta.url)
@@ -62,10 +62,11 @@ const changedLabelMessages = [
   'A grading result changed after label scanning; re-export and rescan the affected label'
 ]
 
-function localeFixture(environment = 'java-stage', savedLocale = 'en') {
+function localeFixture(environment = 'java-stage', savedLocale = 'en', localePolicy = 'zh-default-20261021') {
   const source = readFileSync(new URL('../src/i18n/index.js', import.meta.url), 'utf8')
     .replace(/^import .*\n/gm, '').replace(/\bexport /g, '').replaceAll('import.meta.env.VITE_APP_ENV', JSON.stringify(environment))
   const storage = new Map([['nxr-admin-locale', savedLocale]])
+  if (localePolicy) storage.set('nxr-admin-locale-policy', localePolicy)
   const context = { createI18n, en, zhCN, baseLiteralZhCN, workspaceZhCN, partnerZhCN, overviewZhCN, enterpriseWalletZhCN, cardOperatorsZhCN, partnerReturnsZhCN, localizeKnownOrderText, localizeDefaultOrderText, translateOrderEventDetail: localizeOrderEventDetail, orderCodeSource,
     window: { localStorage: { getItem: key => storage.get(key), setItem: (key, value) => storage.set(key, value) } }, document: { documentElement: {} } }
   vm.runInNewContext(source + '\nglobalThis.api = {i18n,tx,localizeBackendMessage,localizeOrderTerms,localizeOrderEventDetail,localizeOrderCode,allowLocaleSelection};', context)
@@ -195,10 +196,18 @@ test('hosted builds stay English and hide locale selection despite stale browser
   assert.equal(local.i18n.global.locale.value, 'zh-CN')
 })
 
+test('local builds migrate existing sessions to Chinese once and keep later explicit choices', () => {
+  const migrated = localeFixture('java-stage', 'en', null)
+  assert.equal(migrated.i18n.global.locale.value, 'zh-CN')
+
+  const explicitEnglish = localeFixture('java-stage', 'en')
+  assert.equal(explicitEnglish.i18n.global.locale.value, 'en')
+})
+
 test('order-page status, task and tracking options follow live locale without changing selectable values', () => {
   const source = readFileSync(new URL('../src/views/nxr/orders/index.vue', import.meta.url), 'utf8')
   const optionsSource = source.slice(source.indexOf('const manualStatusOptions ='), source.indexOf('function statusType('))
-  const api = localeFixture(), detail = ref({merchantBatch:null}), context = {computed,tx:api.tx,orderManualStatuses,detail}
+  const api = localeFixture(), detail = ref({merchantBatch:null}), context = {computed,tx:api.tx,orderManualStatuses,paymentOrderStatuses,queryParams:reactive({orderChannel:undefined}),detail}
   vm.runInNewContext(optionsSource + '\nglobalThis.page = {statusOptions,filterStatusOptions,taskTypeOptions,trackingEventOptions,manualStatusOptions,extraStatusLabels,labelStatus,taskLabel};', context)
   const page = context.page, names = ['statusOptions','filterStatusOptions','taskTypeOptions','trackingEventOptions','manualStatusOptions']
   const snapshot = () => JSON.parse(JSON.stringify(Object.fromEntries(names.map(name => [name,page[name].value]))))
@@ -220,7 +229,12 @@ test('order-page status, task and tracking options follow live locale without ch
   assert.equal(page.labelStatus('constructor'), 'constructor')
   assert.equal(page.taskLabel('custom_task'), 'custom_task')
   detail.value = {merchantBatch:{batchId:42}}
-  assert.deepEqual(Array.from(page.manualStatusOptions.value, item => item.value), english.statusOptions.filter(item => !['inbound_shipped','return_shipped','delivered'].includes(item.value)).map(item => item.value))
+  assert.deepEqual(Array.from(page.manualStatusOptions.value, item => item.value), english.statusOptions.filter(item => !paymentOrderStatuses.has(item.value) && !['inbound_shipped','return_shipped','delivered'].includes(item.value)).map(item => item.value))
+  context.queryParams.orderChannel = 'partner'
+  assert.equal(page.filterStatusOptions.value.some(item => paymentOrderStatuses.has(item.value)), false)
+  context.queryParams.orderChannel = 'individual'
+  assert.equal(page.filterStatusOptions.value.some(item => item.value === 'payment_expired'), true)
+  context.queryParams.orderChannel = undefined
   detail.value = {merchantBatch:null}
   api.i18n.global.locale.value = 'en'
   assert.deepEqual(snapshot(), english)

@@ -4,8 +4,8 @@
     <el-form inline @submit.prevent="load(true)"><el-form-item :label="$tx('Find a batch')"><el-input v-model="query" clearable :placeholder="$tx('Batch number or name')" /></el-form-item><el-form-item><el-button native-type="submit" :loading="loading">{{ $tx('Search') }}</el-button></el-form-item></el-form>
     <el-alert v-if="loadError" :title="loadError" type="error" :closable="false" />
     <el-table v-loading="loading" :data="rows" size="small">
-      <el-table-column :label="$tx('Batch')" prop="batchNo" min-width="170" />
-      <el-table-column :label="$tx('Name')" prop="batchName" min-width="160" />
+      <el-table-column :label="$tx('Submit ID')" prop="batchNo" min-width="170" />
+      <el-table-column :label="$tx('Submit name')" prop="batchName" min-width="160" />
       <el-table-column :label="$tx('Orders')" width="100"><template #default="scope">{{ scope.row.acceptedRows }}/{{ scope.row.totalRows }}</template></el-table-column>
       <el-table-column :label="$tx('Status')" width="140"><template #default="scope">{{ batchStatusLabel(scope.row.statusCode) }}</template></el-table-column>
       <el-table-column :label="$tx('Created At')" width="170"><template #default="scope">{{ parseTime(scope.row.createdAt) }}</template></el-table-column>
@@ -14,7 +14,7 @@
     <pagination v-show="total>0" :total="total" v-model:page="page" v-model:limit="pageSize" @pagination="load()" />
     <el-drawer v-model="openDialog" :title="$tx('Partner shipment batches')" size="min(1050px, 100vw)" append-to-body>
       <template v-if="detail">
-        <el-descriptions :column="3" border><el-descriptions-item :label="$tx('Batch')">{{ detail.batchNo }}</el-descriptions-item><el-descriptions-item :label="$tx('Name')">{{ detail.batchName }}</el-descriptions-item><el-descriptions-item :label="$tx('Status')">{{ batchStatusLabel(detail.statusCode) }}</el-descriptions-item></el-descriptions>
+        <el-descriptions :column="3" border><el-descriptions-item :label="$tx('Submit ID')">{{ detail.batchNo }}</el-descriptions-item><el-descriptions-item :label="$tx('Submit name')">{{ detail.batchName }}</el-descriptions-item><el-descriptions-item :label="$tx('Status')">{{ batchStatusLabel(detail.statusCode) }}</el-descriptions-item></el-descriptions>
         <el-divider content-position="left">{{ $tx('Independent customer orders') }}</el-divider>
         <el-table :data="detail.orders" size="small" border><el-table-column label="#" prop="rowNo" width="54" /><el-table-column :label="$tx('Client reference')" prop="clientReference" min-width="150" /><el-table-column :label="$tx('Customer label')" prop="clientDisplayName" min-width="140" /><el-table-column :label="$tx('Order No.')" min-width="150"><template #default="scope"><el-button link type="primary" @click="openOrder(scope.row.orderId)">{{scope.row.orderNo}}</el-button></template></el-table-column><el-table-column :label="$tx('Cards')" prop="totalCardCount" width="70" /><el-table-column :label="$tx('Status')" width="150"><template #default="scope">{{ statusLabel(scope.row.statusCode === 'admission_review' ? scope.row.admissionStatus || scope.row.statusCode : scope.row.statusCode) }}</template></el-table-column><el-table-column :label="$tx('Private link')" width="100"><template #default="scope">{{ scope.row.trackingTokenHint ? `${scope.row.trackingTokenHint}…` : $tx('Revoked') }}</template></el-table-column></el-table>
         <div class="batch-return-action"><el-button v-hasPermi="['nxr:order:manage','nxr:order:shipping']" type="primary" @click="openDialog=false; emit('open-returns')">{{ $tx('Select cards for return') }}</el-button></div><el-divider content-position="left">{{ $tx('Master parcel logistics') }}</el-divider>

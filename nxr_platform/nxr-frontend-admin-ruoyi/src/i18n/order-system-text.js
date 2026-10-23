@@ -1,5 +1,6 @@
 // Only recognized system copy is localized. Free-form notes and frozen custom terms stay verbatim.
 export const orderDefaultTextZhCN = {
+  'Please confirm the submitted item list and current NXR service terms before shipping.': '寄件前，请确认提交的卡片清单及当前 NXR 服务条款。',
   'Please confirm the submitted item list, approved quote, and current NXR service terms before payment.': '付款前，请确认提交的卡片清单、已批准报价及当前 NXR 服务条款。',
   'Subject to admission confirmation': '以受理确认为准'
 }
@@ -148,6 +149,15 @@ export const orderSystemZhCN = {
 }
 
 Object.assign(orderSystemZhCN, {
+  'Please agree to the service terms before submitting': '请同意服务条款后再提交',
+  'Service terms changed; refresh and confirm the current terms before submitting': '服务条款已更新，请重新加载并确认后提交',
+  'The saved service terms differ; refresh the order before confirming': '已保存的服务条款不一致，请刷新订单后确认',
+  'Service terms can only be recorded with a new partner submission': '服务条款只能随新建B端送评一并确认',
+  'A partner submission must contain at least one card': 'B端送评至少须包含一张卡片',
+  'NXR will review the submitted item list.': 'NXR 将审核提交的卡片清单。',
+  'The partner agreed to the service terms and submitted item list before admission review.': 'B端已在提交送审时确认服务条款和卡片清单。',
+  'Your partner order was approved. It is ready to ship to NXR.': 'B端订单已通过审核，可以寄往 NXR。',
+  'Submit must be approved before shipping.': '送评审核通过后即可寄件。',
   'Receive the parcel before checking in cards': '请先签收包裹，再核对卡片入库',
   'Submitted intake cards cannot be changed': '已送评的来件卡片无法更改',
   'Submitted intake evidence cannot be replaced': '已送评的来件照片无法替换',
@@ -272,6 +282,7 @@ Object.assign(orderSystemZhCN, {
   'Order work is paused while payment needs attention': '款项需要处理，订单作业已暂停',
   'Shipment record not found': '未找到物流记录',
   'Return address is required': '请填写回寄地址',
+  'Customer address is required': '请填写客户地址',
   'Unsupported intake exception type': '不支持此收件异常类型',
   'Unsupported work task type': '不支持此处理任务类型',
   'Unsupported work task status': '不支持此处理任务状态',
@@ -330,7 +341,30 @@ for (const [task, zhTask] of Object.entries(taskTypes)) {
   for (const [state, zhState] of Object.entries(taskStates)) orderSystemZhCN[`${task} ${state}`] = `${zhTask}${zhState}`
 }
 for (const [state, zhState] of Object.entries({ open: '已开启', 'in progress': '处理中', resolved: '已解决', closed: '已关闭' })) orderSystemZhCN[`Support ticket ${state}`] = `客服工单${zhState}`
-const fields = { 'Customer name': '客户姓名', Phone: '联系电话', Email: '邮箱', Notes: '备注', Search: '搜索内容', Status: '状态', Barcode: '条码', 'Card name': '卡片名称', Brand: '品牌', 'Card set': '卡集', 'Official card number': '卡面编号', Language: '语言', Category: '类别', 'Product type': '产品类型', 'Terms version': '条款版本', 'Terms text': '条款正文', 'Turnaround text': '周转时间说明', 'Review note': '审核备注', 'Accepted quoted amount': '确认的报价金额', Carrier: '承运商', 'Tracking number': '运单号', 'Certificate ID': '证书号', 'Request key': '请求标识' }
+Object.assign(orderSystemZhCN, {
+  'This order has not been approved for service': '此订单尚未通过服务审核',
+  'The accepted terms do not match the approved order snapshot': '所确认的服务条款与获批订单不一致',
+  "Every partner order must complete review and service terms before the master parcel ships": "主包裹寄出前，每个B端订单都须完成审核并确认服务条款",
+  "Every partner order must have admission approval and accepted service terms before shipping": "寄件前，所有B端订单都须通过受理审核并确认服务条款",
+  "Service terms cannot be confirmed in this order state": "当前订单状态无法确认服务条款",
+  "A partner batch order is required": "此操作需要B端送评批次订单",
+  "Order changed; refresh before continuing": "订单已变化，请刷新后继续",
+  "Partner batch orders do not require payment": "B端送评批次无需在线付款",
+  "Admission approval and service terms are required before fulfillment": "开始处理前须完成受理审核并确认服务条款",
+  "Service terms confirmed": "服务条款已确认",
+  "The partner confirmed the approved service terms. The order is ready for inbound shipping.": "B端已确认获批的服务条款，订单可以寄往 NXR。",
+  "Ready to ship to NXR": "可寄往 NXR",
+  "Service terms are confirmed. Add the inbound parcel tracking number to continue.": "服务条款已确认，请登记寄往 NXR 的包裹运单号。",
+  "Confirm service terms": "确认服务条款",
+  "Review and confirm the approved service terms before sending cards to NXR.": "寄往 NXR 前，请阅读并确认获批的服务条款。",
+  "Your partner order was approved. Confirm the service terms before shipping.": "B端订单已通过审核，寄件前请确认服务条款。",
+  "Legacy payment recorded": "已记录历史付款凭证",
+  "Review the return shipping change before shipping": "寄出前请先审核回寄服务变更",
+  "NXR will review the item list before service terms are confirmed.": "NXR 将先审核卡片清单，再确认服务条款。",
+  "The partner order is ready for inbound shipping.": "B端订单已可寄往 NXR。"
+})
+const fields = {
+  'Address contact name': '地址收件人', 'Address phone': '地址联系电话', 'Customer street address': '客户详细地址', 'Customer address line 2': '客户地址第二行', 'Customer city': '客户城市', 'Customer region': '客户省份', 'Customer postal code': '客户邮政编码', 'Customer country': '客户国家／地区', 'Customer name': '客户姓名', Phone: '联系电话', Email: '邮箱', Notes: '备注', Search: '搜索内容', Status: '状态', Barcode: '条码', 'Card name': '卡片名称', Brand: '品牌', 'Card set': '卡集', 'Official card number': '卡面编号', Language: '语言', Category: '类别', 'Product type': '产品类型', 'Terms version': '条款版本', 'Terms text': '条款正文', 'Turnaround text': '周转时间说明', 'Review note': '审核备注', 'Accepted quoted amount': '确认的报价金额', Carrier: '承运商', 'Tracking number': '运单号', 'Certificate ID': '证书号', 'Request key': '请求标识' }
 Object.assign(fields, {
   'Client reference': '客户编号', 'Client name': '客户名称', 'Tracking token': '查询链接标识', 'Batch number': '批次编号', 'Order number': '订单编号', 'Return country': '回寄国家或地区', 'Inventory code': '卡片编码', 'Exception details': '异常说明', 'Return shipping option': '回寄服务', Currency: '币种', 'Inventory code or certificate number': '卡片编码或证书号', Recipient: '收件人', 'Recipient phone': '收件人联系电话', 'Street address': '街道地址', City: '城市', 'Postal code': '邮政编码', Country: '国家或地区', 'Service name': '服务名称', 'Service unit price': '服务单价', 'Option code': '物流选项编码', 'Option name': '物流选项名称', 'Shipping price': '运费', 'Intake code or Order number': '收卡编号或订单编号', 'Intake code': '收卡编号', 'Resolution note': '解决说明', 'Failure reason': '失败原因', 'Quality issue': '质检问题', 'Ticket subject': '工单主题', 'Ticket message': '工单内容', 'Change reason': '变更原因', 'Settlement note': '结算说明', 'Exception title': '异常标题', 'Contact name': '联系人姓名', 'Contact phone': '联系人电话', 'Address line 1': '地址第一行'
 })
