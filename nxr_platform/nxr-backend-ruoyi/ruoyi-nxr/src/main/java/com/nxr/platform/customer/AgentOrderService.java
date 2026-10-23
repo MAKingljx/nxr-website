@@ -47,7 +47,8 @@ public class AgentOrderService {
         this.jdbc = jdbc; this.workbench = workbench; this.fulfillment = fulfillment;
         this.photos = photos; this.admission = admission; this.returns = returns; this.json = json;
         clientInsert = new SimpleJdbcInsert(template).withTableName("agent_client").usingGeneratedKeyColumns("id")
-            .usingColumns("merchant_customer_id", "reference", "display_name", "phone", "email", "contact_name", "active");
+            .usingColumns("merchant_customer_id", "reference", "display_name", "phone", "email", "contact_name",
+                "address_line1", "address_line2", "city", "region", "postal_code", "country", "active");
         intakeInsert = new SimpleJdbcInsert(template).withTableName("agent_intake").usingGeneratedKeyColumns("id")
             .usingColumns("merchant_customer_id", "intake_no", "client_id", "expected_card_count", "status_code", "notes",
                 "request_key", "request_hash", "received_at", "partner_order_version", "client_name_snapshot", "client_phone_snapshot", "client_email_snapshot");
@@ -61,7 +62,11 @@ public class AgentOrderService {
         @JsonAnySetter public void rejectField(String key, Object value) { throw bad("Unsupported card field"); }
     }
     public record CreateRequest(String clientName, String phone, String email, String notes,
-        List<CardInput> cards, String requestKey) {
+        List<CardInput> cards, String requestKey, AgentWorkbenchService.Address customerAddress) {
+        public CreateRequest(String clientName, String phone, String email, String notes,
+            List<CardInput> cards, String requestKey) {
+            this(clientName, phone, email, notes, cards, requestKey, null);
+        }
         @JsonAnySetter public void rejectField(String key, Object value) { throw bad("Unsupported order field"); }
     }
     public record Option(String value, String label) { }
@@ -71,11 +76,12 @@ public class AgentOrderService {
         String statusCode, String intakeStatusCode, int cardCount, Long gradingOrderId, String gradingOrderNo,
         Long batchId, String batchNo, LocalDateTime createdAt, String notes, boolean canSubmit, boolean legacy,
         int gradedCardCount, int returnShippedCardCount, int deliveredCardCount, Integer returnableCardCount,
-        PartnerReturnService.OrderReturnProgress returnProgress) { }
+        PartnerReturnService.OrderReturnProgress returnProgress, AgentWorkbenchService.Address customerAddress) { }
     public record Detail(WorkbenchOrder order, List<AgentWorkbenchService.Card> cards, List<AgentWorkbenchService.Event> events) { }
     private record Row(long id, String orderNo, String clientName, String phone, String email,
         String statusCode, String intakeStatusCode, int cardCount, Long gradingOrderId, String gradingOrderNo,
-        Long batchId, String batchNo, LocalDateTime createdAt, String notes, int partnerOrderVersion) { }
+        Long batchId, String batchNo, LocalDateTime createdAt, String notes, int partnerOrderVersion,
+        String contactName, String addressPhone, String addressLine1, String addressLine2, String city, String region, String postalCode, String country) { }
 
     private static final String FROM = """
         FROM agent_intake i
@@ -83,14 +89,17 @@ public class AgentOrderService {
         LEFT JOIN grading_order o ON o.id=i.order_id AND o.customer_id=i.merchant_customer_id
         LEFT JOIN merchant_order_batch b ON b.id=i.batch_id AND b.merchant_customer_id=i.merchant_customer_id
         """;
+    private static final String ORDER_STATUS="COALESCE("+MerchantOrderPolicy.visibleStatusSql("o")+",i.status_code)";
     private static final String SELECT = """
         SELECT i.id, i.intake_no AS order_no,
             COALESCE(i.client_name_snapshot,c.display_name) AS client_name,
             CASE WHEN i.partner_order_version>0 THEN i.client_phone_snapshot ELSE c.phone END AS phone,
             CASE WHEN i.partner_order_version>0 THEN i.client_email_snapshot ELSE c.email END AS email,
-            COALESCE(o.status_code,i.status_code) AS status_code, i.status_code AS intake_status_code,
+        """+ORDER_STATUS+"""
+            AS status_code, i.status_code AS intake_status_code,
             i.expected_card_count AS card_count, o.id AS grading_order_id, o.order_no AS grading_order_no,
-            b.id AS batch_id,b.batch_no,i.created_at,i.notes,i.partner_order_version
+            b.id AS batch_id,b.batch_no,i.created_at,i.notes,i.partner_order_version,
+            c.contact_name,c.phone AS address_phone,c.address_line1,c.address_line2,c.city,c.region,c.postal_code,c.country
         """;
 
     public AgentWorkbenchService.Page<WorkbenchOrder> list(long owner, int page, int pageSize, String query, String statusCode) {
@@ -99,7 +108,7 @@ public class AgentOrderService {
         Map<String,Object> params = params("owner", owner);
         String where = " WHERE i.merchant_customer_id=:owner";
         String search = optional(query, "Search", 255), status = optional(statusCode, "Status", 32);
-        if (status != null) { where += " AND COALESCE(o.status_code,i.status_code)=:status"; params.put("status", status); }
+        if (status != null) { where += " AND "+ORDER_STATUS+"=:status"; params.put("status", status); }
         if (search != null) {
             where += """
                  AND (LOWER(i.intake_no) LIKE :query ESCAPE '!'
@@ -139,7 +148,9 @@ public class AgentOrderService {
             row.statusCode(),row.intakeStatusCode(),row.cardCount(),row.gradingOrderId(),row.gradingOrderNo(),
             row.batchId(),row.batchNo(),row.createdAt(),row.notes(),
             "ready".equals(row.intakeStatusCode()) && row.gradingOrderId()==null,row.partnerOrderVersion()==0,
-            progress.gradedCardCount(),progress.returningCardCount(),progress.deliveredCardCount(),progress.returnableCardCount(),progress);
+            progress.gradedCardCount(),progress.returningCardCount(),progress.deliveredCardCount(),progress.returnableCardCount(),progress,
+            new AgentWorkbenchService.Address(row.contactName(),row.addressPhone(),row.addressLine1(),row.addressLine2(),
+                row.city(),row.region(),row.postalCode(),row.country()));
     }
 
     public Options options(long owner) {
@@ -179,6 +190,7 @@ public class AgentOrderService {
         String phone=optional(request.phone(),"Phone",64), email=optional(request.email(),"Email",191);
         if(phone==null && email==null) throw bad("Enter a customer phone number or email address");
         if(email!=null && !email.matches("[^\\s@]+@[^\\s@]+\\.[^\\s@]+")) throw bad("Enter a valid email address");
+        AgentWorkbenchService.Address address=customerAddress(request.customerAddress(),name,phone);
         String notes=optional(request.notes(),"Notes",2000);
         Options options=options(owner);
         if(request.cards()==null || request.cards().isEmpty() || request.cards().size()>options.maxCardsPerOrder())
@@ -205,7 +217,9 @@ public class AgentOrderService {
         }
         String temporary="NEW-"+UUID.randomUUID().toString().replace("-", "");
         long clientId=clientInsert.executeAndReturnKey(params("merchant_customer_id",owner,"reference",temporary,
-            "display_name",name,"phone",phone,"email",email,"contact_name",name,"active",1)).longValue();
+            "display_name",name,"phone",address.phone(),"email",email,"contact_name",address.contactName(),
+            "address_line1",address.addressLine1(),"address_line2",address.addressLine2(),"city",address.city(),
+            "region",address.region(),"postal_code",address.postalCode(),"country",address.country(),"active",1)).longValue();
         LocalDateTime now=jdbc.sql("SELECT CURRENT_TIMESTAMP").query((rs,n)->rs.getObject(1,LocalDateTime.class)).single();
         long id=intakeInsert.executeAndReturnKey(params("merchant_customer_id",owner,"intake_no",temporary,
             "client_id",clientId,"expected_card_count",cards.size(),"status_code","ready","notes",notes,
@@ -233,9 +247,23 @@ public class AgentOrderService {
         return options.stream().filter(option->option.value().equalsIgnoreCase(value)).map(Option::value).findFirst()
             .orElseThrow(()->bad(label+" must be an active option"));
     }
+    private static AgentWorkbenchService.Address customerAddress(AgentWorkbenchService.Address address,String name,String phone) {
+        if(address==null) throw bad("Customer address is required");
+        String contact=optional(address.contactName(),"Address contact name",128);
+        String addressPhone=optional(address.phone(),"Address phone",64);
+        // Each new order creates its own client row, preserving the customer's
+        // address separately from the partner-owned NXR return address book.
+        return new AgentWorkbenchService.Address(contact==null?name:contact,addressPhone==null?phone:addressPhone,
+            required(address.addressLine1(),"Customer street address",255),optional(address.addressLine2(),"Customer address line 2",255),
+            required(address.city(),"Customer city",128),optional(address.region(),"Customer region",128),
+            optional(address.postalCode(),"Customer postal code",64),required(address.country(),"Customer country",128));
+    }
     private String hash(CreateRequest request) {
-        try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
-            .digest(("workbench-order-v1:"+json.writeValueAsString(request)).getBytes(StandardCharsets.UTF_8))); }
+        try {
+            var body=json.valueToTree(request);
+            if(request.customerAddress()==null)((com.fasterxml.jackson.databind.node.ObjectNode)body).remove("customerAddress");
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+            .digest(("workbench-order-v1:"+json.writeValueAsString(body)).getBytes(StandardCharsets.UTF_8))); }
         catch(JsonProcessingException|java.security.NoSuchAlgorithmException e) { throw new IllegalStateException("Cannot fingerprint order",e); }
     }
     private static String optional(String value,String label,int max) {

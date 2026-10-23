@@ -4,7 +4,7 @@ export const WORKSPACE_VIEWS = Object.freeze(['orders', 'batches', 'clients', 'c
 const WORKSPACE_COMPONENT = 'nxr/agent-workbench/index'
 const PARTNERS_COMPONENT = 'nxr/partners/index'
 const LEGACY_WORKSPACE_PATHS = new Set([WORKSPACE_ROOT, '/nxr/agent-workbench'])
-const PRIMARY_VIEWS = new Set(['orders', 'batches'])
+const PRIMARY_VIEWS = new Set(['orders', 'batches', 'addresses'])
 const VIEW_ICONS = { orders: 'clipboard', clients: 'user', cards: 'post', intakes: 'clipboard', batches: 'list', returns: 'tree-table', wallet: 'money', addresses: 'guide' }
 
 const LEGACY_VIEWS = { clients: 'orders', cards: 'orders', intakes: 'orders', returns: 'batches' }

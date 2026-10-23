@@ -60,8 +60,9 @@ class PartnerReturnServiceTest {
         check(1001);jdbc.update("UPDATE grading_score SET final_grade_value=7 WHERE submission_id=101");assertThatThrownBy(()->create(List.of(1001L),"changed")).hasMessageContaining("quality and packing");
         check(1001);jdbc.update("UPDATE submission_media SET checksum_sha256='changed' WHERE submission_id=101 AND media_side_code='front'");assertThatThrownBy(()->create(List.of(1001L),"changed-image")).hasMessageContaining("quality and packing");
     }
-    @Test void retainsPaymentTermsShippingChangesAndLegacyShippingGates(){
-        jdbc.update("UPDATE payment_record SET status_code='pending' WHERE order_id=10");assertThatThrownBy(()->check(1001)).hasMessageContaining("payment");jdbc.update("UPDATE payment_record SET status_code='confirmed' WHERE order_id=10");
+    @Test void businessReturnDoesNotRequirePaymentButRetainsTermsAndLegacyShippingGates(){
+        jdbc.update("UPDATE payment_record SET status_code='pending' WHERE order_id=10");assertThat(check(1001).eligible()).isTrue();
+        assertThat(jdbc.queryForObject("SELECT status_code FROM payment_record WHERE order_id=10",String.class)).isEqualTo("pending");
         jdbc.update("UPDATE grading_order SET terms_accepted_at=NULL WHERE id=10");assertThatThrownBy(()->check(1001)).hasMessageContaining("terms");jdbc.update("UPDATE grading_order SET terms_accepted_at=CURRENT_TIMESTAMP WHERE id=10");
         jdbc.update("INSERT INTO merchant_batch_shipment(batch_id,direction_code,carrier_name,tracking_number,status_code,created_by_type) VALUES(1,'outbound','DHL','OLD','delivered','admin')");assertThatThrownBy(()->check(1001)).hasMessageContaining("existing batch return");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM partner_return_item",Integer.class)).isZero();
@@ -107,22 +108,18 @@ class PartnerReturnServiceTest {
         assertThat(create(List.of(1001L),"first-label-retained").cardCount()).isEqualTo(1);
     }
     @Test void shippingChangeAndOpenExceptionsContinueToBlockRelease(){
-        jdbc.update("INSERT INTO shipping_change_request(order_id,old_option_code,old_option_name,old_price_amount,new_option_code,new_option_name,new_price_amount,currency_code,difference_amount,status_code,reason) VALUES(10,'old','Old',1,'new','New',2,'USD',1,'awaiting_settlement','change')");
+        jdbc.update("INSERT INTO shipping_change_request(order_id,old_option_code,old_option_name,old_price_amount,new_option_code,new_option_name,new_price_amount,currency_code,difference_amount,status_code,reason) VALUES(10,'old','Old',1,'new','New',2,'USD',1,'requested','change')");
         assertThatThrownBy(()->check(1001)).hasMessageContaining("shipping change");
         jdbc.update("UPDATE shipping_change_request SET status_code='settled' WHERE order_id=10");
         jdbc.update("INSERT INTO order_exception(order_id,exception_type_code,status_code,title,detail,visible_to_customer) VALUES(10,'damaged','open','Damage','Inspect',1)");
         assertThatThrownBy(()->check(1001)).hasMessageContaining("open order exception");
     }
-    @Test void unsettledShippingFeesRejectAtomicallyAndSettlementRestoresRelease(){
-        // Fixture-only state models the independent shipping settlement workflow.
+    @Test void businessShippingFeesDoNotBlockReleaseOrFabricateSettlement(){
         jdbc.update("INSERT INTO shipping_change_request(order_id,old_option_code,old_option_name,old_price_amount,new_option_code,new_option_name,new_price_amount,currency_code,difference_amount,status_code,reason) VALUES(10,'old','Old',1,'new','New',2,'USD',1,'awaiting_settlement','Synthetic fee adjustment')");
-        assertThatThrownBy(()->create(List.of(1001L),"unsettled-fees")).hasMessageContaining("shipping change");
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM partner_return_parcel",Integer.class)).isZero();
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM partner_return_item",Integer.class)).isZero();
-        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM partner_return_card_check",Integer.class)).isZero();
-        jdbc.update("UPDATE shipping_change_request SET status_code='settled' WHERE order_id=10");
         assertThat(check(1001).eligible()).isTrue();
-        assertThat(create(List.of(1001L),"settled-fees").cardCount()).isEqualTo(1);
+        assertThat(create(List.of(1001L),"unsettled-fees").cardCount()).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT status_code FROM shipping_change_request WHERE order_id=10",String.class)).isEqualTo("awaiting_settlement");
+        assertThat(jdbc.queryForObject("SELECT settled_at FROM shipping_change_request WHERE order_id=10",java.sql.Timestamp.class)).isNull();
     }
     @Test void cardSearchIncludesShortOrderBatchAndCompanyWhileKeepingScopeAndPagination(){
         var first=service.cards(1,1,1,null,null,null,"nxr-1");

@@ -224,9 +224,8 @@ public class PartnerReturnService {
         if(jdbc.sql("SELECT COUNT(*) FROM order_shipment WHERE order_id=:id AND direction_code='outbound'").param("id",row.orderId()).query(Integer.class).single()>0)return "Order already has an outbound shipment";
         if(!"approved".equals(row.admission()))return "Order review must be approved";
         if(jdbc.sql("SELECT COUNT(*) FROM grading_order WHERE id=:id AND terms_accepted_at IS NOT NULL AND accepted_terms_version=approved_terms_version").param("id",row.orderId()).query(Integer.class).single()!=1)return "The approved order terms must be accepted";
-        if(jdbc.sql("SELECT COUNT(*) FROM payment_record WHERE order_id=:id AND direction_code='receivable' AND payment_type_code='grading_fee' AND status_code='confirmed'").param("id",row.orderId()).query(Integer.class).single()<1)return "Grading payment must be confirmed";
         if(jdbc.sql("SELECT COUNT(*) FROM order_exception WHERE order_id=:id AND status_code='open'").param("id",row.orderId()).query(Integer.class).single()>0)return "Resolve the open order exception";
-        if(jdbc.sql("SELECT COUNT(*) FROM shipping_change_request WHERE order_id=:id AND status_code IN ('requested','awaiting_settlement')").param("id",row.orderId()).query(Integer.class).single()>0)return "Settle the return shipping change before shipping";
+        if(jdbc.sql("SELECT COUNT(*) FROM shipping_change_request WHERE order_id=:id AND status_code='requested'").param("id",row.orderId()).query(Integer.class).single()>0)return "Review the return shipping change before shipping";
         if(row.submissionId()==null || !Set.of("approved","published").contains(clean(row.gradingStatus())) || clean(row.certId()).isEmpty())return "Card grading must be approved";
         if((row.productType()==null || "graded_card".equals(row.productType())) && row.grade()==null)return "Card needs its final grade";
         if("vintage_product".equals(row.productType()) && clean(row.vintage()).isEmpty())return "Card needs its vintage classification";

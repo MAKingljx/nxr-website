@@ -8,17 +8,18 @@ import AgentOrdersPanel from './AgentOrdersPanel.vue'
 import AgentBatchesPanel from './AgentBatchesPanel.vue'
 import AgentWalletPanel from './AgentWalletPanel.vue'
 import AgentAddressesPanel from './AgentAddressesPanel.vue'
+import AgentCompanyAddressBar from './AgentCompanyAddressBar.vue'
 const props=defineProps<{api:AgentApi}>()
 provide(AgentApiKey,props.api)
 const route=useRoute()
 const tab=computed(()=>resolveWorkspaceView(route))
-const batchCreation = computed(() => route.query.action === 'create-batch')
 const financeAllowed = computed(() => auth.hasPermi('nxr:customer:finance'))
 const recordId=computed(()=>{const id=Number(route.query.record);return Number.isSafeInteger(id)&&id>0?id:undefined})
 </script>
 <template>
   <section class="agent-workbench" data-testid="agent-workbench">
-    <AgentOrdersPanel v-if="tab === 'orders'" :key="`orders-${recordId || 0}-${batchCreation}`" :initial-record-id="recordId" :initial-batch-creation="batchCreation" />
+    <AgentCompanyAddressBar v-if="['orders', 'batches'].includes(tab)" :key="tab" />
+    <AgentOrdersPanel v-if="tab === 'orders'" :key="`orders-${recordId || 0}`" :initial-record-id="recordId" />
     <AgentBatchesPanel v-else-if="tab === 'batches'" />
     <AgentWalletPanel v-else-if="tab === 'wallet' && financeAllowed" />
     <AgentAddressesPanel v-else-if="tab === 'addresses'" />

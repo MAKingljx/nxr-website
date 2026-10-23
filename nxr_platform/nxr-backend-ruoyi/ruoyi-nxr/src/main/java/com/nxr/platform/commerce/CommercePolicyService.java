@@ -40,6 +40,11 @@ public class CommercePolicyService {
     public QuoteResult quoteForOrder(
         long customerId, String countryValue, String currencyValue, int cardCount, String requestedShippingOptionCode
     ) {
+        return quoteForOrder(customerId,countryValue,currencyValue,cardCount,requestedShippingOptionCode,false);
+    }
+
+    private QuoteResult quoteForOrder(long customerId,String countryValue,String currencyValue,int cardCount,
+        String requestedShippingOptionCode,boolean merchantWithoutPayment) {
         if (customerId <= 0) throw badRequest("Customer is required");
         if (cardCount < 1 || cardCount > 10_000) throw badRequest("Card count is outside the supported quote range");
         String country = normalizeDestination(countryValue);
@@ -48,8 +53,9 @@ public class CommercePolicyService {
             .param("customerId", customerId).query(String.class).optional()
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Customer account not found"));
         String segment = "merchant".equalsIgnoreCase(accountType) ? "business" : "consumer";
+        if(merchantWithoutPayment && !"business".equals(segment))throw badRequest("Merchant account is required");
 
-        PriceMatch price = selectPrice(customerId, segment, currency, cardCount);
+        PriceMatch price = selectPrice(customerId, segment, currency, cardCount,merchantWithoutPayment);
         ShippingMatch shipping = selectShipping(country, currency, cardCount, requestedShippingOptionCode);
         RoutingAssignment routing = routingForCustomer(customerId);
         int scale = currencyScale(currency);
@@ -73,6 +79,44 @@ public class CommercePolicyService {
         long customerId, String country, String currency, List<BatchPartRequest> parts,
         String requestedShippingOptionCode
     ) {
+        return quoteBatch(customerId,country,currency,parts,requestedShippingOptionCode,false);
+    }
+
+    /** Internal fees may be recorded, but an unconfigured grading price cannot stop B submission. */
+    public BatchQuoteResult quoteMerchantBatch(long customerId,String country,String currency,List<BatchPartRequest> parts,
+        String requestedShippingOptionCode) {
+        return quoteBatch(customerId,country,currency,parts,requestedShippingOptionCode,true);
+    }
+
+    /** B chooses logistics, while currency remains metadata attached to the selected route. */
+    public List<MerchantLogisticsOption> merchantLogisticsOptions(long customerId,String countryValue,int cardCount) {
+        String country=normalizeDestination(countryValue);
+        boundedPositive(cardCount,"Batch card count",10_000);
+        int merchant=jdbcClient.sql("SELECT COUNT(*) FROM customer_account WHERE id=:id AND account_type_code='merchant' AND is_active=1")
+            .param("id",customerId).query(Integer.class).single();
+        if(merchant!=1)throw badRequest("Merchant account is required");
+        // Match quoteForOrder's weight-policy preference. Retain every available
+        // currency, without consulting grading prices or exposing fee amounts.
+        List<MerchantLogisticsOption> result=new ArrayList<>(jdbcClient.sql("""
+            SELECT id,display_name,currency_code FROM commerce_shipping_policy
+            WHERE is_active=1 AND (destination_country=:country OR destination_country='*')
+            ORDER BY CASE WHEN destination_country=:country THEN 1 ELSE 0 END DESC,priority_no DESC,id DESC
+            """).param("country",country)
+            .query((rs,n)->new MerchantLogisticsOption("weight_"+rs.getLong("id"),rs.getString("display_name"),rs.getString("currency_code")))
+            .list().stream().filter(option->SUPPORTED_CURRENCIES.contains(option.currencyCode())).toList());
+        result.addAll(jdbcClient.sql("""
+            SELECT option_code,display_name,currency_code,country_scope FROM return_shipping_option
+            WHERE is_active=1 ORDER BY sort_order,id
+            """).query((rs,n)->countryMatches(rs.getString("country_scope"),country)
+                ?new MerchantLogisticsOption(rs.getString("option_code"),rs.getString("display_name"),rs.getString("currency_code")):null)
+            .list().stream().filter(java.util.Objects::nonNull)
+            .filter(option->SUPPORTED_CURRENCIES.contains(option.currencyCode()) && !option.optionCode().startsWith("weight_"))
+            .toList());
+        return List.copyOf(result);
+    }
+
+    private BatchQuoteResult quoteBatch(long customerId,String country,String currency,List<BatchPartRequest> parts,
+        String requestedShippingOptionCode,boolean merchantWithoutPayment) {
         if (parts == null || parts.isEmpty() || parts.size() > 500) throw badRequest("Batch parts are required");
         HashSet<String> references = new HashSet<>();
         int totalCards = 0;
@@ -87,7 +131,7 @@ public class CommercePolicyService {
             if (totalCards > 10_000) throw badRequest("Batch card count is outside the supported quote range");
             normalized.add(new BatchPartRequest(reference, count));
         }
-        QuoteResult aggregate = quoteForOrder(customerId, country, currency, totalCards, requestedShippingOptionCode);
+        QuoteResult aggregate = quoteForOrder(customerId, country, currency, totalCards, requestedShippingOptionCode,merchantWithoutPayment);
         int scale = currencyScale(aggregate.currencyCode());
         long shippingMinor = aggregate.returnShippingFee().movePointRight(scale).longValueExact();
         long[] allocatedMinor = new long[normalized.size()];
@@ -118,7 +162,7 @@ public class CommercePolicyService {
         return new BatchQuoteResult(aggregate, List.copyOf(allocations));
     }
 
-    private PriceMatch selectPrice(long customerId, String segment, String currency, int cardCount) {
+    private PriceMatch selectPrice(long customerId, String segment, String currency, int cardCount,boolean allowUnquoted) {
         return jdbcClient.sql(
                 """
                 SELECT id, unit_price, customer_id, customer_segment_code
@@ -151,8 +195,10 @@ public class CommercePolicyService {
                     """
                 ).param("currency", currency).query(BigDecimal.class).optional()
                 .map(value -> new PriceMatch(null, value, "global_price"))
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
-                    "Grading price is not configured for this currency")));
+                .orElseGet(() -> {
+                    if(allowUnquoted)return new PriceMatch(null,BigDecimal.ZERO,"unquoted_business");
+                    throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"Grading price is not configured for this currency");
+                }));
     }
 
     private ShippingMatch selectShipping(String country, String currency, int cardCount, String requestedOptionCode) {
@@ -614,5 +660,6 @@ public class CommercePolicyService {
     public record BatchPartRequest(String reference, Integer cardCount) {}
     public record AllocatedBatchQuote(String reference, int cardCount, BigDecimal serviceFee,
                                       BigDecimal returnShippingFee, BigDecimal totalAmount) {}
+    public record MerchantLogisticsOption(String optionCode,String displayName,String currencyCode) {}
     public record BatchQuoteResult(QuoteResult aggregate, List<AllocatedBatchQuote> allocations) {}
 }

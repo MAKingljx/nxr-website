@@ -1,9 +1,12 @@
 export const orderDetailSections = ['admission', 'warehouse', 'cards', 'finance', 'shipping', 'support', 'timeline']
 
+export const paymentOrderStatuses = new Set(['awaiting_payment', 'payment_review', 'payment_expired', 'payment_exception'])
+export const isPartnerOrder = order => order?.orderChannel ? order.orderChannel === 'partner' : Boolean(order?.merchantBatch)
+
 export function orderDetailSection(order, requested) {
-  if (orderDetailSections.includes(requested)) return requested
+  if (orderDetailSections.includes(requested) && !(requested === 'finance' && isPartnerOrder(order))) return requested
   const status = order?.statusCode
-  if (['awaiting_payment', 'payment_review', 'payment_exception'].includes(status)) return 'finance'
+  if (['awaiting_payment', 'payment_review', 'payment_exception'].includes(status)) return isPartnerOrder(order) ? 'admission' : 'finance'
   if (['awaiting_inbound', 'inbound_shipped', 'intake_exception', 'received'].includes(status)) return 'warehouse'
   if (['grading', 'review', 'quality_check', 'quality_hold'].includes(status)) return 'cards'
   if (['completed', 'return_shipped'].includes(status)) return 'shipping'
@@ -13,6 +16,6 @@ export function orderDetailSection(order, requested) {
 
 export function orderManualStatuses(options, merchantBatch) {
   return merchantBatch
-    ? options.filter(option => !['inbound_shipped', 'return_shipped', 'delivered'].includes(option.value))
+    ? options.filter(option => !paymentOrderStatuses.has(option.value) && !['inbound_shipped', 'return_shipped', 'delivered'].includes(option.value))
     : options
 }

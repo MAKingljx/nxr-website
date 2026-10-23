@@ -176,8 +176,9 @@ public class CustomerPortalController {
     public OrderAdmissionService.PublicConfig orderAdmissionConfig(
         @RequestHeader(name = CUSTOMER_TOKEN_HEADER, required = false) String customerToken
     ) {
-        current(customerToken);
-        return orderAdmissionService.publicConfig();
+        var customer = current(customerToken);
+        return "merchant".equals(customer.accountTypeCode())
+            ? orderAdmissionService.merchantPublicConfig() : orderAdmissionService.publicConfig();
     }
 
     @GetMapping("/orders")

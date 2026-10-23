@@ -40,30 +40,41 @@
 
     <el-dialog v-model="submissionOpen" :title="$tx('Create Grading Record for This Card')" width="min(720px, calc(100vw - 32px))" append-to-body>
       <el-alert type="info" :closable="false" show-icon :title="$tx('This record is created inside the locked order and cannot be linked to another order.')" />
-      <el-form :model="submissionForm" label-position="top" class="submission-form mt12">
+      <el-form ref="submissionFormRef" :model="submissionForm" :rules="submissionRules" label-position="top" class="submission-form mt12" :validate-on-rule-change="false">
         <el-row :gutter="12">
-          <el-col :xs="24" :sm="12"><el-form-item :label="$tx('Product Type')" required><el-select v-model="submissionForm.productType"><el-option :label="$tx('Graded Card')" value="graded_card" /><el-option :label="$tx('Merch Product')" value="merch_product" /><el-option :label="$tx('Vintage Product')" value="vintage_product" /></el-select></el-form-item></el-col>
-          <el-col :xs="24" :sm="12"><el-form-item :label="$tx('Certificate ID')" required><el-input v-model="submissionForm.certId" maxlength="32" /></el-form-item></el-col>
-          <el-col v-if="isGradedSubmission" :xs="24" :sm="12"><el-form-item :label="$tx('Category')"><el-select v-model="submissionForm.cardCategory"><el-option :label="$tx('Trading Card')" value="trading_card" /><el-option :label="$tx('Sports Card')" value="sports_card" /><el-option :label="$tx('Celebrity Card')" value="celebrity_card" /><el-option :label="$tx('Movie Film')" value="movie_film" /></el-select></el-form-item></el-col>
+          <el-col :xs="24" :sm="12"><el-form-item prop="productType" :label="$tx('Product Type')" required><el-select v-model="submissionForm.productType"><el-option :label="$tx('Graded Card')" value="graded_card" /><el-option :label="$tx('Merch Product')" value="merch_product" /><el-option :label="$tx('Vintage Product')" value="vintage_product" /></el-select></el-form-item></el-col>
+          <el-col :xs="24" :sm="12"><el-form-item prop="certId" :label="$tx('Certificate ID')" required><el-input v-model="submissionForm.certId" maxlength="10" inputmode="numeric"><template #append><el-button :loading="generatingCert" @click="generateCertificate">{{ t('common.generate') }}</el-button></template></el-input></el-form-item></el-col>
+          <el-col v-if="isGradedSubmission" :xs="24" :sm="12"><el-form-item prop="cardCategory" :label="$tx('Category')"><el-select v-model="submissionForm.cardCategory"><el-option :label="$tx('Trading Card')" value="trading_card" /><el-option :label="$tx('Sports Card')" value="sports_card" /><el-option :label="$tx('Celebrity Card')" value="celebrity_card" /><el-option :label="$tx('Movie Film')" value="movie_film" /></el-select></el-form-item></el-col>
           <el-col v-if="submissionForm.productType === 'merch_product'" :span="24"><el-form-item :label="$tx('Merch Description')"><el-input v-model="submissionForm.merchDescription" type="textarea" :rows="3" maxlength="4000" /></el-form-item></el-col>
-          <el-col v-if="submissionForm.productType === 'vintage_product'" :xs="24" :sm="12"><el-form-item :label="$tx('Vintage Classification')" required><el-select v-model="submissionForm.vintageClassification"><el-option v-for="item in nxr_vintage_classification" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item></el-col>
+          <el-col v-if="submissionForm.productType === 'vintage_product'" :xs="24" :sm="12"><el-form-item prop="vintageClassification" :label="$tx('Vintage Classification')" required><el-select v-model="submissionForm.vintageClassification"><el-option v-for="item in nxr_vintage_classification" :key="item.value" :label="item.label" :value="item.value" /></el-select></el-form-item></el-col>
           <template v-if="isGradedSubmission && submissionForm.cardCategory === 'movie_film'">
-            <el-col :xs="24" :sm="12"><el-form-item :label="$tx('Movie Name')" required><el-input v-model="submissionForm.movieName" /></el-form-item></el-col>
-            <el-col :xs="24" :sm="12"><el-form-item :label="$tx('Release Year')" required><el-input v-model="submissionForm.releaseYear" /></el-form-item></el-col>
-            <el-col :xs="24" :sm="12"><el-form-item :label="$tx('Production Company')" required><el-input v-model="submissionForm.productionCompany" /></el-form-item></el-col>
-            <el-col :xs="24" :sm="12"><el-form-item :label="$tx('Film Type')" required><el-input v-model="submissionForm.filmType" /></el-form-item></el-col>
+            <el-col :xs="24" :sm="12"><el-form-item prop="movieName" :label="$tx('Movie Name')" required><el-input v-model="submissionForm.movieName" /></el-form-item></el-col>
+            <el-col :xs="24" :sm="12"><el-form-item prop="releaseYear" :label="$tx('Release Year')" required><el-input v-model="submissionForm.releaseYear" /></el-form-item></el-col>
+            <el-col :xs="24" :sm="12"><el-form-item prop="productionCompany" :label="$tx('Production Company')" required><el-input v-model="submissionForm.productionCompany" /></el-form-item></el-col>
+            <el-col :xs="24" :sm="12"><el-form-item prop="filmType" :label="$tx('Film Type')" required><el-input v-model="submissionForm.filmType" /></el-form-item></el-col>
           </template>
           <template v-else>
-            <el-col :xs="24" :sm="12"><el-form-item :label="$tx('Card Name')" required><el-input v-model="submissionForm.cardName" /></el-form-item></el-col>
-            <el-col :xs="24" :sm="12"><el-form-item :label="$tx('Brand')" required><el-input v-model="submissionForm.brandName" /></el-form-item></el-col>
-            <el-col :xs="24" :sm="12"><el-form-item :label="$tx('Set Name')" required><el-input v-model="submissionForm.setName" /></el-form-item></el-col>
-            <el-col :xs="24" :sm="12"><el-form-item :label="$tx('Card Number')" required><el-input v-model="submissionForm.cardNumber" /></el-form-item></el-col>
+            <el-col :xs="24" :sm="12"><el-form-item prop="cardName" :label="$tx('Card Name')" required><el-input v-model="submissionForm.cardName" /></el-form-item></el-col>
+            <el-col :xs="24" :sm="12"><el-form-item prop="brandName" :label="$tx('Brand')" required><el-input v-model="submissionForm.brandName" /></el-form-item></el-col>
+            <el-col :xs="24" :sm="12"><el-form-item prop="setName" :label="$tx('Set Name')" required><el-input v-model="submissionForm.setName" /></el-form-item></el-col>
+            <el-col :xs="24" :sm="12"><el-form-item prop="cardNumber" :label="$tx('Card Number')" required><el-input v-model="submissionForm.cardNumber" /></el-form-item></el-col>
             <el-col :xs="24" :sm="12"><el-form-item :label="$tx('Year')"><el-input v-model="submissionForm.yearLabel" /></el-form-item></el-col>
-            <el-col :xs="24" :sm="12"><el-form-item :label="$tx('Language')" required><el-input v-model="submissionForm.languageCode" maxlength="32" /></el-form-item></el-col>
-            <el-col v-if="submissionForm.cardCategory === 'sports_card'" :xs="24" :sm="12"><el-form-item :label="$tx('Sport')" required><el-input v-model="submissionForm.sportsType" /></el-form-item></el-col>
-            <el-col v-if="submissionForm.cardCategory === 'celebrity_card'" :xs="24" :sm="12"><el-form-item :label="$tx('Group Name')" required><el-input v-model="submissionForm.groupName" /></el-form-item></el-col>
+            <el-col :xs="24" :sm="12"><el-form-item prop="languageCode" :label="$tx('Language')" required><el-input v-model="submissionForm.languageCode" maxlength="32" /></el-form-item></el-col>
+            <el-col :xs="24" :sm="12"><el-form-item :label="t('entries.varietyType')"><el-input v-model="submissionForm.varietyName" /></el-form-item></el-col>
+            <el-col v-if="isGradedSubmission && submissionForm.cardCategory === 'sports_card'" :xs="24" :sm="12"><el-form-item prop="sportsType" :label="$tx('Sport')" required><el-input v-model="submissionForm.sportsType" /></el-form-item></el-col>
+            <el-col v-if="isGradedSubmission && submissionForm.cardCategory === 'celebrity_card'" :xs="24" :sm="12"><el-form-item prop="groupName" :label="$tx('Group Name')" required><el-input v-model="submissionForm.groupName" /></el-form-item></el-col>
           </template>
-          <el-col v-for="field in isGradedSubmission ? scoreFields : []" :key="field.key" :xs="12" :sm="6"><el-form-item :label="$tx(field.label)" required><el-input-number v-model="submissionForm[field.key]" :min="1" :max="10" :step="0.5" :precision="1" /></el-form-item></el-col>
+          <el-col v-if="isGradedSubmission" :span="24"><el-divider content-position="left">{{ t('entries.gradingDetails') }}</el-divider></el-col>
+          <el-col v-for="field in isGradedSubmission ? scoreFields : []" :key="field.key" :xs="12" :sm="6"><el-form-item :prop="field.key" :label="t(field.label)" required><el-input-number v-model="submissionForm[field.key]" :min="1" :max="10" :step="0.1" controls-position="right" /></el-form-item></el-col>
+          <el-col v-if="isGradedSubmission" :span="24">
+            <div class="grade-preview" aria-live="polite">
+              <span>{{ t('entries.finalGradeCalculation') }}</span>
+              <strong v-if="gradePreview">{{ gradePreview.finalGradeValue }} · {{ gradePreview.finalGradeLabel }}</strong>
+              <span v-else-if="calculatingGrade">{{ t('common.loading') }}</span>
+              <span v-else>—</span>
+              <template v-if="gradePreviewFailed"><span>{{ t('entries.gradePreviewFailed') }}</span><el-button link type="primary" @click="refreshGradePreview">{{ $tx('Retry') }}</el-button></template>
+            </div>
+          </el-col>
           <el-col :span="24"><el-form-item :label="$tx('Entry Notes')"><el-input v-model="submissionForm.entryNotes" type="textarea" :rows="2" maxlength="2000" /></el-form-item></el-col>
         </el-row>
       </el-form>
@@ -73,11 +84,13 @@
 </template>
 
 <script setup>
-import { computed, getCurrentInstance, nextTick, ref, watch, onDeactivated } from 'vue'
+import { computed, getCurrentInstance, nextTick, ref, watch, onDeactivated, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { emptySubmission, normalizeProductType, requiredSubmissionFields, scoreFields, validScores, scorePayload, submissionPayload } from '../gradingForm'
 import { saveAs } from 'file-saver'
 import NxrCardIdentityPanel from '@/components/NxrCardIdentityPanel.vue'
 import { ElMessage } from 'element-plus'
-import { approveSubmission } from '@/api/nxr/entries'
+import { approveSubmission, calculateGrade, generateCertId } from '@/api/nxr/entries'
 import useUserStore from '@/store/modules/user'
 import {
   completeOrderPackingCheck, createOrderItemSubmission, exportOrderLabels, exportOrderManifest,
@@ -86,6 +99,7 @@ import {
 
 const props = defineProps({ orderId: { type: Number, required: true }, orderItems: { type: Array, default: () => [] } })
 const { proxy } = getCurrentInstance()
+const { t } = useI18n()
 const { nxr_vintage_classification } = proxy.useDict('nxr_vintage_classification')
 const snapshot = ref(null)
 const identities = ref({})
@@ -111,24 +125,80 @@ const creatingSubmission = ref(false)
 onDeactivated(() => { submissionOpen.value = false })
 const approvingSubmissionId = ref(null)
 const activeWorkbenchItem = ref(null)
-const scoreFields = [{ key: 'centeringScore', label: 'Centering' }, { key: 'edgesScore', label: 'Edges' }, { key: 'cornersScore', label: 'Corners' }, { key: 'surfaceScore', label: 'Surface' }]
 const submissionForm = ref(emptySubmission())
 
-function emptySubmission() {
-  return { certId: '', productType: 'graded_card', vintageClassification: '', merchDescription: '', cardCategory: 'trading_card', cardName: '', movieName: '', releaseYear: '', productionCompany: '', filmType: '', sportsType: '', groupName: '', yearLabel: '', brandName: '', setName: '', cardNumber: '', languageCode: 'EN', centeringScore: 10, edgesScore: 10, cornersScore: 10, surfaceScore: 10, entryNotes: '' }
+const submissionFormRef = ref(null)
+const generatingCert = ref(false)
+const gradePreview = ref(null)
+const gradePreviewFailed = ref(false)
+const calculatingGrade = ref(false)
+let previewTimer
+let previewVersion = 0
+const fieldMessages = {
+  certId: 'certRequired', productType: 'productTypeRequired', cardCategory: 'categoryRequired',
+  vintageClassification: 'vintageRequired', movieName: 'movieNameRequired', releaseYear: 'releaseYearRequired',
+  productionCompany: 'productionCompanyRequired', filmType: 'filmTypeRequired', cardName: 'cardNameRequired',
+  brandName: 'brandRequired', setName: 'setNameRequired', cardNumber: 'cardNumberRequired',
+  languageCode: 'languageRequired', sportsType: 'sportsTypeRequired', groupName: 'groupNameRequired'
 }
-function normalizeProductType(value) { return value === 'merch_product' || value === 'label_product' ? 'merch_product' : value === 'vintage_product' ? 'vintage_product' : 'graded_card' }
+const submissionRules = computed(() => Object.fromEntries(requiredSubmissionFields(submissionForm.value).map(key => [key, [{
+  required: true,
+  validator(_rule, value, done) {
+    const score = scoreFields.find(field => field.key === key)
+    let message = ''
+    if (score && (value === null || value === '' || !Number.isFinite(Number(value)) || Number(value) < 1 || Number(value) > 10)) message = t('entries.scoreRange', { label: t(score.label) })
+    else if (!score && !String(value ?? '').trim()) message = t(`entries.${fieldMessages[key]}`)
+    else if (key === 'certId' && !/^[1-9]\d{9}$/.test(String(value).trim())) message = t('entries.certFormat')
+    done(message ? new Error(message) : undefined)
+  }, trigger: ['blur', 'change']
+}]])))
+
+function invalidateGradePreview() {
+  clearTimeout(previewTimer)
+  previewVersion++
+  gradePreview.value = null
+  gradePreviewFailed.value = false
+  calculatingGrade.value = false
+}
+async function refreshGradePreview() {
+  invalidateGradePreview()
+  if (!submissionOpen.value || !isGradedSubmission.value || !validScores(submissionForm.value)) return
+  const version = previewVersion
+  calculatingGrade.value = true
+  try {
+    // The server uses the same rounding as Python; do not duplicate it in JavaScript.
+    const result = await calculateGrade(scorePayload(submissionForm.value))
+    if (version === previewVersion) gradePreview.value = result.data
+  } catch {
+    if (version === previewVersion) gradePreviewFailed.value = true
+  } finally {
+    if (version === previewVersion) calculatingGrade.value = false
+  }
+}
+async function generateCertificate() {
+  generatingCert.value = true
+  const target = submissionForm.value
+  try {
+    const result = await generateCertId()
+    if (submissionOpen.value && submissionForm.value === target) {
+      target.certId = result.data.certId
+      submissionFormRef.value?.clearValidate('certId')
+    }
+  } finally { generatingCert.value = false }
+}
 function openSubmission(item) {
   activeWorkbenchItem.value = item
   const source = props.orderItems.find(row => row.id === item.orderItemId) || {}
-  submissionForm.value = { ...emptySubmission(), productType: normalizeProductType(source.productType), cardName: source.cardName || item.cardName || '', brandName: source.brandName || '', yearLabel: source.year || '', setName: source.setName || '', cardNumber: source.cardNumber || '', languageCode: source.languageCode || 'EN', cardCategory: source.category || 'trading_card' }
+  submissionForm.value = { ...emptySubmission(), productType: normalizeProductType(source.productType), cardName: source.cardName || item.cardName || '', brandName: source.brandName || '', yearLabel: source.year || '', setName: source.setName || '', cardNumber: source.cardNumber || '', languageCode: source.languageCode || 'EN', cardCategory: source.category || source.cardCategory || 'trading_card' }
   submissionOpen.value = true
+  nextTick(() => submissionFormRef.value?.clearValidate())
 }
 async function createSubmission() {
-  if (!activeWorkbenchItem.value || !submissionForm.value.certId.trim()) return
+  if (!activeWorkbenchItem.value || creatingSubmission.value) return
+  if (!await submissionFormRef.value?.validate().catch(() => false)) return
   creatingSubmission.value = true
   try {
-    await createOrderItemSubmission(props.orderId, activeWorkbenchItem.value.orderItemId, submissionForm.value)
+    await createOrderItemSubmission(props.orderId, activeWorkbenchItem.value.orderItemId, submissionPayload(submissionForm.value))
     submissionOpen.value = false
     await load()
   } finally { creatingSubmission.value = false }
@@ -177,10 +247,34 @@ async function download(type, selectedOnly = false) {
   } finally { exporting.value = '' }
 }
 
+watch(() => submissionForm.value.productType, type => {
+  if (type !== 'graded_card') {
+    submissionForm.value.cardCategory = 'trading_card'
+    submissionForm.value.sportsType = ''
+    submissionForm.value.groupName = ''
+    for (const { key } of scoreFields) submissionForm.value[key] = null
+  } else {
+    for (const { key } of scoreFields) if (submissionForm.value[key] == null) submissionForm.value[key] = 1
+  }
+  if (type !== 'vintage_product') submissionForm.value.vintageClassification = ''
+  if (type !== 'merch_product') submissionForm.value.merchDescription = ''
+  nextTick(() => submissionFormRef.value?.clearValidate())
+})
+watch(() => [submissionOpen.value, submissionForm.value.productType, ...scoreFields.map(({ key }) => submissionForm.value[key])], () => {
+  invalidateGradePreview()
+  if (submissionOpen.value && isGradedSubmission.value && validScores(submissionForm.value)) {
+    calculatingGrade.value = true
+    previewTimer = setTimeout(refreshGradePreview, 300)
+  }
+}, { flush: 'sync' })
+onBeforeUnmount(invalidateGradePreview)
+
 watch(() => props.orderId, () => { identities.value = {}; void load() }, { immediate: true })
 </script>
 
 <style scoped>
 .workbench-panel{display:grid;gap:12px}.panel-heading{display:flex;justify-content:space-between;align-items:center;gap:16px}.panel-heading p,.print-history{margin:4px 0 0;color:var(--nxr-text-faint)}.scan-row{margin-top:4px}.panel-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.panel-actions .el-input{width:min(300px,100%)}
 @media(max-width:760px){.panel-heading{align-items:stretch;flex-direction:column}.panel-actions>*{width:100%!important}}
+.submission-form :deep(.el-input-number),.submission-form :deep(.el-select){width:100%}
+.grade-preview{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:18px;padding:12px;border:1px solid var(--el-border-color);border-radius:6px}
 </style>

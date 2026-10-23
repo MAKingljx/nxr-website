@@ -57,7 +57,7 @@ test('server Layout wrappers become one translated workspace with unique names a
   assert.deepEqual(parent.children.flatMap(child => child.alias || []), ['/nxr/partners', '/nxr/agent-workbench'])
   for (const child of parent.children.slice(1)) {
     assert.equal(child.meta.workspaceView, child.path)
-    assert.equal(child.meta.activeMenu, workspacePath(['orders','batches'].includes(child.path) ? child.path : child.path === 'returns' ? 'batches' : 'orders'))
+    assert.equal(child.meta.activeMenu, workspacePath(['orders','batches','addresses'].includes(child.path) ? child.path : child.path === 'returns' ? 'batches' : 'orders'))
     assert.equal(child.component, workspace.component)
   }
   assert.equal(parent.children[1].meta.title, 'Order')
@@ -69,7 +69,7 @@ test('bound partner receives only existing workspace capability, and management-
   const boundPartner = groupSubmissionWorkspaceRoutes([wrapper(workspace)])[0]
   assert.deepEqual(boundPartner.children.map(child => child.path), WORKSPACE_VIEWS)
   assert.ok(boundPartner.children.every(child => child.component !== partners.component))
-  assert.deepEqual(boundPartner.children.filter(child => !child.hidden).map(child => child.path), ['orders','batches'])
+  assert.deepEqual(boundPartner.children.filter(child => !child.hidden).map(child => child.path), ['orders','batches','addresses'])
   const managementOnly = groupSubmissionWorkspaceRoutes([wrapper(partners)])[0]
   assert.deepEqual(managementOnly.children.map(child => child.path), ['partners'])
   assert.equal(managementOnly.redirect, workspacePath('partners'))

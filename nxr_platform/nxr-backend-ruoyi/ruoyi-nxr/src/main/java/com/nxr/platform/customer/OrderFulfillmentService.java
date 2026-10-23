@@ -154,6 +154,7 @@ public class OrderFulfillmentService {
     @Transactional
     public CustomerAddress saveAddress(long customerId, Long addressId, AddressRequest request) {
         AddressValues values = normalizeAddress(request);
+        lockMerchantAddressOwner(customerId);
         if (values.isDefault()) {
             jdbcClient.sql("UPDATE customer_address SET is_default = 0 WHERE customer_id = :customerId")
                 .param("customerId", customerId)
@@ -201,6 +202,7 @@ public class OrderFulfillmentService {
 
     @Transactional
     public void deleteAddress(long customerId, long addressId) {
+        lockMerchantAddressOwner(customerId);
         CustomerAddress address = requireAddress(customerId, addressId);
         jdbcClient.sql("DELETE FROM customer_address WHERE id = :addressId AND customer_id = :customerId")
             .param("addressId", addressId)
@@ -221,6 +223,28 @@ public class OrderFulfillmentService {
                 .param("customerId", customerId)
                 .update();
         }
+    }
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public CustomerAddress setMerchantDefaultAddress(long customerId, long addressId) {
+        requireMerchant(customerId);
+        lockMerchantAddressOwner(customerId);
+        requireAddress(customerId,addressId);
+        // MySQL updates this timestamp automatically unless it is explicitly
+        // retained; selecting a default must not look like an address edit.
+        jdbcClient.sql("""
+            UPDATE customer_address SET is_default=CASE WHEN id=:addressId THEN 1 ELSE 0 END,
+                updated_at=updated_at
+            WHERE customer_id=:customerId
+            """).param("addressId",addressId).param("customerId",customerId).update();
+        return requireAddress(customerId,addressId);
+    }
+
+    private void lockMerchantAddressOwner(long customerId) {
+        // Serialize all merchant address mutations, including existing edit/delete
+        // paths. Individual-customer address behavior is unchanged.
+        jdbcClient.sql("SELECT id FROM customer_account WHERE id=:id AND account_type_code='merchant' FOR UPDATE")
+            .param("id",customerId).query(Long.class).optional();
     }
 
     public List<ShippingOption> listShippingOptions(String country, boolean includeInactive) {
@@ -1007,15 +1031,17 @@ public class OrderFulfillmentService {
 
     public EffectiveShippingOption effectiveShippingOption(long orderId) {
         OrderRow order = requireOrder(orderId);
+        boolean partnerBatch=MerchantOrderPolicy.isBatchOrder(jdbcClient,orderId);
         return jdbcClient.sql(
                 """
                 SELECT new_option_code, new_option_name, new_price_amount, currency_code
                 FROM shipping_change_request
-                WHERE order_id = :orderId AND status_code = 'settled'
-                ORDER BY settled_at DESC, id DESC LIMIT 1
+                WHERE order_id = :orderId AND (status_code='settled' OR (:partnerBatch=1 AND status_code='awaiting_settlement'))
+                ORDER BY COALESCE(settled_at,reviewed_at,created_at) DESC, id DESC LIMIT 1
                 """
             )
             .param("orderId", order.id())
+            .param("partnerBatch",partnerBatch?1:0)
             .query((rs, rowNum) -> new EffectiveShippingOption(
                 rs.getString("new_option_code"), rs.getString("new_option_name"),
                 rs.getBigDecimal("new_price_amount"), rs.getString("currency_code")
@@ -1034,13 +1060,15 @@ public class OrderFulfillmentService {
         if (!order.statusCode().equals("completed")) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Return shipment can be created after final quality check");
         }
+        boolean partnerBatch=MerchantOrderPolicy.isBatchOrder(jdbcClient,orderId);
         int pendingChanges = jdbcClient.sql(
                 """
                 SELECT COUNT(*) FROM shipping_change_request
-                WHERE order_id = :orderId AND status_code IN ('requested', 'awaiting_settlement')
+                WHERE order_id = :orderId AND (status_code='requested' OR (:paymentRequired=1 AND status_code='awaiting_settlement'))
                 """
             )
             .param("orderId", order.id())
+            .param("paymentRequired",partnerBatch?0:1)
             .query(Integer.class)
             .single();
         if (pendingChanges > 0) {

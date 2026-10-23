@@ -11,6 +11,7 @@ import useLockStore from '@/store/modules/lock'
 import useSettingsStore from '@/store/modules/settings'
 import usePermissionStore from '@/store/modules/permission'
 import { legacyWorkspaceLocation, workspacePath } from '@/utils/submissionWorkspace'
+import { adminOrderLocation } from '@/utils/adminOrderNavigation'
 import { canViewDashboard } from '@/utils/dashboardAccess'
 
 NProgress.configure({ showSpinner: false })
@@ -29,7 +30,8 @@ function businessLandingPath(target) {
 }
 
 function legacyLanding(target) {
-  return router.hasRoute('NxrWorkspaceOrders') ? legacyWorkspaceLocation(target) : null
+  const resolved = router.resolve(target)
+  return adminOrderLocation(resolved) || (router.hasRoute('NxrWorkspaceOrders') ? legacyWorkspaceLocation(target) : null)
 }
 
 const isWhiteList = (path) => {

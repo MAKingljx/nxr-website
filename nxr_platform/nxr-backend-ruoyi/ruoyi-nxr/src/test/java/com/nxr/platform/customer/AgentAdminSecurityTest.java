@@ -99,6 +99,7 @@ class AgentAdminSecurityTest {
         assertThatThrownBy(()->commerceController.removeUnusedPhoto(202L,9)).hasMessageContaining("403");
         assertThatThrownBy(()->commerceController.order(202L,"OTHER")).hasMessageContaining("403");
         assertThatThrownBy(()->commerceController.updateAddress(202L,20,null)).hasMessageContaining("403");
+        assertThatThrownBy(()->commerceController.defaultAddress(202L,20)).hasMessageContaining("403");
         assertThatThrownBy(()->workbenchController.intake(202L,99)).hasMessageContaining("403");
         verifyNoInteractions(photos,portal,fulfillment,workbench);
     }
@@ -111,6 +112,7 @@ class AgentAdminSecurityTest {
         verifyNoInteractions(portal);
         commerceController.batch(null,"MB-OWN");verify(batches).requireMerchantBatch(101,"MB-OWN");
         commerceController.addresses(null);verify(fulfillment).listAddresses(101);
+        commerceController.defaultAddress(null,7);verify(fulfillment).setMerchantDefaultAddress(101,7);
         var recharge=new MerchantWalletService.RechargeRequest("USD",BigDecimal.TEN,"manual_transfer","payer","proof");
         commerceController.recharge(null,recharge);verify(wallet).createRecharge(101,recharge);verifyNoMoreInteractions(wallet);
         assertThat(Arrays.stream(AgentCommerceController.class.getDeclaredMethods()).map(java.lang.reflect.Method::getName))
@@ -123,6 +125,13 @@ class AgentAdminSecurityTest {
         verifyNoInteractions(commerce);
         commerceController.photo(null,9);verify(photos).readOwned(101,9,false);
         commerceController.original(null,9);verify(photos).readOwned(101,9,true);
+    }
+    @Test void logisticsOptionsUseOnlyTheBoundMerchantAndNeverRequirePaymentPrivileges() {
+        login(10,Set.of("nxr:agent:workbench"));
+        commerceController.logisticsOptions(null,"FR",3);
+        verify(commerce).merchantLogisticsOptions(101,"FR",3);
+        assertThatThrownBy(()->commerceController.logisticsOptions(202L,"FR",3)).hasMessageContaining("403");
+        verifyNoInteractions(portal,wallet);
     }
     @Test void disablingBindingOrCompanyImmediatelyRejectsCachedBackendPermission() {
         login(10,Set.of("nxr:agent:workbench"));

@@ -3,6 +3,7 @@ package com.nxr.platform.customer;
 import com.nxr.platform.commerce.OrderAccessScopeService;
 import com.nxr.platform.commerce.CommercePolicyService;
 import com.nxr.platform.notifications.NotificationOutboxService;
+import com.nxr.platform.admission.OrderAdmissionService;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -38,6 +39,8 @@ public class MerchantBatchService {
 
     @Autowired(required = false)
     private PartnerReturnService partnerReturnService;
+    @Autowired(required=false)
+    private OrderAdmissionService orderAdmissionService;
 
     private final JdbcClient jdbcClient;
     private final CustomerPortalService customerPortalService;
@@ -120,7 +123,7 @@ public class MerchantBatchService {
             }
             quoteParts.add(new CommercePolicyService.BatchPartRequest(reference, requestedCardCount(order)));
         }
-        CommercePolicyService.BatchQuoteResult batchQuote = commercePolicyService.quoteBatch(
+        CommercePolicyService.BatchQuoteResult batchQuote = commercePolicyService.quoteMerchantBatch(
             merchantCustomerId, batchRoute.country(), batchRoute.currencyCode(), quoteParts, batchRoute.shippingOptionCode()
         );
         HashMap<String, CommercePolicyService.AllocatedBatchQuote> allocations = new HashMap<>();
@@ -133,9 +136,9 @@ public class MerchantBatchService {
         }
         String resolvedBatchName = batchName;
         BatchCreateResult result = joinTransaction ? createBatchAtomically(
-            merchantCustomerId, rows, batchQuote, allocations, batchNo, sourceName, resolvedBatchName
+            merchantCustomerId, rows, batchQuote, allocations, batchNo, sourceName, resolvedBatchName, request
         ) : batchTransaction.execute(status -> createBatchAtomically(
-            merchantCustomerId, rows, batchQuote, allocations, batchNo, sourceName, resolvedBatchName
+            merchantCustomerId, rows, batchQuote, allocations, batchNo, sourceName, resolvedBatchName, request
         ));
         if (result == null) {
             throw new IllegalStateException("Merchant batch transaction returned no result");
@@ -150,8 +153,14 @@ public class MerchantBatchService {
         HashMap<String, CommercePolicyService.AllocatedBatchQuote> allocations,
         String batchNo,
         String sourceName,
-        String batchName
+        String batchName,
+        BatchCreateRequest request
     ) {
+        if (orderAdmissionService == null) {
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"Order admission configuration is not installed");
+        }
+        OrderAdmissionService.MerchantTermsSnapshot terms = orderAdmissionService.requireMerchantSubmissionTerms(
+            new OrderAdmissionService.MerchantTermsRequest(request.termsAccepted(),request.termsVersion(),request.termsText(),request.turnaroundText()));
         jdbcClient.sql(
                 """
                 INSERT INTO merchant_order_batch
@@ -184,6 +193,7 @@ public class MerchantBatchService {
                 merchantCustomerId, row.order(), batchQuote.aggregate(), allocation
             );
             long batchItemId = insertBatchItem(batchId, order.id(), rowNo, clientReference, row);
+            orderAdmissionService.recordMerchantSubmissionTerms(order.id(),merchantCustomerId,terms);
             TrackingToken token = issueToken(batchItemId);
             results.add(new BatchCreateRow(
                 rowNo, "accepted", order.id(), order.orderNo(), clientReference,
@@ -277,12 +287,13 @@ public class MerchantBatchService {
         PublicOrder row = jdbcClient.sql(
                 """
                 SELECT bi.id AS batch_item_id, bi.client_reference, o.id AS order_id, o.order_no,
-                       o.status_code, o.admission_status_code, o.total_card_count, o.created_at, o.updated_at,
+                """+MerchantOrderPolicy.visibleStatusSql("o")+"""
+                       AS status_code, o.admission_status_code, o.total_card_count, o.created_at, o.updated_at,
                        b.id AS batch_id
                 FROM merchant_batch_tracking_token t
                 JOIN merchant_order_batch_item bi ON bi.id = t.batch_item_id
                 JOIN merchant_order_batch b ON b.id = bi.batch_id
-                JOIN grading_order o ON o.id = bi.order_id
+                JOIN grading_order o ON o.id = bi.order_id AND o.customer_id = b.merchant_customer_id
                 WHERE t.token_hash = :tokenHash AND t.status_code = 'active' AND t.revoked_at IS NULL
                 """
             )
@@ -346,8 +357,12 @@ public class MerchantBatchService {
         if (orders.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This batch has no accepted orders");
         }
+        if(orderAdmissionService!=null) {
+            for(BatchOrderState order:orders)orderAdmissionService.prepareMerchantFulfillment(order.orderId());
+            orders=lockBatchOrders(batch.id());
+        }
         if (orders.stream().anyMatch(order -> !Set.of("awaiting_inbound", "inbound_shipped").contains(order.statusCode()))) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "Every customer order must be paid and ready before the master parcel ships");
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "Every partner order must complete review and service terms before the master parcel ships");
         }
         if (hasOpenShipment(batch.id(), "inbound")) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This batch already has an active inbound master parcel");
@@ -658,12 +673,15 @@ public class MerchantBatchService {
         List<BatchOrderItem> orders = jdbcClient.sql(
                 """
                 SELECT bi.id, bi.row_no, bi.client_reference, bi.client_display_name, bi.client_contact_hint,
-                       o.id AS order_id, o.order_no, o.status_code, o.admission_status_code, o.total_card_count,
+                       o.id AS order_id, o.order_no,
+                """+MerchantOrderPolicy.visibleStatusSql("o")+"""
+                       AS status_code, o.admission_status_code, o.total_card_count,
                        (SELECT token_hint FROM merchant_batch_tracking_token t
                         WHERE t.batch_item_id = bi.id AND t.status_code = 'active' AND t.revoked_at IS NULL
                         ORDER BY t.id DESC LIMIT 1) AS token_hint
                 FROM merchant_order_batch_item bi
-                JOIN grading_order o ON o.id = bi.order_id
+                JOIN merchant_order_batch b ON b.id = bi.batch_id
+                JOIN grading_order o ON o.id = bi.order_id AND o.customer_id = b.merchant_customer_id
                 WHERE bi.batch_id = :batchId ORDER BY bi.row_no
                 """
             )
@@ -946,7 +964,11 @@ public class MerchantBatchService {
     ) {
     }
 
-    public record BatchCreateRequest(String sourceName, String batchName, List<BatchOrderRequest> orders) {
+    public record BatchCreateRequest(String sourceName, String batchName, List<BatchOrderRequest> orders,
+        Boolean termsAccepted, String termsVersion, String termsText, String turnaroundText) {
+        public BatchCreateRequest(String sourceName, String batchName, List<BatchOrderRequest> orders) {
+            this(sourceName,batchName,orders,null,null,null,null);
+        }
     }
 
     public record BatchOrderRequest(

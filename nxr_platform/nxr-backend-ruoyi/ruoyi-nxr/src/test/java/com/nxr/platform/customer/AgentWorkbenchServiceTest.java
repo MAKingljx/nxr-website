@@ -76,12 +76,12 @@ class AgentWorkbenchServiceTest {
         cancellationPortal.setAgentOrderCancellationService(new AgentOrderCancellationService(client));
         portal=mock(CustomerPortalService.class);
         var commerce=mock(CommercePolicyService.class);
-        when(commerce.quoteBatch(anyLong(),any(),any(),any(),any())).thenAnswer(call -> {
+        when(commerce.quoteMerchantBatch(anyLong(),any(),any(),any(),any())).thenAnswer(call -> {
             List<CommercePolicyService.BatchPartRequest> parts=call.getArgument(3);
             int cards=parts.stream().mapToInt(CommercePolicyService.BatchPartRequest::cardCount).sum();
-            var aggregate=new CommercePolicyService.QuoteResult(1,"business","US","USD",cards,1L,2L,"policy","policy",
+            var aggregate=new CommercePolicyService.QuoteResult(1,"business",call.getArgument(1),call.getArgument(2),cards,1L,2L,"policy","policy",
                 BigDecimal.TEN,BigDecimal.TEN.multiply(BigDecimal.valueOf(cards)),BigDecimal.ZERO,BigDecimal.TEN.multiply(BigDecimal.valueOf(cards)),
-                50,100,200,500,"agent_return","Agent return",null);
+                50,100,200,500,call.getArgument(4),"Agent return",null);
             return new CommercePolicyService.BatchQuoteResult(aggregate,parts.stream().map(p->new CommercePolicyService.AllocatedBatchQuote(p.reference(),p.cardCount(),
                 BigDecimal.TEN.multiply(BigDecimal.valueOf(p.cardCount())),BigDecimal.ZERO,BigDecimal.TEN.multiply(BigDecimal.valueOf(p.cardCount())))).toList());
         });
@@ -89,6 +89,9 @@ class AgentWorkbenchServiceTest {
         batches=new MerchantBatchService(client,portal,fulfillment,commerce,manager);
         photos=new CustomerOrderPhotoService(client,jdbc,new MediaCapacityService(0),directory.toString());
         admission=mock(OrderAdmissionService.class); when(admission.maxCardsPerOrder()).thenReturn(200);
+        when(admission.requireMerchantSubmissionTerms(any())).thenReturn(
+            new OrderAdmissionService.MerchantTermsSnapshot("v1","Service terms","Estimated turnaround"));
+        org.springframework.test.util.ReflectionTestUtils.setField(batches,"orderAdmissionService",admission);
         service=new AgentWorkbenchService(client,fulfillment,batches,photos,new ObjectMapper().findAndRegisterModules(),admission);
         jdbc.execute("CREATE TABLE brand_settings(id BIGINT AUTO_INCREMENT PRIMARY KEY,name VARCHAR(128),sort_order INT,is_active INT)");
         jdbc.execute("CREATE TABLE sys_dict_data(dict_code BIGINT AUTO_INCREMENT PRIMARY KEY,dict_type VARCHAR(100),dict_value VARCHAR(100),dict_label VARCHAR(100),status VARCHAR(1),dict_sort INT)");
@@ -96,6 +99,10 @@ class AgentWorkbenchServiceTest {
         jdbc.update("INSERT INTO sys_dict_data(dict_type,dict_value,dict_label,status,dict_sort) VALUES('nxr_product_type','graded_card','Graded Card','0',1),('nxr_product_type','vintage_product','Vintage Card','0',2),('nxr_product_type','merch_product','Merch Product','0',3),('nxr_card_category','trading_card','Trading Card','0',1),('nxr_card_category','disabled_category','Disabled','1',2),('nxr_language','EN','English','0',1)");
         var returns=mock(PartnerReturnService.class);
         when(returns.progress(anyLong())).thenReturn(new PartnerReturnService.OrderReturnProgress(1,0,0,0,0));
+        when(returns.progress(anyCollection())).thenAnswer(call->{
+            java.util.Collection<Long> ids=call.getArgument(0);
+            return ids.stream().collect(java.util.stream.Collectors.toMap(id->id,id->new PartnerReturnService.OrderReturnProgress(1,0,0,0,0)));
+        });
         orders=new AgentOrderService(client,jdbc,service,fulfillment,photos,admission,returns,new ObjectMapper().findAndRegisterModules());
     }
 
@@ -106,6 +113,10 @@ class AgentWorkbenchServiceTest {
         assertThat(first.order().statusCode()).isEqualTo("ready");
         assertThat(first.order().canSubmit()).isTrue(); assertThat(first.order().legacy()).isFalse();
         assertThat(first.order().gradingOrderId()).isNull();
+        assertThat(first.order().customerAddress()).isEqualTo(orderAddress());
+        assertThat(jdbc.queryForObject("SELECT address_line1 FROM agent_client WHERE id=?",String.class,first.cards().get(0).clientId()))
+            .isEqualTo("Customer road");
+        assertThat(jdbc.queryForObject("SELECT address_line1 FROM customer_address WHERE id=10",String.class)).isEqualTo("Agent road");
         assertThat(first.cards()).singleElement().satisfies(card->{
             assertThat(card.brandName()).isEqualTo("Pokemon"); assertThat(card.setName()).isEqualTo("Base Set");
             assertThat(card.productType()).isEqualTo("graded_card"); assertThat(card.category()).isEqualTo("trading_card");
@@ -123,6 +134,107 @@ class AgentWorkbenchServiceTest {
         assertThatThrownBy(()->orders.detail(2,first.order().id())).hasMessageContaining("404");
         assertThat(orders.options(1).productTypes()).extracting(AgentOrderService.Option::value)
             .containsExactly("graded_card","vintage_product");
+    }
+
+    @Test void submissionContractRejectionLeavesReadyInventoryAndAllGeneratedRowsUntouched() throws Exception {
+        enableRealSubmissionTerms();
+        var intake=ready(createClient(1,"TERMS").id(),1,"terms-ready");
+        var shown=admission.merchantPublicConfig();
+        var invalid=List.of(
+            termsRequest(intake,"missing",false,shown.termsVersion(),shown.termsText(),shown.turnaroundText()),
+            termsRequest(intake,"version",true,"old-version",shown.termsText(),shown.turnaroundText()),
+            termsRequest(intake,"text",true,shown.termsVersion(),"Changed text",shown.turnaroundText()),
+            termsRequest(intake,"turnaround",true,shown.termsVersion(),shown.termsText(),"Changed turnaround")
+        );
+        long events=count("agent_event");
+        for(var request:invalid) assertThatThrownBy(()->tx.execute(s->service.submit(1,request))).isInstanceOf(ResponseStatusException.class);
+        for(String table:List.of("agent_submission","merchant_order_batch","merchant_order_batch_item","merchant_batch_tracking_token",
+            "grading_order","grading_order_item","order_terms_acceptance","order_admission_event")) assertThat(count(table)).as(table).isZero();
+        assertThat(count("agent_event")).isEqualTo(events);
+        assertThat(service.intakeDetail(1,intake.intake().id()).intake().statusCode()).isEqualTo("ready");
+        assertThat(service.intakeDetail(1,intake.intake().id()).cards()).allSatisfy(card->{
+            assertThat(card.statusCode()).isEqualTo("in_stock");assertThat(card.orderItemId()).isNull();
+        });
+    }
+
+    @Test void submitRecordsRealConsentInTheBatchTransactionAndApprovalIsReadyForInbound() throws Exception {
+        enableRealSubmissionTerms();
+        var intake=ready(createClient(1,"AGREED").id(),1,"agreed-ready");
+        var shown=admission.merchantPublicConfig();
+        var request=termsRequest(intake,"agreed",true,shown.termsVersion(),shown.termsText(),shown.turnaroundText());
+        var submitted=tx.execute(s->service.submit(1,request));
+        var after=service.intakeDetail(1,intake.intake().id());
+        long orderId=after.intake().orderId();
+        assertThat(after.intake().statusCode()).isEqualTo("submitted");
+        assertThat(count("order_terms_acceptance")).isOne();
+        assertThat(jdbc.queryForObject("SELECT terms_text FROM order_terms_acceptance",String.class)).isEqualTo(shown.termsText());
+        assertThat(jdbc.queryForObject("SELECT item_snapshot_hash FROM order_terms_acceptance",String.class)).hasSize(64);
+        assertThat(admission.requireAdminAdmission(orderId).admissionStatus()).isEqualTo("pending_review");
+        assertThat(admission.requireAdminAdmission(orderId).termsAcceptedAt()).isNotNull();
+        assertThat(tx.execute(s->service.submit(1,request)).id()).isEqualTo(submitted.id());
+        assertThat(count("order_terms_acceptance")).isOne();
+        var approved=tx.execute(s->admission.decide(orderId,9,new OrderAdmissionService.DecisionRequest("approve","Approved",1)));
+        assertThat(approved.canAcceptTerms()).isFalse();assertThat(approved.canPay()).isFalse();
+        assertThat(jdbc.queryForObject("SELECT status_code FROM grading_order WHERE id=?",String.class,orderId)).isEqualTo("awaiting_inbound");
+        tx.execute(s->{admission.prepareMerchantFulfillment(orderId);return null;});
+        assertThat(count("payment_record")).isZero();assertThat(count("payment_attempt")).isZero();
+    }
+
+    @Test void failureAfterConsentRollsBackTheWholeSubmissionAndItsAcceptance() throws Exception {
+        enableRealSubmissionTerms();
+        var intake=ready(createClient(1,"ROLLBACK").id(),1,"rollback-ready");
+        var shown=admission.merchantPublicConfig();
+        jdbc.execute("ALTER TABLE agent_submission ADD CONSTRAINT reject_terms_test CHECK(request_key<>'reject-after-consent')");
+        assertThatThrownBy(()->tx.execute(s->service.submit(1,termsRequest(intake,"reject-after-consent",true,
+            shown.termsVersion(),shown.termsText(),shown.turnaroundText())))).isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        for(String table:List.of("agent_submission","merchant_order_batch","merchant_order_batch_item","merchant_batch_tracking_token",
+            "grading_order","grading_order_item","order_terms_acceptance","order_admission_event")) assertThat(count(table)).as(table).isZero();
+        assertThat(service.intakeDetail(1,intake.intake().id()).intake().statusCode()).isEqualTo("ready");
+    }
+
+    private SubmissionRequest termsRequest(IntakeDetail intake,String key,Boolean accepted,String version,String text,String turnaround) {
+        return new SubmissionRequest(List.of(intake.intake().id()),10L,"agent_return","USD","Terms batch",key,
+            null,null,accepted,version,text,turnaround);
+    }
+
+    private void enableRealSubmissionTerms() {
+        jdbc.execute("""
+            ALTER TABLE grading_order ADD admission_revision INT DEFAULT 1 NOT NULL;
+            ALTER TABLE grading_order ADD admission_submitted_at TIMESTAMP;
+            ALTER TABLE grading_order ADD admission_decided_at TIMESTAMP;
+            ALTER TABLE grading_order ADD admission_decision_note CLOB;
+            ALTER TABLE grading_order ADD admission_reviewed_by_user_id BIGINT;
+            ALTER TABLE grading_order ADD payment_due_at TIMESTAMP;
+            ALTER TABLE grading_order ADD payment_deadline_status_code VARCHAR(24);
+            ALTER TABLE grading_order ADD approved_terms_text CLOB;
+            ALTER TABLE grading_order ADD approved_turnaround_text VARCHAR(1000);
+            ALTER TABLE grading_order ADD approved_quote_amount DECIMAL(12,2);
+            ALTER TABLE grading_order ADD approved_quote_currency VARCHAR(8);
+            ALTER TABLE grading_order_item ADD product_type VARCHAR(64);
+            ALTER TABLE grading_order_item ADD category VARCHAR(128);
+            ALTER TABLE grading_order_item ADD year_label VARCHAR(32);
+            ALTER TABLE grading_order_item ADD rarity VARCHAR(128);
+            CREATE TABLE order_admission_config(config_id INT PRIMARY KEY,payment_deadline_hours INT,max_cards_per_order INT,
+                terms_version VARCHAR(64),terms_text CLOB,turnaround_text VARCHAR(1000),config_version INT,updated_at TIMESTAMP);
+            INSERT INTO order_admission_config VALUES(1,48,200,'service-v1','Partner service terms','Estimated turnaround',1,CURRENT_TIMESTAMP);
+            CREATE TABLE order_terms_acceptance(id BIGINT AUTO_INCREMENT PRIMARY KEY,order_id BIGINT,customer_id BIGINT,
+                terms_version VARCHAR(64),accepted_quote_amount DECIMAL(12,2),accepted_quote_currency VARCHAR(8),
+                terms_text CLOB,turnaround_text VARCHAR(1000),item_snapshot_hash CHAR(64) NOT NULL DEFAULT '',
+                accepted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,UNIQUE(order_id,terms_version,item_snapshot_hash));
+            CREATE TABLE order_admission_event(id BIGINT AUTO_INCREMENT PRIMARY KEY,order_id BIGINT,event_code VARCHAR(32),
+                title VARCHAR(255),detail CLOB,actor_type_code VARCHAR(32),actor_customer_id BIGINT,actor_admin_user_id BIGINT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+            CREATE TABLE order_admission_supplemental_photo(id BIGINT AUTO_INCREMENT PRIMARY KEY,order_id BIGINT,photo_id BIGINT,
+                submitted_by_customer_id BIGINT,created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+            """);
+        var client=JdbcClient.create(jdbc);
+        admission=new OrderAdmissionService(client,null);
+        org.springframework.test.util.ReflectionTestUtils.setField(batches,"orderAdmissionService",admission);
+        service=new AgentWorkbenchService(client,new OrderFulfillmentService(client,jdbc),batches,photos,new ObjectMapper().findAndRegisterModules(),admission);
+        doAnswer(call->{
+            long owner=call.getArgument(0);var result=insertOrder(owner,call.getArgument(1),false);
+            admission.initialize(result.id(),owner,result.orderNo(),true);return result;
+        }).when(portal).createOrderWithBatchQuote(anyLong(),any(),any(),any());
     }
 
     @Test void orderReplayIsAtomicAndRejectsConflictingPayloadBeforeReclaimingPhotos() throws Exception {
@@ -143,6 +255,23 @@ class AgentWorkbenchServiceTest {
         assertThat(createOrder(1,request).order().id()).isEqualTo(1);
     }
 
+    @Test void newCustomerAddressIsRequiredAndSeparateFromPartnerReturnAddressAndMainContact() throws Exception {
+        var request=orderRequest(1,"address-order");
+        assertThatThrownBy(()->createOrder(1,new AgentOrderService.CreateRequest(request.clientName(),request.phone(),request.email(),request.notes(),request.cards(),request.requestKey(),null)))
+            .hasMessageContaining("Customer address is required");
+        assertThat(count("agent_client")).isZero();
+        var address=new Address("Recipient","15550009999","Client street",null,"Shanghai",null,"200000","CN");
+        var saved=createOrder(1,new AgentOrderService.CreateRequest(request.clientName(),request.phone(),request.email(),request.notes(),request.cards(),request.requestKey(),address));
+        assertThat(saved.order().phone()).isEqualTo(request.phone());
+        assertThat(saved.order().customerAddress()).isEqualTo(address);
+        assertThat(jdbc.queryForObject("SELECT address_line1 FROM customer_address WHERE id=10",String.class)).isEqualTo("Agent road");
+        assertThatThrownBy(()->orders.detail(2,saved.order().id())).hasMessageContaining("404");
+        Client client=createClient(1,"LEGACY-ADDRESS");var legacy=ready(client.id(),1,"legacy-address");
+        jdbc.update("UPDATE agent_client SET address_line1=NULL,city=NULL,country=NULL WHERE id=?",client.id());
+        assertThat(orders.detail(1,legacy.intake().id()).order().canSubmit()).isTrue();
+        assertThat(submit(legacy,"legacy-address-submit").batchId()).isPositive();
+    }
+
     @Test void orderRequiresContactControlledFieldsAndDistinctOwnedPhotos() throws Exception {
         var request=orderRequest(1,"invalid-order"); var card=request.cards().get(0);
         assertThatThrownBy(()->createOrder(1,new AgentOrderService.CreateRequest("A",null,null,null,request.cards(),"no-contact")))
@@ -157,12 +286,12 @@ class AgentWorkbenchServiceTest {
             new AgentOrderService.CardInput(card.cardName(),"Pokemon",card.setName(),card.officialCardNumber(),"EN","graded_card","trading_card",card.frontPhotoId(),null),
             new AgentOrderService.CardInput(card.cardName(),"Pokemon",card.setName(),card.officialCardNumber(),"EN","graded_card","trading_card",card.frontPhotoId(),card.frontPhotoId())
         )) {
-            assertThatThrownBy(()->createOrder(1,new AgentOrderService.CreateRequest("A","1",null,null,List.of(invalid),UUID.randomUUID().toString())))
+            assertThatThrownBy(()->createOrder(1,new AgentOrderService.CreateRequest("A","1",null,null,List.of(invalid),UUID.randomUUID().toString(),orderAddress())))
                 .isInstanceOf(ResponseStatusException.class);
         }
         long foreignPhoto=uploadStandalonePhoto(2);
         var foreign=new AgentOrderService.CardInput(card.cardName(),"Pokemon",card.setName(),card.officialCardNumber(),"EN","graded_card","trading_card",card.frontPhotoId(),foreignPhoto);
-        assertThatThrownBy(()->createOrder(1,new AgentOrderService.CreateRequest("A","1",null,null,List.of(foreign),"foreign-photo")))
+        assertThatThrownBy(()->createOrder(1,new AgentOrderService.CreateRequest("A","1",null,null,List.of(foreign),"foreign-photo",orderAddress())))
             .hasMessageContaining("404");
         assertThat(count("agent_intake")).isZero(); assertThat(count("agent_client")).isZero();
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM customer_order_photo WHERE preserved_for_agent=1",Integer.class)).isZero();
@@ -198,6 +327,24 @@ class AgentWorkbenchServiceTest {
         assertThat(photos.attachedOrderId(card.frontPhotoId())).isEqualTo(after.order().gradingOrderId());
     }
 
+    @Test void legacyBusinessPaymentStatesArePresentedWithoutAnyReadSideMutation() throws Exception {
+        var created=createOrder(1,orderRequest(1,"legacy-payment-view"));
+        var submitted=submit(service.intakeDetail(1,created.order().id()),"legacy-payment-view-submit");
+        long grading=orders.detail(1,created.order().id()).order().gradingOrderId();
+        jdbc.update("UPDATE grading_order SET status_code='payment_expired',admission_status_code='approved',approved_terms_version='v1' WHERE id=?",grading);
+        long events=count("agent_event");
+        assertThat(orders.detail(1,created.order().id()).order().statusCode()).isEqualTo("terms_confirmation");
+        assertThat(orders.list(1,1,20,null,"terms_confirmation").items()).hasSize(1);
+        assertThat(batches.requireMerchantBatch(1,submitted.batchNo()).orders()).singleElement()
+            .extracting(MerchantBatchService.BatchOrderItem::statusCode).isEqualTo("terms_confirmation");
+        assertThat(jdbc.queryForObject("SELECT status_code FROM grading_order WHERE id=?",String.class,grading)).isEqualTo("payment_expired");
+        jdbc.update("UPDATE grading_order SET accepted_terms_version='v1',terms_accepted_at=CURRENT_TIMESTAMP WHERE id=?",grading);
+        assertThat(orders.detail(1,created.order().id()).order().statusCode()).isEqualTo("awaiting_inbound");
+        assertThat(orders.list(1,1,20,null,"awaiting_inbound").items()).hasSize(1);
+        assertThat(count("agent_event")).isEqualTo(events);
+        assertThat(jdbc.queryForObject("SELECT status_code FROM grading_order WHERE id=?",String.class,grading)).isEqualTo("payment_expired");
+    }
+
     @Test void missingNewOrderPhotoCannotBeSubmittedButLegacyIntakesKeepTheirOriginalContract() throws Exception {
         var created=createOrder(1,orderRequest(1,"photo-required"));
         jdbc.update("UPDATE agent_card SET back_photo_id=NULL WHERE intake_id=?",created.order().id());
@@ -219,8 +366,9 @@ class AgentWorkbenchServiceTest {
     private AgentOrderService.CreateRequest orderRequest(long owner,String key) throws Exception {
         return new AgentOrderService.CreateRequest("Same customer","15550001111","same@example.test","Customer order",
             List.of(new AgentOrderService.CardInput("Pikachu","Pokemon","Base Set","001/102","EN","graded_card","trading_card",
-                uploadStandalonePhoto(owner),uploadStandalonePhoto(owner))),key);
+                uploadStandalonePhoto(owner),uploadStandalonePhoto(owner))),key,orderAddress());
     }
+    private Address orderAddress() {return new Address("Customer contact","15550001111","Customer road","Suite 2","Customer city","Region","12345","US");}
     private AgentOrderService.Detail createOrder(long owner,AgentOrderService.CreateRequest request) {
         return tx.execute(s->orders.create(owner,request));
     }
@@ -412,18 +560,25 @@ class AgentWorkbenchServiceTest {
         assertThatThrownBy(()->batches.createBatchInCurrentTransaction(1,null)).hasMessageContaining("active transaction");
     }
 
-    @Test void changedPresentedQuoteRollsBackTheEntireBatchBeforeInventoryIsSubmitted() {
+    @Test void businessSubmissionDoesNotRequireCurrencyOrBlockOnStaleClientQuote() {
         Client c=createClient(1,"A"); IntakeDetail i=ready(c.id(),1,"a");
-        var stale=new SubmissionRequest(List.of(i.intake().id()),10L,"agent_return","USD","Batch","quote-key",new BigDecimal("9.99"),"USD");
-        assertThatThrownBy(()->tx.execute(s->service.submit(1,stale))).hasMessageContaining("quote has changed");
-        for(String table:List.of("grading_order","grading_order_item","merchant_order_batch","merchant_order_batch_item","merchant_batch_tracking_token","agent_submission"))
-            assertThat(count(table)).as(table).isZero();
-        assertThat(service.intakeDetail(1,i.intake().id()).intake().statusCode()).isEqualTo("ready");
-        var wrongCurrency=new SubmissionRequest(List.of(i.intake().id()),10L,"agent_return","USD","Batch","quote-key",new BigDecimal("10.00"),"EUR");
-        assertThatThrownBy(()->tx.execute(s->service.submit(1,wrongCurrency))).hasMessageContaining("quote has changed");
-        var current=new SubmissionRequest(List.of(i.intake().id()),10L,"agent_return","USD","Batch","quote-key",new BigDecimal("10.00"),"USD");
-        assertThat(tx.execute(s->service.submit(1,current)).batchId()).isPositive();
+        var stale=new SubmissionRequest(List.of(i.intake().id()),10L,"agent_return",null,"Batch","quote-key",new BigDecimal("9.99"),"EUR");
+        assertThat(tx.execute(s->service.submit(1,stale)).batchId()).isPositive();
         assertThat(count("grading_order")).isEqualTo(1);
+        var request=org.mockito.ArgumentCaptor.forClass(CustomerPortalService.CreateOrderRequest.class);
+        verify(portal).createOrderWithBatchQuote(eq(1L),request.capture(),any(),any());
+        assertThat(request.getValue().currencyCode()).isEqualTo("USD");
+        assertThat(request.getValue().quotedTotalAmount()).isNull();
+    }
+
+    @Test void businessSubmissionRetainsSelectedWeightRouteAndItsCurrencyMetadata() {
+        Client c=createClient(1,"CNY");IntakeDetail intake=ready(c.id(),1,"weight-route");
+        var request=new SubmissionRequest(List.of(intake.intake().id()),10L,"weight_17","CNY","Weight route","selected-route");
+        assertThat(tx.execute(s->service.submit(1,request)).batchId()).isPositive();
+        var order=org.mockito.ArgumentCaptor.forClass(CustomerPortalService.CreateOrderRequest.class);
+        verify(portal).createOrderWithBatchQuote(eq(1L),order.capture(),any(),any());
+        assertThat(order.getValue().currencyCode()).isEqualTo("CNY");
+        assertThat(order.getValue().returnShippingOptionCode()).isEqualTo("weight_17");
     }
 
     @Test void returnChecksRequireDeliveredMasterParcelAndExactCardOrItsCertificateIdentity() {

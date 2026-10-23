@@ -15,6 +15,7 @@ export function orderReturnProgress(order) {
 export function validateOrderDraft(draft, maxCards) {
   if (!draft.clientName.trim()) return 'Enter the customer name.'
   if (!draft.phone.trim() && !draft.email.trim()) return 'Enter a phone number or email address.'
+  if (['addressLine1', 'city', 'country'].some(field => !String(draft.customerAddress?.[field] || '').trim())) return 'Complete the customer address.'
   if (!draft.cards.length || draft.cards.length > maxCards) return 'Check the card quantity.'
   for (const card of draft.cards) {
     if (['cardName', 'brandName', 'setName', 'officialCardNumber', 'languageCode', 'productType', 'category'].some(field => !String(card[field] || '').trim())) return 'Complete the required card fields.'
@@ -23,9 +24,26 @@ export function validateOrderDraft(draft, maxCards) {
   return ''
 }
 
+export function submissionOrderIds(value) {
+  if (value == null || value === '') return []
+  const parts = Array.isArray(value) ? value : String(value).split(',')
+  if (parts.length > 100 || parts.some(part => !/^[1-9]\d*$/.test(String(part)) || !Number.isSafeInteger(Number(part)))) throw new Error('Select valid orders for this Submit.')
+  return [...new Set(parts.map(Number))].sort((a, b) => a - b)
+}
+
+export function addressLabel(address) {
+  if (!address) return ''
+  return [address.country, address.region, address.city, address.addressLine1, address.addressLine2, address.postalCode].filter(Boolean).join(' · ')
+}
+
+export function displayedCardStatus(orderStatus, cardStatus) {
+  // An inbound parcel has shipped even while its cards await warehouse receipt.
+  return orderStatus === 'inbound_shipped' && cardStatus === 'awaiting_inbound' ? 'inbound_shipped' : cardStatus
+}
+
 export function draftFingerprint(draft) {
   const photo = value => value.file ? { name: value.file.name, size: value.file.size, modified: value.file.lastModified } : { id: value.id }
-  return { ...draft, cards: draft.cards.map(({ localId, front, back, ...fields }) => ({ ...fields, front: photo(front), back: photo(back) })) }
+  return { ...draft, customerAddress: { ...draft.customerAddress }, cards: draft.cards.map(({ localId, front, back, ...fields }) => ({ ...fields, front: photo(front), back: photo(back) })) }
 }
 
 export function canCompleteExistingIntake(order) {
