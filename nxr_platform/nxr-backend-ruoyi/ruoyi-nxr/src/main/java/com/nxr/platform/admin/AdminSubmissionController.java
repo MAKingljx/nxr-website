@@ -87,13 +87,13 @@ public class AdminSubmissionController {
         ));
     }
 
-    @PreAuthorize("@ss.hasAnyPermi('nxr:entry:list,nxr:entry:add')")
+    @PreAuthorize("@ss.hasAnyPermi('nxr:entry:list,nxr:entry:add,nxr:order:grading')")
     @GetMapping("/generate-cert-id")
     public AjaxResult generateCertId() {
         return AjaxResult.success(new GenerateCertIdResponse(adminSubmissionService.generateCertificateId()));
     }
 
-    @PreAuthorize("@ss.hasAnyPermi('nxr:entry:list,nxr:entry:add')")
+    @PreAuthorize("@ss.hasAnyPermi('nxr:entry:list,nxr:entry:add,nxr:order:grading')")
     @PostMapping("/calculate-grade")
     public AjaxResult calculateGrade(@Valid @RequestBody ScorePayload payload) {
         return AjaxResult.success(adminSubmissionService.calculateGrade(new AdminSubmissionService.ScoreRequest(

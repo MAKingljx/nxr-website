@@ -1,7 +1,7 @@
 ALTER TABLE agent_intake ADD COLUMN intake_no VARCHAR(48);
-ALTER TABLE grading_order ADD COLUMN terms_accepted_at TIMESTAMP;
-ALTER TABLE grading_order ADD COLUMN accepted_terms_version VARCHAR(64);
-ALTER TABLE grading_order ADD COLUMN approved_terms_version VARCHAR(64);
+ALTER TABLE grading_order ADD COLUMN IF NOT EXISTS terms_accepted_at TIMESTAMP;
+ALTER TABLE grading_order ADD COLUMN IF NOT EXISTS accepted_terms_version VARCHAR(64);
+ALTER TABLE grading_order ADD COLUMN IF NOT EXISTS approved_terms_version VARCHAR(64);
 ALTER TABLE grading_order ADD COLUMN business_line_id BIGINT DEFAULT 1;
 ALTER TABLE grading_order ADD COLUMN work_center_id BIGINT DEFAULT 1;
 CREATE TABLE submission_media(id BIGINT PRIMARY KEY AUTO_INCREMENT,submission_id BIGINT,media_side_code VARCHAR(16),storage_key VARCHAR(255),checksum_sha256 VARCHAR(64),public_url VARCHAR(255),is_active INT DEFAULT 1,media_stage_code VARCHAR(16) DEFAULT 'staged');

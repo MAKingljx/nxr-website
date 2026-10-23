@@ -70,10 +70,15 @@ public class AgentWorkbenchService {
     public record CheckInRequest(String inventoryCode, String conditionNote, Boolean hasException, String requestKey) { }
     public record ReturnCheckRequest(String inventoryCode, String note, String requestKey) { }
     public record SubmissionRequest(List<Long> intakeIds, Long returnAddressId, String returnShippingOptionCode,
-        String currencyCode, String batchName, String requestKey, BigDecimal quotedTotalAmount, String quotedCurrencyCode) {
+        String currencyCode, String batchName, String requestKey, BigDecimal quotedTotalAmount, String quotedCurrencyCode,
+        Boolean termsAccepted, String termsVersion, String termsText, String turnaroundText) {
         public SubmissionRequest(List<Long> intakeIds, Long returnAddressId, String returnShippingOptionCode,
             String currencyCode, String batchName, String requestKey) {
-            this(intakeIds,returnAddressId,returnShippingOptionCode,currencyCode,batchName,requestKey,null,null);
+            this(intakeIds,returnAddressId,returnShippingOptionCode,currencyCode,batchName,requestKey,null,null,null,null,null,null);
+        }
+        public SubmissionRequest(List<Long> intakeIds, Long returnAddressId, String returnShippingOptionCode,
+            String currencyCode, String batchName, String requestKey, BigDecimal quotedTotalAmount, String quotedCurrencyCode) {
+            this(intakeIds,returnAddressId,returnShippingOptionCode,currencyCode,batchName,requestKey,quotedTotalAmount,quotedCurrencyCode,null,null,null,null);
         }
     }
     public record Submission(long id, long batchId, String batchNo, List<Long> intakeIds, LocalDateTime createdAt) { }
@@ -300,10 +305,11 @@ public class AgentWorkbenchService {
         if(prior!=null) return submission(owner,prior);
         List<Long> ids=ids(r.intakeIds(),200,"intakes");
         if(r.returnAddressId()==null) throw bad("Select the agent return address");
-        // The shared NXR route and quote service remains authoritative for return shipping and pricing.
+        // Logistics remains mandatory. B submission never needs a client-side price or payment setup.
         fulfillment.requireAddress(owner,r.returnAddressId());
         String option=required(r.returnShippingOptionCode(),"Return shipping option",32);
-        String currency=required(r.currencyCode(),"Currency",8).toUpperCase(Locale.ROOT);
+        String currency=optional(r.currencyCode(),8);
+        currency=currency==null?"USD":currency.toUpperCase(Locale.ROOT);
         List<Intake> intakes=new ArrayList<>();
         List<List<Card>> inventory=new ArrayList<>();
         List<MerchantBatchService.BatchOrderRequest> orders=new ArrayList<>();
@@ -329,19 +335,8 @@ public class AgentWorkbenchService {
             orders.add(new MerchantBatchService.BatchOrderRequest(intake.intakeNo(),intake.clientName(),null,order));
             intakes.add(intake); inventory.add(cards);
         }
-        var batch=batches.createBatchInCurrentTransaction(owner,new MerchantBatchService.BatchCreateRequest("Agent workbench",optional(r.batchName(),191),orders));
-        if(r.quotedTotalAmount()!=null || r.quotedCurrencyCode()!=null) {
-            var amounts=jdbc.sql("""
-                SELECT o.currency_code,SUM(o.total_amount) AS total_amount FROM grading_order o
-                JOIN merchant_order_batch_item bi ON bi.order_id=o.id
-                JOIN merchant_order_batch b ON b.id=bi.batch_id AND b.merchant_customer_id=o.customer_id
-                WHERE b.id=:batch AND o.customer_id=:owner GROUP BY o.currency_code
-                """).params(params("batch",batch.batchId(),"owner",owner)).query().listOfRows();
-            if(r.quotedTotalAmount()==null || r.quotedCurrencyCode()==null || amounts.size()!=1
-                || r.quotedTotalAmount().compareTo((BigDecimal)amounts.get(0).get("total_amount"))!=0
-                || !r.quotedCurrencyCode().strip().equalsIgnoreCase((String)amounts.get(0).get("currency_code")))
-                throw conflict("The batch quote has changed. Refresh the quote before submitting");
-        }
+        var batch=batches.createBatchInCurrentTransaction(owner,new MerchantBatchService.BatchCreateRequest("Agent workbench",optional(r.batchName(),191),orders,
+            r.termsAccepted(),r.termsVersion(),r.termsText(),r.turnaroundText()));
         if(batch.rows().size()!=intakes.size()) throw new IllegalStateException("Batch row count does not match agent intakes");
         for(int index=0;index<intakes.size();index++) {
             Intake intake=intakes.get(index); var row=batch.rows().get(index);

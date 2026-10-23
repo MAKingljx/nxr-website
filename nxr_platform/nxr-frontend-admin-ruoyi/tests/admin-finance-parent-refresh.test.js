@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import vm from 'node:vm'
 import { readFileSync } from 'node:fs'
-import { orderDetailSection } from '../src/views/nxr/orders/orderPresentation.js'
+import { orderDetailSection, isPartnerOrder } from '../src/views/nxr/orders/orderPresentation.js'
 
 const source = readFileSync(new URL('../src/views/nxr/orders/index.vue', import.meta.url),'utf8')
 const detailFunction = source.slice(source.indexOf('async function openDetail('), source.indexOf('function refreshDetail('))
@@ -11,6 +11,7 @@ const deferred = () => {let resolve;const promise = new Promise(yes => {resolve=
 function fixture() {
   const response=deferred(), calls=[]
   const context={detailGeneration:0,detail:{value:{id:1,statusCode:'payment_exception'}},detailOpen:{value:true},detailTab:{value:'finance'},detailRefresh:{value:0},operations:{value:null},statusForm:{},intakeForm:{},trackingForm:{},taskDrafts:{},orderDetailSection,getGradingOrder:id => {calls.push(['detail',id]);return response.promise},getOrderOperations:async id => {calls.push(['operations',id]);return {data:{intakeCode:'TEST',expectedCardCount:1,workTasks:[]}}},loadOrders:async() => {calls.push(['list'])},proxy:{$modal:{msgSuccess:message => calls.push(['success',message])}},tx:text => text}
+  Object.assign(context, { isPartnerOrder, route: { meta: {} } })
   vm.runInNewContext(detailFunction+refreshFunction,context)
   return {context,response,calls,finish:() => response.resolve({data:{id:1,statusCode:'grading',shipments:[]}})}
 }

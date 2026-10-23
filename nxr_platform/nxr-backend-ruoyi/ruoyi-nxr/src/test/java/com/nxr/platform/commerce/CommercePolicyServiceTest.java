@@ -103,6 +103,57 @@ class CommercePolicyServiceTest {
     }
 
     @Test
+    void merchantBatchRetainsConfiguredFeesButMissingGradingPriceNeverBlocksSubmission() {
+        var parts=List.of(new CommercePolicyService.BatchPartRequest("A",2));
+        var configured=service.quoteMerchantBatch(2,"US","USD",parts,"tracked");
+        assertEquals(new BigDecimal("14.00"),configured.aggregate().serviceFee());
+        assertEquals(new BigDecimal("3.00"),configured.aggregate().returnShippingFee());
+        jdbc.sql("DELETE FROM grading_service_price").update();
+        var unquoted=service.quoteMerchantBatch(2,"US","USD",parts,"tracked");
+        assertEquals("unquoted_business",unquoted.aggregate().pricingSourceCode());
+        assertEquals(new BigDecimal("0.00"),unquoted.aggregate().serviceFee());
+        assertEquals(new BigDecimal("3.00"),unquoted.aggregate().totalAmount());
+        assertThrows(ResponseStatusException.class,()->service.quoteForOrder(1,"US","USD",2,"tracked"));
+        assertThrows(ResponseStatusException.class,()->service.quoteMerchantBatch(1,"US","USD",parts,"tracked"));
+        assertThrows(ResponseStatusException.class,()->service.quoteMerchantBatch(2,"US","USD",parts,"foreign-shipping"));
+    }
+
+    @Test
+    void logisticsOptionsAllowNonUsdOnlyDestinationsWithoutAnyGradingPrice() {
+        jdbc.sql("DELETE FROM grading_service_price").update();
+        jdbc.sql("DELETE FROM return_shipping_option").update();
+        jdbc.sql("INSERT INTO return_shipping_option(option_code,display_name,country_scope,currency_code,price_amount,sort_order,is_active) VALUES('eur-return','European return','FR','EUR',5.50,1,1),('inactive','Inactive','*','USD',1,0,0)").update();
+        var options=service.merchantLogisticsOptions(2,"FR",3);
+        assertEquals(List.of(new CommercePolicyService.MerchantLogisticsOption("eur-return","European return","EUR")),options);
+        var selected=options.get(0);
+        var batch=service.quoteMerchantBatch(2,"FR",selected.currencyCode(),List.of(new CommercePolicyService.BatchPartRequest("A",3)),selected.optionCode());
+        assertEquals("EUR",batch.aggregate().currencyCode());
+        assertEquals("eur-return",batch.aggregate().shippingOptionCode());
+        assertEquals("unquoted_business",batch.aggregate().pricingSourceCode());
+        assertEquals(new BigDecimal("5.50"),batch.aggregate().totalAmount());
+        assertEquals(List.of(),service.merchantLogisticsOptions(2,"US",3));
+    }
+
+    @Test
+    void logisticsOptionsKeepWeightOnlyRoutesAndWeightPreferenceAcrossCurrencies() {
+        jdbc.sql("DELETE FROM grading_service_price").update();
+        jdbc.sql("DELETE FROM return_shipping_option").update();
+        jdbc.sql("INSERT INTO commerce_shipping_policy(policy_code,display_name,destination_country,currency_code,per_card_weight_grams,packaging_weight_grams,first_weight_grams,first_weight_price,additional_weight_grams,additional_weight_price,discount_quantity_threshold,discount_percent,free_shipping_quantity_threshold,priority_no,is_active) VALUES('cn-weight','China weight','CN','CNY',80,120,300,15.00,100,2.50,NULL,0,NULL,5,1)").update();
+        var options=service.merchantLogisticsOptions(2,"CN",4);
+        assertEquals(List.of(new CommercePolicyService.MerchantLogisticsOption("weight_1","China weight","CNY")),options);
+        var selected=options.get(0);
+        var quote=service.quoteMerchantBatch(2,"CN",selected.currencyCode(),List.of(new CommercePolicyService.BatchPartRequest("A",4)),selected.optionCode());
+        assertEquals("weight_1",quote.aggregate().shippingOptionCode());
+        assertEquals("CNY",quote.aggregate().currencyCode());
+        assertEquals(new BigDecimal("20.00"),quote.aggregate().returnShippingFee());
+        jdbc.sql("INSERT INTO return_shipping_option(option_code,display_name,country_scope,currency_code,price_amount,sort_order,is_active) VALUES('fixed','Fixed','*','EUR',1,0,1)").update();
+        assertEquals("weight_1",service.merchantLogisticsOptions(2,"CN",4).get(0).optionCode());
+        assertThrows(ResponseStatusException.class,()->service.merchantLogisticsOptions(1,"CN",4));
+        assertThrows(ResponseStatusException.class,()->service.merchantLogisticsOptions(2,"CN",0));
+        assertThrows(ResponseStatusException.class,()->service.quoteMerchantBatch(2,"CN","USD",List.of(new CommercePolicyService.BatchPartRequest("A",4)),"weight_1"));
+    }
+
+    @Test
     void customerRoutingCannotClaimAnOwnedInventoryBusinessLine() {
         jdbc.sql("INSERT INTO commerce_business_line(id,line_code,display_name,order_origin_code,is_default,is_active) VALUES(10,'customer','Customer','customer_submission',1,1),(11,'owned','Owned','owned_inventory',1,1)").update();
         jdbc.sql("INSERT INTO commerce_work_center(id,center_code,display_name,is_default,is_active) VALUES(20,'center','Center',1,1)").update();

@@ -292,10 +292,10 @@
         <template v-if="isGradedForm">
           <el-divider content-position="left">{{ t('entries.gradingDetails') }}</el-divider>
           <el-row :gutter="16">
-            <el-col :span="6"><el-form-item :label="t('entries.centering')" prop="centeringScore" label-width="72px"><el-input-number v-model="form.centeringScore" :min="1" :max="10" :step="0.1" :precision="1" controls-position="right" style="width: 100%" /></el-form-item></el-col>
-            <el-col :span="6"><el-form-item :label="t('entries.edges')" prop="edgesScore" label-width="54px"><el-input-number v-model="form.edgesScore" :min="1" :max="10" :step="0.1" :precision="1" controls-position="right" style="width: 100%" /></el-form-item></el-col>
-            <el-col :span="6"><el-form-item :label="t('entries.corners')" prop="cornersScore" label-width="64px"><el-input-number v-model="form.cornersScore" :min="1" :max="10" :step="0.1" :precision="1" controls-position="right" style="width: 100%" /></el-form-item></el-col>
-            <el-col :span="6"><el-form-item :label="t('entries.surface')" prop="surfaceScore" label-width="60px"><el-input-number v-model="form.surfaceScore" :min="1" :max="10" :step="0.1" :precision="1" controls-position="right" style="width: 100%" /></el-form-item></el-col>
+            <el-col :span="6"><el-form-item :label="t('entries.centering')" prop="centeringScore" label-width="72px"><el-input-number v-model="form.centeringScore" :min="1" :max="10" :step="0.1" controls-position="right" style="width: 100%" /></el-form-item></el-col>
+            <el-col :span="6"><el-form-item :label="t('entries.edges')" prop="edgesScore" label-width="54px"><el-input-number v-model="form.edgesScore" :min="1" :max="10" :step="0.1" controls-position="right" style="width: 100%" /></el-form-item></el-col>
+            <el-col :span="6"><el-form-item :label="t('entries.corners')" prop="cornersScore" label-width="64px"><el-input-number v-model="form.cornersScore" :min="1" :max="10" :step="0.1" controls-position="right" style="width: 100%" /></el-form-item></el-col>
+            <el-col :span="6"><el-form-item :label="t('entries.surface')" prop="surfaceScore" label-width="60px"><el-input-number v-model="form.surfaceScore" :min="1" :max="10" :step="0.1" controls-position="right" style="width: 100%" /></el-form-item></el-col>
           </el-row>
           <el-row :gutter="16">
             <el-col :span="6">

@@ -65,3 +65,7 @@ INSERT INTO customer_address(id,customer_id,label,contact_name,address_line1,cit
 ALTER TABLE agent_intake ADD COLUMN order_id BIGINT;
 ALTER TABLE grading_order ADD COLUMN order_no VARCHAR(64);
 ALTER TABLE grading_order ADD COLUMN status_code VARCHAR(32);
+ALTER TABLE grading_order ADD COLUMN admission_status_code VARCHAR(32);
+ALTER TABLE grading_order ADD COLUMN approved_terms_version VARCHAR(64);
+ALTER TABLE grading_order ADD COLUMN accepted_terms_version VARCHAR(64);
+ALTER TABLE grading_order ADD COLUMN terms_accepted_at TIMESTAMP;

@@ -2,7 +2,7 @@ export const addressCountries = [
   { value: 'CN', label: 'China' }, { value: 'US', label: 'United States' },
   { value: 'HK', label: 'Hong Kong' }, { value: 'JP', label: 'Japan' },
   { value: 'GB', label: 'United Kingdom' }, { value: 'AU', label: 'Australia' },
-  { value: 'SG', label: 'Singapore' }
+  { value: 'SG', label: 'Singapore' }, { value: 'FR', label: 'France' }
 ]
 
 const regions = {

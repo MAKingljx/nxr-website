@@ -7,8 +7,10 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.nxr.platform.commerce.CommercePolicyService;
+import com.nxr.platform.admission.OrderAdmissionService;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.util.ArrayList;
@@ -49,11 +51,27 @@ class MerchantBatchServiceTest {
         service = new MerchantBatchService(
             JdbcClient.create(jdbc), portal, fulfillment, commerce, new DataSourceTransactionManager(dataSource)
         );
-        when(commerce.quoteBatch(anyLong(), any(), any(), any(), any())).thenReturn(batchQuote());
+        var admission = mock(OrderAdmissionService.class);
+        when(admission.requireMerchantSubmissionTerms(any())).thenReturn(
+            new OrderAdmissionService.MerchantTermsSnapshot("v1","Service terms","Estimated turnaround"));
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"orderAdmissionService",admission);
+        when(commerce.quoteMerchantBatch(anyLong(), any(), any(), any(), any())).thenReturn(batchQuote());
         when(portal.createOrderWithBatchQuote(anyLong(), any(), any(), any())).thenAnswer(invocation -> {
             usedAllocations.add(invocation.getArgument(3));
             return insertOrder();
         });
+    }
+
+    @Test
+    void legacyMerchantBatchEntryCannotSkipTheTermsGate() {
+        var admission=mock(OrderAdmissionService.class);
+        when(admission.requireMerchantSubmissionTerms(any())).thenThrow(new ResponseStatusException(
+            org.springframework.http.HttpStatus.BAD_REQUEST,"Please agree to the service terms before submitting"));
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"orderAdmissionService",admission);
+        assertThatThrownBy(()->service.createBatch(1,request())).hasMessageContaining("Please agree");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM merchant_order_batch",Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM grading_order",Integer.class)).isZero();
+        verifyNoInteractions(portal);
     }
 
     @Test
@@ -150,12 +168,12 @@ class MerchantBatchServiceTest {
     }
 
     @Test
-    void cancelledChildrenDoNotWaivePaymentOrCompletionForRemainingOrdersAndEmptyBatchesCannotShip() {
+    void cancelledChildrenDoNotWaiveReviewOrCompletionForRemainingOrdersAndEmptyBatchesCannotShip() {
         MerchantBatchService.BatchCreateResult created = service.createBatch(1, request());
         long cancelled = created.rows().get(0).orderId(), active = created.rows().get(1).orderId();
         jdbc.update("UPDATE grading_order SET status_code='cancelled' WHERE id=?", cancelled);
         assertThatThrownBy(() -> service.createInboundShipment(1, created.batchNo(), new MerchantBatchService.BatchShipmentRequest("UPS", "EARLY", null)))
-            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("paid and ready");
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("review and service terms");
         assertThatThrownBy(() -> service.createOutboundShipment(created.batchId(), 901, new MerchantBatchService.BatchShipmentRequest("DHL", "EARLY", null)))
             .isInstanceOf(ResponseStatusException.class).hasMessageContaining("completed");
         jdbc.update("UPDATE grading_order SET status_code='cancelled' WHERE id=?", active);
@@ -203,6 +221,26 @@ class MerchantBatchServiceTest {
         assertThat(delivered.statusCode()).isEqualTo("delivered");
         assertThat(delivered.orders()).extracting(MerchantBatchService.BatchOrderItem::statusCode)
             .containsOnly("delivered");
+    }
+
+    @Test
+    void batchDetailsAndTrackingUseTheSameReadOnlyPartnerStatusAsAdminOrders() {
+        var created=service.createBatch(1,request());
+        jdbc.update("UPDATE grading_order SET status_code='payment_expired',admission_status_code='approved',approved_terms_version='v1'");
+        assertThat(service.requireAdminBatch(created.batchId()).orders())
+            .extracting(MerchantBatchService.BatchOrderItem::statusCode).containsOnly("terms_confirmation");
+        assertThat(service.publicTracking(created.rows().get(0).trackingToken()).statusCode()).isEqualTo("terms_confirmation");
+        jdbc.update("UPDATE grading_order SET terms_accepted_at=CURRENT_TIMESTAMP,accepted_terms_version='v1'");
+        assertThat(service.requireMerchantBatch(1,created.batchNo()).orders())
+            .extracting(MerchantBatchService.BatchOrderItem::statusCode).containsOnly("awaiting_inbound");
+        assertThat(service.publicTracking(created.rows().get(0).trackingToken()).statusCode()).isEqualTo("awaiting_inbound");
+        assertThat(jdbc.queryForList("SELECT status_code FROM grading_order",String.class)).containsOnly("payment_expired");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM merchant_batch_shipment",Integer.class)).isZero();
+
+        jdbc.update("UPDATE grading_order SET customer_id=2 WHERE id=?",created.rows().get(0).orderId());
+        assertThat(service.requireAdminBatch(created.batchId()).orders()).hasSize(1);
+        assertThatThrownBy(() -> service.publicTracking(created.rows().get(0).trackingToken()))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("invalid or revoked");
     }
 
     private CustomerPortalService.OrderDetailResponse insertOrder() {

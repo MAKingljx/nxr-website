@@ -66,9 +66,15 @@ public class AdminOrderController {
         @RequestParam(defaultValue = "1") int page,
         @RequestParam(defaultValue = "20") int pageSize,
         @RequestParam(required = false) String status,
-        @RequestParam(required = false) String query
+        @RequestParam(required = false) String query,
+        @RequestParam(required = false) String orderChannel
     ) {
-        return AjaxResult.success(customerPortalService.listAdminOrders(page, pageSize, status, query));
+        return AjaxResult.success(customerPortalService.listAdminOrders(page, pageSize, status, query, orderChannel));
+    }
+
+    @PreAuthorize("@ss.hasPermi('nxr:order:list')")
+    public AjaxResult listOrders(int page, int pageSize, String status, String query) {
+        return listOrders(page, pageSize, status, query, null);
     }
 
     @PreAuthorize("@ss.hasPermi('nxr:order:list')")

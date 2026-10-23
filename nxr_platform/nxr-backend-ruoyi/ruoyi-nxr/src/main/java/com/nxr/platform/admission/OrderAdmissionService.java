@@ -2,11 +2,18 @@ package com.nxr.platform.admission;
 
 import com.nxr.platform.notifications.NotificationOutboxService;
 import com.nxr.platform.customer.CustomerOrderPhotoService;
+import com.nxr.platform.customer.MerchantOrderPolicy;
+import com.nxr.platform.customer.OrderFulfillmentService;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Set;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,10 +30,16 @@ import org.springframework.http.HttpStatus;
 public class OrderAdmissionService {
 
     private static final Set<String> DECISIONS = Set.of("approve", "reject", "request_information");
+    private static final String SYSTEM_DEFAULT_TERMS =
+        "Please confirm the submitted item list, approved quote, and current NXR service terms before payment.";
+    private static final String MERCHANT_DEFAULT_TERMS =
+        "Please confirm the submitted item list and current NXR service terms before shipping.";
     private final JdbcClient jdbcClient;
     private final NotificationOutboxService notifications;
     private final Clock clock;
     private CustomerOrderPhotoService photoService;
+    @Autowired(required=false)
+    private OrderFulfillmentService fulfillment;
 
     @Autowired
     public OrderAdmissionService(JdbcClient jdbcClient, NotificationOutboxService notifications) {
@@ -54,23 +67,131 @@ public class OrderAdmissionService {
             value.termsText(), value.turnaroundText());
     }
 
+    public PublicConfig merchantPublicConfig() {
+        Config value = config();
+        return new PublicConfig(value.paymentDeadlineHours(), value.maxCardsPerOrder(), value.termsVersion(),
+            serviceTerms(value.termsText(), true), value.turnaroundText());
+    }
+
+    /** Lock the displayed contract for the complete batch transaction. */
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public MerchantTermsSnapshot requireMerchantSubmissionTerms(MerchantTermsRequest request) {
+        if (request == null || !Boolean.TRUE.equals(request.termsAccepted())) {
+            throw badRequest("Please agree to the service terms before submitting");
+        }
+        Config value = configForUpdate();
+        String terms = serviceTerms(value.termsText(), true);
+        if (!value.termsVersion().equals(request.termsVersion()) || !terms.equals(request.termsText())
+            || !value.turnaroundText().equals(request.turnaroundText())) {
+            throw conflict("Service terms changed; refresh and confirm the current terms before submitting");
+        }
+        return new MerchantTermsSnapshot(value.termsVersion(), terms, value.turnaroundText());
+    }
+
+    @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public void recordMerchantSubmissionTerms(long orderId, long customerId, MerchantTermsSnapshot terms) {
+        AdmissionRow row = requireById(orderId, true);
+        if (!row.merchantBatch() || row.customerId() != customerId || !"pending_review".equals(row.admissionStatus())
+            || !"admission_review".equals(row.orderStatus()) || row.termsAcceptedAt() != null || terms == null) {
+            throw conflict("Service terms can only be recorded with a new partner submission");
+        }
+        String items = merchantItemSnapshotHash(orderId);
+        LocalDateTime acceptedAt = insertMerchantAcceptance(row, terms, items);
+        jdbcClient.sql("""
+            UPDATE grading_order SET accepted_terms_version=:version,terms_accepted_at=:acceptedAt,
+                approved_terms_version=:version,approved_terms_text=:text,approved_turnaround_text=:turnaround,
+                payment_due_at=NULL,payment_deadline_status_code='not_required',updated_at=CURRENT_TIMESTAMP
+            WHERE id=:id AND customer_id=:customer AND admission_status_code='pending_review'
+            """).param("version",terms.termsVersion()).param("text",terms.termsText()).param("turnaround",terms.turnaroundText())
+            .param("acceptedAt",acceptedAt)
+            .param("id",orderId).param("customer",customerId).update();
+        insertEvent(orderId,"terms_accepted","Service terms confirmed",
+            "The partner agreed to the service terms and submitted item list before admission review.","customer",customerId,null);
+    }
+
+    private LocalDateTime insertMerchantAcceptance(AdmissionRow row, MerchantTermsSnapshot terms, String itemHash) {
+        var existing = jdbcClient.sql("""
+            SELECT terms_text,turnaround_text FROM order_terms_acceptance
+            WHERE order_id=:id AND terms_version=:version AND item_snapshot_hash=:hash
+            """).param("id",row.orderId()).param("version",terms.termsVersion()).param("hash",itemHash)
+            .query((rs,n)->new MerchantTermsSnapshot(terms.termsVersion(),rs.getString(1),rs.getString(2))).optional();
+        if (existing.isPresent() && !existing.get().equals(terms)) {
+            throw conflict("The saved service terms differ; refresh the order before confirming");
+        }
+        if (existing.isEmpty()) {
+            jdbcClient.sql("""
+                INSERT INTO order_terms_acceptance(order_id,customer_id,terms_version,accepted_quote_amount,
+                    accepted_quote_currency,terms_text,turnaround_text,item_snapshot_hash)
+                VALUES(:id,:customer,:version,:amount,:currency,:text,:turnaround,:hash)
+                """).param("id",row.orderId()).param("customer",row.customerId()).param("version",terms.termsVersion())
+                .param("amount",row.orderAmount()).param("currency",row.orderCurrency())
+                .param("text",terms.termsText()).param("turnaround",terms.turnaroundText()).param("hash",itemHash).update();
+        }
+        return jdbcClient.sql("SELECT accepted_at FROM order_terms_acceptance WHERE order_id=:id AND terms_version=:version AND item_snapshot_hash=:hash")
+            .param("id",row.orderId()).param("version",terms.termsVersion()).param("hash",itemHash).query(LocalDateTime.class).single();
+    }
+
+    private MerchantAcceptance merchantSubmissionAcceptance(AdmissionRow row) {
+        if (!row.merchantBatch() || row.termsAcceptedAt() == null || row.acceptedTermsVersion() == null) return null;
+        return jdbcClient.sql("""
+            SELECT terms_version,terms_text,turnaround_text,accepted_at FROM order_terms_acceptance
+            WHERE order_id=:id AND customer_id=:customer AND terms_version=:version AND item_snapshot_hash=:hash
+              AND terms_text IS NOT NULL AND turnaround_text IS NOT NULL
+            ORDER BY id DESC LIMIT 1
+            """).param("id",row.orderId()).param("customer",row.customerId()).param("version",row.acceptedTermsVersion())
+            .param("hash",merchantItemSnapshotHash(row.orderId()))
+            .query((rs,n)->new MerchantAcceptance(rs.getString(1),rs.getString(2),rs.getString(3),rs.getObject(4,LocalDateTime.class)))
+            .optional().orElse(null);
+    }
+
+    private String merchantItemSnapshotHash(long orderId) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            List<List<String>> items = jdbcClient.sql("""
+                SELECT id,item_no,card_name,brand_name,set_name,card_number,language_code,
+                       product_type,category,year_label,rarity,declared_value,item_note
+                FROM grading_order_item WHERE order_id=:id ORDER BY item_no,id
+                """).param("id",orderId).query((rs,n)-> {
+                    List<String> values = new java.util.ArrayList<>();
+                    for (int column=1;column<=13;column++) values.add(rs.getString(column));
+                    return values;
+                }).list();
+            if (items.isEmpty()) throw conflict("A partner submission must contain at least one card");
+            for (List<String> item : items) for (String value : item) {
+                byte[] bytes = value == null ? new byte[0] : value.getBytes(StandardCharsets.UTF_8);
+                digest.update(ByteBuffer.allocate(4).putInt(value == null ? -1 : bytes.length).array());
+                digest.update(bytes);
+            }
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 is unavailable",exception);
+        }
+    }
+
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public void initialize(long orderId, long customerId, String orderNo) {
+        initialize(orderId,customerId,orderNo,false);
+    }
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public void initialize(long orderId,long customerId,String orderNo,boolean merchantBatch) {
         int updated = jdbcClient.sql(
                 """
                 UPDATE grading_order
                 SET admission_status_code = 'pending_review', admission_submitted_at = CURRENT_TIMESTAMP,
-                    payment_deadline_status_code = 'not_started', updated_at = CURRENT_TIMESTAMP
+                    payment_deadline_status_code = :deadlineStatus, updated_at = CURRENT_TIMESTAMP
                 WHERE id = :orderId AND customer_id = :customerId AND admission_status_code IS NULL
                 """
             )
             .param("orderId", orderId)
             .param("customerId", customerId)
+            .param("deadlineStatus",merchantBatch?"not_required":"not_started")
             .update();
         if (updated != 1) {
             throw conflict("Order admission was already initialized or the order changed");
         }
-        insertEvent(orderId, "submitted", "Order submitted for admission review", "NXR will review the item list and quote before payment opens.",
+        insertEvent(orderId, "submitted", "Order submitted for admission review", merchantBatch
+            ?"NXR will review the submitted item list.":"NXR will review the item list and quote before payment opens.",
             "customer", customerId, null);
         enqueue(customerId, orderNo, "created", "Your grading order application has been received for review.");
     }
@@ -135,6 +256,7 @@ public class OrderAdmissionService {
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public AdmissionResponse acceptTerms(long customerId, String rawOrderNo, AcceptTermsRequest request) {
         AdmissionRow row = lockByOrderNo(customerId, rawOrderNo);
+        if(row.merchantBatch())return acceptMerchantTerms(row,customerId,request);
         if (!"approved".equals(row.admissionStatus())) {
             throw conflict("This order has not been approved for payment");
         }
@@ -196,6 +318,70 @@ public class OrderAdmissionService {
         return response(reload(row.orderId()));
     }
 
+    private AdmissionResponse acceptMerchantTerms(AdmissionRow row,long customerId,AcceptTermsRequest request) {
+        if(!"approved".equals(row.admissionStatus()))throw conflict("This order has not been approved for service");
+        String version=requireText(request==null?null:request.termsVersion(),"Terms version",64);
+        if(!version.equals(row.approvedTermsVersion()))throw conflict("The accepted terms do not match the approved order snapshot");
+        if(termsAccepted(row)) {
+            normalizeMerchantPaymentState(row);
+            if(fulfillment!=null && "awaiting_inbound".equals(effectiveStatus(row)))fulfillment.ensureIntakeCodes(row.orderId());
+            return response(reload(row.orderId()));
+        }
+        if(!"terms_confirmation".equals(effectiveStatus(row)))throw conflict("Service terms cannot be confirmed in this order state");
+        LocalDateTime acceptedAt=insertMerchantAcceptance(row,new MerchantTermsSnapshot(version,
+            serviceTerms(row.approvedTermsText(),true),row.approvedTurnaroundText()),merchantItemSnapshotHash(row.orderId()));
+        int updated=jdbcClient.sql("""
+            UPDATE grading_order SET accepted_terms_version=:version,terms_accepted_at=:acceptedAt,
+                status_code='awaiting_inbound',payment_due_at=NULL,payment_deadline_status_code='not_required',
+                admission_revision=admission_revision+1,updated_at=CURRENT_TIMESTAMP
+            WHERE id=:id AND admission_revision=:revision AND status_code=:status AND admission_status_code='approved'
+            """).param("version",version).param("id",row.orderId()).param("revision",row.revision())
+            .param("acceptedAt",acceptedAt)
+            .param("status",row.orderStatus()).update();
+        if(updated!=1)throw conflict("Admission changed; refresh the order before confirming terms");
+        insertEvent(row.orderId(),"terms_accepted","Service terms confirmed",
+            "The partner confirmed the approved service terms. The order is ready for inbound shipping.","customer",customerId,null);
+        if(fulfillment!=null)fulfillment.ensureIntakeCodes(row.orderId());
+        return response(reload(row.orderId()));
+    }
+
+    /** Explicit fulfillment commands may move old B payment states without inventing a payment. GETs never call this. */
+    @Transactional(isolation=Isolation.READ_COMMITTED)
+    public void prepareMerchantFulfillment(long orderId) {
+        AdmissionRow row=requireById(orderId,true);
+        if(!row.merchantBatch())throw conflict("A partner batch order is required");
+        if(row.admissionStatus()!=null && (!"approved".equals(row.admissionStatus()) || !termsAccepted(row)))
+            throw conflict("Every partner order must have admission approval and accepted service terms before shipping");
+        normalizeMerchantPaymentState(row);
+        if(fulfillment!=null && "awaiting_inbound".equals(effectiveStatus(row)))fulfillment.ensureIntakeCodes(orderId);
+    }
+
+    private void normalizeMerchantPaymentState(AdmissionRow row) {
+        if(!row.merchantBatch() || !MerchantOrderPolicy.OLD_PAYMENT_STATES.contains(row.orderStatus()))return;
+        String status=effectiveStatus(row);
+        if(status.equals(row.orderStatus()) && row.paymentDueAt()==null && "not_required".equals(row.deadlineStatus()))return;
+        int updated=jdbcClient.sql("""
+            UPDATE grading_order SET status_code=:target,payment_due_at=NULL,payment_deadline_status_code='not_required',
+                admission_revision=admission_revision+1,updated_at=CURRENT_TIMESTAMP
+            WHERE id=:id AND status_code=:previous AND admission_revision=:revision
+            """).param("target",status).param("id",row.orderId()).param("previous",row.orderStatus())
+            .param("revision",row.revision()).update();
+        if(updated!=1)throw conflict("Order changed; refresh before continuing");
+        insertEvent(row.orderId(),"merchant_fulfillment_ready","awaiting_inbound".equals(status)?"Ready to ship to NXR":"Confirm service terms",
+            "awaiting_inbound".equals(status)?"Service terms are confirmed. Add the inbound parcel tracking number to continue.":
+            "Review and confirm the approved service terms before sending cards to NXR.","system",null,null);
+    }
+
+    private static boolean termsAccepted(AdmissionRow row) {
+        return row.termsAcceptedAt()!=null && row.approvedTermsVersion()!=null
+            && row.approvedTermsVersion().equals(row.acceptedTermsVersion());
+    }
+
+    private static String effectiveStatus(AdmissionRow row) {
+        return row.merchantBatch()?MerchantOrderPolicy.effectiveStatus(row.orderStatus(),row.admissionStatus(),
+            row.termsAcceptedAt(),row.approvedTermsVersion(),row.acceptedTermsVersion()):row.orderStatus();
+    }
+
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public AdmissionResponse decide(long orderId, long adminUserId, DecisionRequest request) {
         AdmissionRow row = requireById(orderId, true);
@@ -213,24 +399,26 @@ public class OrderAdmissionService {
         if (!initialDecision && !deadlineRenewal) {
             throw conflict("This admission decision cannot be changed in its current state");
         }
-        if (hasPaymentActivity(orderId)) {
+        if (!row.merchantBatch() && hasPaymentActivity(orderId)) {
             throw conflict("Admission cannot be changed after payment processing has started");
         }
         String note = requireText(request == null ? null : request.note(), "Decision note", 2000);
         if ("approve".equals(decision)) {
             Config config = configForUpdate();
-            LocalDateTime dueAt = now().plusHours(config.paymentDeadlineHours());
+            MerchantAcceptance submissionAcceptance = merchantSubmissionAcceptance(row);
+            boolean alreadyAccepted = submissionAcceptance != null;
+            LocalDateTime dueAt = row.merchantBatch()?null:now().plusHours(config.paymentDeadlineHours());
             int updated = jdbcClient.sql(
                     """
                     UPDATE grading_order
-                    SET admission_status_code = 'approved', status_code = 'terms_confirmation',
+                    SET admission_status_code = 'approved', status_code = :status,
                         admission_decided_at = CURRENT_TIMESTAMP, admission_decision_note = :note,
                         admission_reviewed_by_user_id = :adminUserId,
-                        payment_due_at = :dueAt, payment_deadline_status_code = 'active',
+                        payment_due_at = :dueAt, payment_deadline_status_code = :deadlineStatus,
                         approved_terms_version = :termsVersion, approved_terms_text = :termsText,
                         approved_turnaround_text = :turnaroundText,
                         approved_quote_amount = total_amount, approved_quote_currency = currency_code,
-                        accepted_terms_version = NULL, terms_accepted_at = NULL,
+                        accepted_terms_version = :acceptedVersion, terms_accepted_at = :acceptedAt,
                         admission_revision = admission_revision + 1,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = :orderId AND admission_revision = :expectedRevision
@@ -239,9 +427,13 @@ public class OrderAdmissionService {
                 .param("note", note)
                 .param("adminUserId", adminUserId)
                 .param("dueAt", dueAt)
-                .param("termsVersion", config.termsVersion())
-                .param("termsText", config.termsText())
-                .param("turnaroundText", config.turnaroundText())
+                .param("deadlineStatus",row.merchantBatch()?"not_required":"active")
+                .param("status",alreadyAccepted?"awaiting_inbound":"terms_confirmation")
+                .param("termsVersion", alreadyAccepted?submissionAcceptance.termsVersion():config.termsVersion())
+                .param("termsText", alreadyAccepted?submissionAcceptance.termsText():serviceTerms(config.termsText(),row.merchantBatch()))
+                .param("turnaroundText", alreadyAccepted?submissionAcceptance.turnaroundText():config.turnaroundText())
+                .param("acceptedVersion",alreadyAccepted?submissionAcceptance.termsVersion():null)
+                .param("acceptedAt",alreadyAccepted?submissionAcceptance.acceptedAt():null)
                 .param("orderId", orderId)
                 .param("expectedRevision", row.revision())
                 .update();
@@ -249,7 +441,10 @@ public class OrderAdmissionService {
                 throw conflict("Admission changed; refresh the order before recording a decision");
             }
             insertEvent(orderId, "approved", "Order approved", note, "admin", null, adminUserId);
+            if (alreadyAccepted && fulfillment != null) fulfillment.ensureIntakeCodes(orderId);
             enqueue(row.customerId(), row.orderNo(), "admission_approved",
+                row.merchantBatch()?(alreadyAccepted?"Your partner order was approved. It is ready to ship to NXR.":
+                    "Your partner order was approved. Confirm the service terms before shipping."):
                 "Your order was approved. Confirm the quoted amount and terms before the payment deadline.");
         } else {
             String status = "reject".equals(decision) ? "rejected" : "needs_information";
@@ -261,10 +456,13 @@ public class OrderAdmissionService {
                     SET admission_status_code = :status, status_code = 'admission_review',
                         admission_decided_at = CURRENT_TIMESTAMP, admission_decision_note = :note,
                         admission_reviewed_by_user_id = :adminUserId,
-                        payment_due_at = NULL, payment_deadline_status_code = 'not_started',
-                        approved_terms_version = NULL, approved_terms_text = NULL, approved_turnaround_text = NULL,
+                        payment_due_at = NULL, payment_deadline_status_code = :deadlineStatus,
+                        approved_terms_version = CASE WHEN :merchant THEN approved_terms_version ELSE NULL END,
+                        approved_terms_text = CASE WHEN :merchant THEN approved_terms_text ELSE NULL END,
+                        approved_turnaround_text = CASE WHEN :merchant THEN approved_turnaround_text ELSE NULL END,
                         approved_quote_amount = NULL, approved_quote_currency = NULL,
-                        accepted_terms_version = NULL, terms_accepted_at = NULL,
+                        accepted_terms_version = CASE WHEN :merchant THEN accepted_terms_version ELSE NULL END,
+                        terms_accepted_at = CASE WHEN :merchant THEN terms_accepted_at ELSE NULL END,
                         admission_revision = admission_revision + 1,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = :orderId AND admission_revision = :expectedRevision
@@ -273,6 +471,8 @@ public class OrderAdmissionService {
                 .param("status", status)
                 .param("note", note)
                 .param("adminUserId", adminUserId)
+                .param("merchant",row.merchantBatch())
+                .param("deadlineStatus",row.merchantBatch()?"not_required":"not_started")
                 .param("orderId", orderId)
                 .param("expectedRevision", row.revision())
                 .update();
@@ -332,6 +532,7 @@ public class OrderAdmissionService {
         if (row.customerId() != customerId) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Grading order not found");
         }
+        if(row.merchantBatch())throw conflict("Partner batch orders do not require payment");
         if (row.admissionStatus() == null) {
             return;
         }
@@ -351,6 +552,11 @@ public class OrderAdmissionService {
 
     public void requireGenericStatusChangeAllowed(long orderId) {
         AdmissionRow row = requireById(orderId, true);
+        if(row.merchantBatch()) {
+            if(row.admissionStatus()!=null && (!"approved".equals(row.admissionStatus()) || !termsAccepted(row)))
+                throw conflict("Admission approval and service terms are required before fulfillment");
+            return;
+        }
         if (row.admissionStatus() != null && (row.termsAcceptedAt() == null
             || (isExpired(row) && !hasAcceptedFulfillmentPayment(row)))) {
             throw conflict("Admission and payment deadline state can only be changed through the admission workflow");
@@ -385,6 +591,10 @@ public class OrderAdmissionService {
                   AND payment_deadline_status_code = 'active'
                   AND payment_due_at < :now
                   AND status_code IN ('terms_confirmation', 'awaiting_payment', 'payment_review')
+                  AND NOT EXISTS (SELECT 1 FROM merchant_order_batch_item bi
+                    JOIN merchant_order_batch b ON b.id=bi.batch_id AND b.merchant_customer_id=grading_order.customer_id
+                    JOIN customer_account c ON c.id=b.merchant_customer_id AND c.account_type_code='merchant'
+                    WHERE bi.order_id=grading_order.id)
                 ORDER BY payment_due_at, id
                 LIMIT 100
                 """
@@ -399,6 +609,7 @@ public class OrderAdmissionService {
     }
 
     private void expireIfDue(AdmissionRow row) {
+        if(row.merchantBatch())return;
         if (!isExpired(row) || !"active".equals(row.deadlineStatus())
             || !Set.of("terms_confirmation", "awaiting_payment", "payment_review").contains(row.orderStatus())) {
             return;
@@ -449,7 +660,11 @@ public class OrderAdmissionService {
                    o.approved_terms_version, o.approved_terms_text,
                    o.approved_turnaround_text,
                    o.approved_quote_amount, o.approved_quote_currency,
-                   o.accepted_terms_version, o.terms_accepted_at, o.total_amount, o.currency_code
+                   o.accepted_terms_version, o.terms_accepted_at, o.total_amount, o.currency_code,
+                   EXISTS (SELECT 1 FROM merchant_order_batch_item bi
+                     JOIN merchant_order_batch b ON b.id=bi.batch_id AND b.merchant_customer_id=o.customer_id
+                     JOIN customer_account c ON c.id=b.merchant_customer_id AND c.account_type_code='merchant'
+                     WHERE bi.order_id=o.id) AS merchant_batch
             FROM grading_order o
             """ + where + (forUpdate ? " FOR UPDATE" : "")
         );
@@ -464,29 +679,28 @@ public class OrderAdmissionService {
             rs.getString("approved_terms_version"), rs.getString("approved_terms_text"), rs.getString("approved_turnaround_text"),
             rs.getBigDecimal("approved_quote_amount"), rs.getString("approved_quote_currency"),
             rs.getString("accepted_terms_version"), rs.getObject("terms_accepted_at", LocalDateTime.class),
-            rs.getBigDecimal("total_amount"), rs.getString("currency_code")
+            rs.getBigDecimal("total_amount"), rs.getString("currency_code"),rs.getBoolean("merchant_batch")
         );
     }
 
     private AdmissionResponse response(AdmissionRow row) {
-        boolean expired = isExpired(row) || "expired".equals(row.deadlineStatus());
-        boolean accepted = row.termsAcceptedAt() != null && row.approvedTermsVersion() != null
-            && row.approvedTermsVersion().equals(row.acceptedTermsVersion());
+        boolean expired = !row.merchantBatch() && (isExpired(row) || "expired".equals(row.deadlineStatus()));
+        boolean accepted = termsAccepted(row);
         boolean quoteMatches = quoteSnapshotMatchesOrder(row);
         boolean legacyOrder = row.admissionStatus() == null;
         return new AdmissionResponse(
             row.orderId(), row.orderNo(), row.admissionStatus(), legacyOrder, row.revision(), row.decisionNote(), row.submittedAt(), row.decidedAt(),
-            row.paymentDueAt(), paymentDueAtIso(row.paymentDueAt()), expired,
-            row.approvedTermsVersion(), row.approvedTermsText(), row.approvedTurnaroundText(),
+            row.merchantBatch()?null:row.paymentDueAt(), row.merchantBatch()?null:paymentDueAtIso(row.paymentDueAt()), expired,
+            row.approvedTermsVersion(), serviceTerms(row.approvedTermsText(),row.merchantBatch()), row.approvedTurnaroundText(),
             row.acceptedTermsVersion(),
             row.termsAcceptedAt(), row.approvedQuoteAmount(), row.approvedQuoteCurrency(),
             "needs_information".equals(row.admissionStatus()),
-            "approved".equals(row.admissionStatus()) && "terms_confirmation".equals(row.orderStatus())
-                && !accepted && !expired && quoteMatches,
-            (legacyOrder && Set.of("awaiting_payment", "payment_review").contains(row.orderStatus()))
+            "approved".equals(row.admissionStatus()) && "terms_confirmation".equals(effectiveStatus(row))
+                && !accepted && !expired && (row.merchantBatch() || quoteMatches),
+            !row.merchantBatch() && ((legacyOrder && Set.of("awaiting_payment", "payment_review").contains(row.orderStatus()))
                 || ("approved".equals(row.admissionStatus()) && Set.of("awaiting_payment", "payment_review").contains(row.orderStatus())
-                    && accepted && !expired && quoteMatches), config().maxCardsPerOrder(),
-            supplementalPhotoIds(row.orderId()), admissionEvents(row.orderId())
+                    && accepted && !expired && quoteMatches)), config().maxCardsPerOrder(),
+            supplementalPhotoIds(row.orderId()), admissionEvents(row.orderId()),!row.merchantBatch()
         );
     }
 
@@ -507,6 +721,12 @@ public class OrderAdmissionService {
             .query(Long.class)
             .list()
             .isEmpty();
+    }
+
+    private static String serviceTerms(String text,boolean merchantBatch) {
+        // Only the known migration seed is system copy. Custom legal/service
+        // terms and historical acceptance records must never be rewritten.
+        return merchantBatch && SYSTEM_DEFAULT_TERMS.equals(text)?MERCHANT_DEFAULT_TERMS:text;
     }
 
     private List<Long> supplementalPhotoIds(long orderId) {
@@ -634,7 +854,7 @@ public class OrderAdmissionService {
         LocalDateTime submittedAt, LocalDateTime decidedAt, LocalDateTime paymentDueAt, String deadlineStatus,
         String approvedTermsVersion, String approvedTermsText, String approvedTurnaroundText,
         BigDecimal approvedQuoteAmount, String approvedQuoteCurrency,
-        String acceptedTermsVersion, LocalDateTime termsAcceptedAt, BigDecimal orderAmount, String orderCurrency
+        String acceptedTermsVersion, LocalDateTime termsAcceptedAt, BigDecimal orderAmount, String orderCurrency,boolean merchantBatch
     ) { }
 
     public record Config(
@@ -645,6 +865,10 @@ public class OrderAdmissionService {
     public record PublicConfig(
         int paymentDeadlineHours, int maxCardsPerOrder, String termsVersion, String termsText, String turnaroundText
     ) { }
+
+    public record MerchantTermsRequest(Boolean termsAccepted, String termsVersion, String termsText, String turnaroundText) { }
+    public record MerchantTermsSnapshot(String termsVersion, String termsText, String turnaroundText) { }
+    private record MerchantAcceptance(String termsVersion, String termsText, String turnaroundText, LocalDateTime acceptedAt) { }
 
     public record ConfigUpdate(
         Integer paymentDeadlineHours, Integer maxCardsPerOrder, String termsVersion, String termsText, String turnaroundText
@@ -670,6 +894,6 @@ public class OrderAdmissionService {
         boolean paymentExpired,
         String termsVersion, String termsText, String turnaroundText, String acceptedTermsVersion, LocalDateTime termsAcceptedAt,
         BigDecimal quoteAmount, String quoteCurrency, boolean canResubmit, boolean canAcceptTerms, boolean canPay,
-        int maxCardsPerOrder, List<Long> supplementalPhotoIds, List<AdmissionEvent> events
+        int maxCardsPerOrder, List<Long> supplementalPhotoIds, List<AdmissionEvent> events,boolean paymentRequired
     ) { }
 }

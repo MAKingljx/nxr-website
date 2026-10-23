@@ -298,6 +298,7 @@ public class CustomerPortalService {
         if (aggregateQuote == null || allocation == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "A server-issued batch quote allocation is required");
         }
+        requireFulfillmentService().requireMerchant(customerId);
         return createOrderInternal(customerId, request, aggregateQuote, allocation);
     }
 
@@ -372,13 +373,14 @@ public class CustomerPortalService {
         String quoteCurrency = commerceQuote == null ? servicePrice.currencyCode() : commerceQuote.currencyCode();
         String shippingOptionCode = commerceQuote == null ? shippingOption.optionCode() : commerceQuote.shippingOptionCode();
         String shippingOptionName = commerceQuote == null ? shippingOption.displayName() : commerceQuote.shippingDisplayName();
-        validatePresentedQuote(request, totalAmount, quoteCurrency);
+        boolean merchantBatch=allocation!=null;
+        if(!merchantBatch)validatePresentedQuote(request, totalAmount, quoteCurrency);
         String orderNo = generateOrderNumber();
 
         Map<String, Object> values = new LinkedHashMap<>();
         values.put("order_no", orderNo);
         values.put("customer_id", customerId);
-        values.put("status_code", orderAdmissionService == null ? "awaiting_payment" : "admission_review");
+        values.put("status_code", orderAdmissionService == null ? (merchantBatch?"awaiting_inbound":"awaiting_payment") : "admission_review");
         values.put("service_level_code", serviceLevel);
         values.put("return_shipping_option_code", shippingOptionCode);
         values.put("return_shipping_option_name", shippingOptionName);
@@ -466,7 +468,7 @@ public class CustomerPortalService {
         attachOrderPhotos(customerId, orderId, requestedItems);
 
         String paymentNo = "PAY-" + orderNo;
-        paymentInsert.execute(Map.of(
+        if(!merchantBatch)paymentInsert.execute(Map.of(
             "order_id", orderId,
             "direction_code", "receivable",
             "payment_type_code", "grading_fee",
@@ -478,20 +480,24 @@ public class CustomerPortalService {
             "payment_url", "/account/orders/" + orderNo + "#payment",
             "qr_payload", "nxr://payment/" + paymentNo
         ));
-        if (orderAdmissionService == null) {
+        if (orderAdmissionService == null && merchantBatch) {
+            addTimelineEvent(orderId,"order_created","Order created","The partner order is ready for inbound shipping.",
+                "awaiting_inbound",true,"customer",customerId,null);
+            fulfillment.ensureIntakeCodes(orderId);
+        } else if (orderAdmissionService == null) {
             addTimelineEvent(orderId, "order_created", "Order created", "Your grading order is ready for payment.", "awaiting_payment", true, "customer", customerId, null);
             addTimelineEvent(orderId, "payment_pending", "Awaiting payment", "Submit a transfer reference after payment so our team can confirm it.", "awaiting_payment", true, "system", null, null);
             enqueueOrderNotification(customerId, orderNo, "created", "Your grading order has been created and is ready for payment.");
         } else {
             addTimelineEvent(orderId, "application_submitted", "Application submitted",
-                "NXR will review the item list and quoted amount before payment opens.", "admission_review", true, "customer", customerId, null);
-            orderAdmissionService.initialize(orderId, customerId, orderNo);
+                merchantBatch?"NXR will review the item list before service terms are confirmed.":"NXR will review the item list and quoted amount before payment opens.", "admission_review", true, "customer", customerId, null);
+            orderAdmissionService.initialize(orderId, customerId, orderNo,merchantBatch);
         }
         return requireCustomerOrder(customerId, orderNo);
     }
 
     public OrderListResponse listCustomerOrders(long customerId, int page, int pageSize) {
-        return listOrders(page, pageSize, null, null, customerId, null);
+        return listOrders(page, pageSize, null, null, customerId, null, null);
     }
 
     public OrderDetailResponse requireCustomerOrder(long customerId, String orderNo) {
@@ -509,7 +515,7 @@ public class CustomerPortalService {
             order.contactName(), order.contactPhone(), order.returnAddressLine1(), order.returnAddressLine2(),
             order.returnCity(), order.returnRegion(), order.returnPostalCode(), order.returnCountry(),
             order.customerNote(), null, order.intakeCode(), order.packingSlipCode(), order.shippingLabelCreatedAt(),
-            order.customer(), order.createdAt(), order.updatedAt(), order.items(), order.payments(), order.shipments(), order.timeline(), order.merchantBatch()
+            order.customer(), order.createdAt(), order.updatedAt(), order.items(), order.payments(), order.shipments(), order.timeline(), order.merchantBatch(), order.orderChannel()
         );
     }
 
@@ -659,16 +665,26 @@ public class CustomerPortalService {
     }
 
     public OrderListResponse listAdminOrders(int page, int pageSize, String status, String query) {
+        return listAdminOrders(page, pageSize, status, query, (String) null);
+    }
+
+    public OrderListResponse listAdminOrders(int page, int pageSize, String status, String query, String orderChannel) {
         OrderAccessScopeService.AccessScope scope = orderAccessScopeService == null
             ? new OrderAccessScopeService.AccessScope(true, List.of(), List.of())
             : orderAccessScopeService.scopeForUser(SecurityUtils.getUserId());
-        return listAdminOrders(page, pageSize, status, query, scope);
+        return listAdminOrders(page, pageSize, status, query, scope, orderChannel);
     }
 
     OrderListResponse listAdminOrders(
         int page, int pageSize, String status, String query, OrderAccessScopeService.AccessScope scope
     ) {
-        return listOrders(page, pageSize, status, query, null, scope);
+        return listAdminOrders(page, pageSize, status, query, scope, null);
+    }
+
+    OrderListResponse listAdminOrders(
+        int page, int pageSize, String status, String query, OrderAccessScopeService.AccessScope scope, String orderChannel
+    ) {
+        return listOrders(page, pageSize, status, query, null, scope, orderChannel);
     }
 
     public OrderDetailResponse requireAdminOrder(long orderId) {
@@ -1190,13 +1206,18 @@ public class CustomerPortalService {
 
     private OrderListResponse listOrders(
         int page, int pageSize, String status, String query, Long customerId,
-        OrderAccessScopeService.AccessScope accessScope
+        OrderAccessScopeService.AccessScope accessScope, String orderChannel
     ) {
         int resolvedPage = Math.max(1, page);
         int resolvedPageSize = Math.min(Math.max(1, pageSize), 100);
         int offset = (resolvedPage - 1) * resolvedPageSize;
         String normalizedStatus = blankToNull(clean(status, 32));
         String normalizedQuery = blankToNull(clean(query, 128));
+        String normalizedChannel = orderChannel == null || orderChannel.isBlank() ? null : orderChannel.strip();
+        if (normalizedChannel != null && !Set.of("partner", "individual").contains(normalizedChannel)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Select a valid order channel");
+        }
+        String visibleStatus = MerchantOrderPolicy.visibleStatusSql("o");
         Map<String, Object> params = new LinkedHashMap<>();
         params.put("status", normalizedStatus);
         params.put("query", normalizedQuery == null ? null : "%" + normalizedQuery.toUpperCase(Locale.ROOT) + "%");
@@ -1221,13 +1242,14 @@ public class CustomerPortalService {
             params.put("scopeLineIds", accessScope.safeBusinessLineIds());
             params.put("scopeCenterIds", accessScope.safeWorkCenterIds());
         }
-        String whereClause = """
-            WHERE (:status IS NULL OR o.status_code = :status)
+        String channelCondition = normalizedChannel == null ? "" : " AND "
+            + ("individual".equals(normalizedChannel) ? "NOT " : "") + MerchantOrderPolicy.isBatchOrderSql("o");
+        String whereClause = "WHERE (:status IS NULL OR (" + visibleStatus + ") = :status) " + """
               AND (:query IS NULL OR UPPER(o.order_no) LIKE :query OR UPPER(c.email) LIKE :query OR UPPER(c.display_name) LIKE :query
                 OR EXISTS (SELECT 1 FROM merchant_order_batch_item search_bi
                   JOIN merchant_order_batch search_b ON search_b.id=search_bi.batch_id AND search_b.merchant_customer_id=o.customer_id
                   WHERE search_bi.order_id=o.id AND UPPER(search_bi.client_reference) LIKE :query))
-            """ + customerCondition + scopeCondition;
+            """ + customerCondition + scopeCondition + channelCondition;
         Integer total = jdbcClient.sql(
                 "SELECT COUNT(*) FROM grading_order o JOIN customer_account c ON c.id = o.customer_id " + whereClause
             )
@@ -1236,7 +1258,7 @@ public class CustomerPortalService {
             .single();
         List<OrderListItem> items = jdbcClient.sql(
                 """
-                SELECT o.id, o.order_no, o.status_code, %s AS admission_status_code,
+                SELECT o.id, o.order_no, %s AS status_code, %s AS order_channel, o.admission_status_code,
                        o.service_level_code,
                        o.return_shipping_option_code, o.return_shipping_option_name, o.total_card_count,
                        o.total_amount, o.currency_code, o.created_at, o.updated_at,
@@ -1246,7 +1268,7 @@ public class CustomerPortalService {
                          WHERE display_bi.order_id=o.id) AS order_reference
                 FROM grading_order o
                 JOIN customer_account c ON c.id = o.customer_id
-                """.formatted(orderAdmissionService == null ? "NULL" : "o.admission_status_code")
+                """.formatted(visibleStatus, MerchantOrderPolicy.orderChannelSql("o"))
                 + whereClause + " ORDER BY o.created_at DESC, o.id DESC LIMIT :limit OFFSET :offset"
             )
             .params(params)
@@ -1262,7 +1284,7 @@ public class CustomerPortalService {
                 new CustomerReference(rs.getLong("customer_id"), rs.getString("customer_email"), rs.getString("customer_display_name")),
                 rs.getObject("created_at", LocalDateTime.class),
                 rs.getObject("updated_at", LocalDateTime.class),
-                rs.getString("order_reference")
+                rs.getString("order_reference"), rs.getString("order_channel")
             ))
             .list();
         return new OrderListResponse(items, resolvedPage, resolvedPageSize, total == null ? 0 : total);
@@ -1280,7 +1302,7 @@ public class CustomerPortalService {
     private Optional<OrderDetailResponse> loadOrderDetail(String predicate, Map<String, Object> params) {
         return jdbcClient.sql(
                 """
-                SELECT o.id, o.order_no, o.status_code, %s AS admission_status_code,
+                SELECT o.id, o.order_no, %s AS status_code, %s AS order_channel, o.admission_status_code,
                        o.service_level_code, o.total_card_count,
                        o.return_shipping_option_code, o.return_shipping_option_name,
                        o.service_fee, o.return_shipping_fee, o.total_amount, o.currency_code,
@@ -1291,7 +1313,7 @@ public class CustomerPortalService {
                        c.id AS customer_id, c.email AS customer_email, c.display_name AS customer_display_name
                 FROM grading_order o
                 JOIN customer_account c ON c.id = o.customer_id
-                """.formatted(orderAdmissionService == null ? "NULL" : "o.admission_status_code")
+                """.formatted(MerchantOrderPolicy.visibleStatusSql("o"), MerchantOrderPolicy.orderChannelSql("o"))
                 + " WHERE " + predicate
             )
             .params(params)
@@ -1324,7 +1346,7 @@ public class CustomerPortalService {
                 new CustomerReference(rs.getLong("customer_id"), rs.getString("customer_email"), rs.getString("customer_display_name")),
                 rs.getObject("created_at", LocalDateTime.class),
                 rs.getObject("updated_at", LocalDateTime.class),
-                List.of(), List.of(), List.of(), List.of(), null
+                List.of(), List.of(), List.of(), List.of(), null, rs.getString("order_channel")
             ))
             .optional()
             .map(this::withOrderRelations);
@@ -1339,7 +1361,7 @@ public class CustomerPortalService {
             base.returnCity(), base.returnRegion(), base.returnPostalCode(), base.returnCountry(),
             base.customerNote(), base.internalNote(), base.intakeCode(), base.packingSlipCode(), base.shippingLabelCreatedAt(),
             base.customer(), base.createdAt(), base.updatedAt(),
-            listOrderItems(base.id()), listPayments(base.id()), listShipments(base.id()), listTimeline(base.id()), merchantBatchLink(base.id())
+            listOrderItems(base.id()), listPayments(base.id()), listShipments(base.id()), listTimeline(base.id()), merchantBatchLink(base.id()), base.orderChannel()
         );
     }
 
@@ -1772,6 +1794,14 @@ public class CustomerPortalService {
 
     private void completeConfirmedPaymentOrder(long orderId, String actorType, Long customerId, Long adminUserId) {
         String currentStatus = currentLockedOrderStatus(orderId);
+        if(MerchantOrderPolicy.isBatchOrder(jdbcClient,orderId)) {
+            // A late legacy receipt still belongs in the financial ledger, but
+            // must not pause or advance the independent B fulfillment workflow.
+            addTimelineEvent(orderId,"merchant_payment_recorded","Legacy payment recorded",
+                "The verified legacy receipt was retained without changing the partner order workflow.",currentStatus,
+                false,actorType,customerId,adminUserId);
+            return;
+        }
         boolean validOperationalState = Set.of("awaiting_payment", "payment_review").contains(currentStatus);
         if (!validOperationalState
             || (orderAdmissionService != null && orderAdmissionService.verifiedPaymentRequiresReview(orderId))) {
@@ -1823,9 +1853,10 @@ public class CustomerPortalService {
             && !clean(requestedShippingOptionCode, 64).equalsIgnoreCase(aggregate.shippingOptionCode())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "The batch shipping option changed");
         }
-        BigDecimal serviceFee = requireBatchAmount(allocation.serviceFee(), false, "Batch grading fee");
+        boolean unquoted="unquoted_business".equals(aggregate.pricingSourceCode());
+        BigDecimal serviceFee = requireBatchAmount(allocation.serviceFee(), unquoted, "Batch grading fee");
         BigDecimal shippingFee = requireBatchAmount(allocation.returnShippingFee(), true, "Batch return shipping fee");
-        BigDecimal total = requireBatchAmount(allocation.totalAmount(), false, "Batch total");
+        BigDecimal total = requireBatchAmount(allocation.totalAmount(), unquoted, "Batch total");
         BigDecimal expectedServiceFee = aggregate.unitPrice().multiply(BigDecimal.valueOf(cardCount));
         if (serviceFee.compareTo(expectedServiceFee) != 0
             || serviceFee.add(shippingFee).compareTo(total) != 0
@@ -2197,12 +2228,18 @@ public class CustomerPortalService {
         CustomerReference customer,
         LocalDateTime createdAt,
         LocalDateTime updatedAt,
-        String orderReference
+        String orderReference,
+        String orderChannel
     ) {
         public OrderListItem(long id,String orderNo,String statusCode,String admissionStatus,String serviceLevelCode,
             int totalCardCount,BigDecimal totalAmount,String currencyCode,CustomerReference customer,
             LocalDateTime createdAt,LocalDateTime updatedAt) {
-            this(id,orderNo,statusCode,admissionStatus,serviceLevelCode,totalCardCount,totalAmount,currencyCode,customer,createdAt,updatedAt,null);
+            this(id,orderNo,statusCode,admissionStatus,serviceLevelCode,totalCardCount,totalAmount,currencyCode,customer,createdAt,updatedAt,null,"individual");
+        }
+        public OrderListItem(long id,String orderNo,String statusCode,String admissionStatus,String serviceLevelCode,
+            int totalCardCount,BigDecimal totalAmount,String currencyCode,CustomerReference customer,
+            LocalDateTime createdAt,LocalDateTime updatedAt,String orderReference) {
+            this(id,orderNo,statusCode,admissionStatus,serviceLevelCode,totalCardCount,totalAmount,currencyCode,customer,createdAt,updatedAt,orderReference,"individual");
         }
     }
 
@@ -2239,8 +2276,25 @@ public class CustomerPortalService {
         List<PaymentRecord> payments,
         List<ShipmentRecord> shipments,
         List<OrderTimelineEvent> timeline,
-        MerchantBatchLink merchantBatch
+        MerchantBatchLink merchantBatch,
+        String orderChannel
     ) {
+        public OrderDetailResponse(long id, String orderNo, String statusCode, String admissionStatus,
+            String serviceLevelCode, String returnShippingOptionCode, String returnShippingOptionName,
+            int totalCardCount, BigDecimal serviceFee, BigDecimal returnShippingFee, BigDecimal totalAmount,
+            String currencyCode, String contactName, String contactPhone, String returnAddressLine1,
+            String returnAddressLine2, String returnCity, String returnRegion, String returnPostalCode,
+            String returnCountry, String customerNote, String internalNote, String intakeCode,
+            String packingSlipCode, LocalDateTime shippingLabelCreatedAt, CustomerReference customer,
+            LocalDateTime createdAt, LocalDateTime updatedAt, List<OrderItemResponse> items,
+            List<PaymentRecord> payments, List<ShipmentRecord> shipments, List<OrderTimelineEvent> timeline,
+            MerchantBatchLink merchantBatch) {
+            this(id,orderNo,statusCode,admissionStatus,serviceLevelCode,returnShippingOptionCode,returnShippingOptionName,
+                totalCardCount,serviceFee,returnShippingFee,totalAmount,currencyCode,contactName,contactPhone,
+                returnAddressLine1,returnAddressLine2,returnCity,returnRegion,returnPostalCode,returnCountry,
+                customerNote,internalNote,intakeCode,packingSlipCode,shippingLabelCreatedAt,customer,createdAt,
+                updatedAt,items,payments,shipments,timeline,merchantBatch,merchantBatch==null?"individual":"partner");
+        }
     }
 
     public record MerchantBatchLink(long batchId, String batchNo, String statusCode, String clientReference) {

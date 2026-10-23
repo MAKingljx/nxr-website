@@ -1,15 +1,16 @@
 <template>
   <main class="nxr-workspace nxr-orders-workspace">
     <nxr-page-header
-      :kicker="$tx('GRADING ORDERS')"
+      :kicker="route.meta.adminUnified ? '' : $tx('GRADING ORDERS')"
       :title="$tx('Order Management')"
-      :summary="$tx('Manage payments, warehouse intake, grading, quality checks, return shipping, adjustments, and support tickets')"
+      :summary="route.meta.adminUnified ? '' : $tx('Manage payments, warehouse intake, grading, quality checks, return shipping, adjustments, and support tickets')"
     >
       <template #actions>
-        <el-button v-hasPermi="['nxr:order:manage','nxr:order:workbench','nxr:order:shipping','nxr:order:batch']" @click="router.push('/nxr/submissions/partner-fulfillment')">{{ $tx('Partner fulfillment') }}</el-button>
+        <el-button v-hasPermi="['nxr:order:manage','nxr:order:workbench','nxr:order:shipping','nxr:order:batch']" @click="router.push('/nxr/submissions/partner-fulfillment')">{{ route.meta.adminUnified ? $t('nav.fulfillmentManagement') : $tx('Partner fulfillment') }}</el-button>
         <el-button v-hasPermi="['nxr:order:manage','nxr:order:config']" icon="Setting" @click="openShippingConfig">{{ $tx('Pricing & Return Shipping') }}</el-button>
       </template>
     </nxr-page-header>
+    <AdminOrderTabs />
 
     <el-card v-hasPermi="['nxr:order:manage','nxr:order:warehouse']" shadow="never" class="intake-lookup-card mb12">
       <div class="intake-lookup-row"><strong>{{ $tx('Warehouse Intake Scan') }}</strong><el-input v-model="intakeLookupCode" clearable :placeholder="$tx('Scan or enter an intake code')" @keyup.enter="lookupIntakeOrder" /><el-button type="primary" icon="Search" :loading="lookingUpIntake" @click="lookupIntakeOrder">{{ $tx('Find Order') }}</el-button></div>
@@ -17,7 +18,7 @@
 
     <order-card-lookup v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:workbench']" @open-order="openDetail" />
 
-    <merchant-batch-panel ref="merchantBatchPanel" @open-order="openDetail" @open-returns="router.push('/nxr/submissions/partner-fulfillment?tab=returns')" v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:shipping','nxr:order:batch']" />
+    <merchant-batch-panel v-if="!route.meta.adminUnified" ref="merchantBatchPanel" @open-order="openDetail" @open-returns="router.push('/nxr/submissions/partner-fulfillment?tab=returns')" v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:shipping','nxr:order:batch']" />
 
     <el-form ref="queryRef" :model="queryParams" :inline="true" @submit.prevent>
       <el-form-item :label="$tx('Order Status')" prop="status">
@@ -36,7 +37,8 @@
       <el-table-column :label="$tx('Customer')" min-width="190" show-overflow-tooltip><template #default="scope"><div>{{ scope.row.customer.displayName }}</div><small>{{ scope.row.customer.email }}</small></template></el-table-column>
       <el-table-column :label="$tx('Cards')" prop="totalCardCount" width="80" align="center" />
       <el-table-column :label="$tx('Service')" width="130" align="center"><template #default="scope">{{ localizeOrderCode('serviceLevel', scope.row.serviceLevelCode) }}</template></el-table-column>
-      <el-table-column :label="$tx('Amount')" width="110" align="right"><template #default="scope">{{ scope.row.currencyCode }} {{ Number(scope.row.totalAmount).toFixed(2) }}</template></el-table-column>
+      <el-table-column v-if="queryParams.orderChannel !== 'partner'" :label="$tx('Submission type')" width="130"><template #default="scope">{{ $tx(isPartnerOrder(scope.row) ? 'Partner submission' : 'Individual submission') }}</template></el-table-column>
+      <el-table-column v-if="queryParams.orderChannel !== 'partner'" :label="$tx('Amount')" width="110" align="right"><template #default="scope"><span v-if="isPartnerOrder(scope.row)">{{ $tx('No payment required') }}</span><template v-else>{{ scope.row.currencyCode }} {{ Number(scope.row.totalAmount).toFixed(2) }}</template></template></el-table-column>
       <el-table-column :label="$tx('Status')" width="170" align="center"><template #default="scope"><el-tag :type="statusType(displayOrderStatus(scope.row))">{{ labelStatus(displayOrderStatus(scope.row)) }}</el-tag></template></el-table-column>
       <el-table-column :label="$tx('Created At')" width="170" align="center"><template #default="scope">{{ parseTime(scope.row.createdAt) }}</template></el-table-column>
       <el-table-column :label="$tx('Actions')" width="100" align="center"><template #default="scope"><el-button link type="primary" icon="View" @click="openDetail(scope.row.id)">{{ $tx('View') }}</el-button></template></el-table-column>
@@ -59,9 +61,10 @@
           <el-descriptions-item :label="$tx('Customer')" :span="2">{{ detail.customer.displayName }} · {{ detail.customer.email }}</el-descriptions-item>
           <el-descriptions-item :label="$tx('Phone')">{{ detail.contactPhone }}</el-descriptions-item>
           <el-descriptions-item :label="$tx('Return Address')" :span="3">{{ [detail.returnAddressLine1, detail.returnAddressLine2, detail.returnCity, detail.returnRegion, detail.returnPostalCode, detail.returnCountry].filter(Boolean).join(', ') }}</el-descriptions-item>
-          <el-descriptions-item :label="$tx('Amount')">{{ detail.currencyCode }} {{ Number(detail.totalAmount).toFixed(2) }}</el-descriptions-item>
-          <el-descriptions-item :label="$tx('Service Fee')">{{ detail.currencyCode }} {{ Number(detail.serviceFee).toFixed(2) }}</el-descriptions-item>
-          <el-descriptions-item :label="$tx('Return Shipping')">{{ detail.currencyCode }} {{ Number(detail.returnShippingFee).toFixed(2) }}</el-descriptions-item>
+          <el-descriptions-item :label="$tx('Submission type')" :span="3">{{ $tx(isPartnerOrder(detail) ? 'Partner submission' : 'Individual submission') }}</el-descriptions-item>
+          <el-descriptions-item v-if="!isPartnerOrder(detail)" :label="$tx('Amount')">{{ detail.currencyCode }} {{ Number(detail.totalAmount).toFixed(2) }}</el-descriptions-item>
+          <el-descriptions-item v-if="!isPartnerOrder(detail)" :label="$tx('Service Fee')">{{ detail.currencyCode }} {{ Number(detail.serviceFee).toFixed(2) }}</el-descriptions-item>
+          <el-descriptions-item v-if="!isPartnerOrder(detail)" :label="$tx('Return Shipping')">{{ detail.currencyCode }} {{ Number(detail.returnShippingFee).toFixed(2) }}</el-descriptions-item>
           <el-descriptions-item v-if="detail.merchantBatch" :label="$tx('Master batch')" :span="3">{{ detail.merchantBatch.batchNo }}</el-descriptions-item>
           <el-descriptions-item :label="$tx('Customer Note')" :span="3">{{ detail.customerNote || '-' }}</el-descriptions-item>
         </el-descriptions>
@@ -69,8 +72,8 @@
         <el-tabs v-model="detailTab" class="order-detail-tabs">
           <el-tab-pane :label="$tx('Review & Terms')" name="admission">
 
-        <order-admission-panel v-if="detail?.id" v-hasPermi="['nxr:order:admission','nxr:order:manage']" :order-id="detail.id" :order-amount="detail.totalAmount" :currency-code="detail.currencyCode" :show-config="false" @changed="refreshDetail" />
-        <el-alert v-if="awaitingFulfillment" type="info" :closable="false" show-icon :title="$tx('Complete application review, terms confirmation, and payment before warehouse or grading work begins.')" />
+        <order-admission-panel v-if="detail?.id" v-hasPermi="['nxr:order:admission','nxr:order:manage']" :order-id="detail.id" :order-amount="detail.totalAmount" :currency-code="detail.currencyCode" :payment-required="!isPartnerOrder(detail)" :show-config="false" @changed="refreshDetail" />
+        <el-alert v-if="awaitingFulfillment" type="info" :closable="false" show-icon :title="$tx(isPartnerOrder(detail) ? 'Complete application review and service terms confirmation before warehouse or grading work begins.' : 'Complete application review, terms confirmation, and payment before warehouse or grading work begins.')" />
 
           </el-tab-pane>
           <el-tab-pane :label="$tx('Warehouse')" name="warehouse">
@@ -120,7 +123,7 @@
         </template>
 
           </el-tab-pane>
-          <el-tab-pane :label="$tx('Finance')" name="finance">
+          <el-tab-pane v-if="!isPartnerOrder(detail)" :label="$tx('Finance')" name="finance">
         <order-finance-exception-panel v-if="canViewFinanceExceptions" :order-id="detail.id" :active="detailTab === 'finance' && detailOpen" :refresh-key="detailRefresh" @reviewed="refreshFinanceReviewed" />
         <p v-if="!detail.payments.length" class="order-section-empty">{{ $tx('No payments recorded') }}</p>
 
@@ -207,11 +210,13 @@ import auth from '@/plugins/auth'
 import OrderFinanceExceptionPanel from './components/OrderFinanceExceptionPanel.vue'
 import { useRoute, useRouter } from 'vue-router'
 import { onDeactivated } from 'vue'
-import { orderDetailSection, orderManualStatuses } from './orderPresentation'
+import { orderDetailSection, orderManualStatuses, isPartnerOrder, paymentOrderStatuses } from './orderPresentation'
 import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
 import CommercePolicyPanel from './components/CommercePolicyPanel.vue'
 import MediaCapacityPanel from './components/MediaCapacityPanel.vue'
 import MerchantBatchPanel from './components/MerchantBatchPanel.vue'
+import AdminOrderTabs from './components/AdminOrderTabs.vue'
+import { ADMIN_BATCHES_PATH } from '@/utils/adminOrderNavigation'
 import OrderCardLookup from './components/OrderCardLookup.vue'
 import OrderAdmissionConfigPanel from './components/OrderAdmissionConfigPanel.vue'
 import OrderAdmissionPanel from './components/OrderAdmissionPanel.vue'
@@ -293,7 +298,7 @@ const savingShippingConfig = ref(false)
 const savingServicePrice = ref(false)
 const submissionLinks = reactive({})
 const taskDrafts = reactive({})
-const queryParams = reactive({ page: 1, pageSize: 20, status: undefined, query: undefined })
+const queryParams = reactive({ page: 1, pageSize: 20, status: undefined, query: undefined, orderChannel: route.query.orderChannel === 'individual' ? 'individual' : route.meta.adminUnified ? 'partner' : undefined })
 const statusForm = reactive({ statusCode: '' })
 const shipmentForm = reactive({ direction: 'inbound', carrierName: '', trackingNumber: '', note: '' })
 const paymentForm = reactive({ providerTransactionId: '', note: '' })
@@ -336,7 +341,7 @@ const filterStatusOptions = computed(() => [
   { value: 'payment_expired', label: tx('Payment Deadline Expired') },
   ...statusOptions.value,
   { value: 'payment_exception', label: tx('Payment Exception') }
-])
+].filter(option => queryParams.orderChannel !== 'partner' || !paymentOrderStatuses.has(option.value)))
 
 const extraStatusLabels = computed(() => ({
   shortage: tx('Shortage'), overage: tx('Overage'), damaged: tx('Damaged'), missing_barcode: tx('Missing Barcode'), other: tx('Other'),
@@ -373,6 +378,11 @@ async function openDetail(orderId, section, preserveTab = false) {
   const [detailResponse, operationsResponse] = await Promise.all([getGradingOrder(orderId), getOrderOperations(orderId)])
   if (current !== detailGeneration || (preserveTab && (!detailOpen.value || detail.value?.id !== orderId))) return
   detail.value = detailResponse.data
+  const channel = isPartnerOrder(detail.value) ? 'partner' : 'individual'
+  if (route.meta.adminUnified && queryParams.orderChannel !== channel) {
+    queryParams.orderChannel = channel
+    await router.replace({ path: route.path, query: { ...route.query, orderChannel: channel } })
+  }
   if (!preserveTab) detailTab.value = orderDetailSection(detail.value, section)
   detailRefresh.value += 1
   operations.value = operationsResponse.data
@@ -403,6 +413,9 @@ async function refreshFinanceReviewed(orderId) {
 
 async function openMasterBatch() {
   if (!detail.value?.merchantBatch) return
+  if (route.meta.adminUnified) {
+    return router.push({ path: ADMIN_BATCHES_PATH, query: { batchId: String(detail.value.merchantBatch.batchId) } })
+  }
   await merchantBatchPanel.value?.open(detail.value.merchantBatch.batchId)
 }
 
@@ -671,7 +684,8 @@ onDeactivated(() => {
   for (const drawer of [detailOpen, paymentDialogOpen, exceptionDialogOpen, ticketDialogOpen, shippingActionDialogOpen, shippingConfigOpen]) drawer.value = false
 })
 
-watch(() => route.query.status, raw => {
+watch(() => [route.query.status, route.query.orderChannel], ([raw, channel]) => {
+  queryParams.orderChannel = channel === 'individual' ? 'individual' : route.meta.adminUnified ? 'partner' : undefined
   queryParams.status = filterStatusOptions.value.some(option => option.value === raw) ? raw : undefined
   void loadOrders(true)
 }, { immediate: true })

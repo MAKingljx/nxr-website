@@ -154,7 +154,7 @@ function generateRoutes(routes, basePath = '', prefixTitle = []) {
     if (r.hidden) { continue }
     const p = r.path.length > 0 && r.path[0] === '/' ? r.path : '/' + r.path
     const data = {
-      path: !isHttp(r.path) ? getNormalPath(basePath + p) : r.path,
+      path: !isHttp(r.path) ? getNormalPath(r.path.startsWith('/') ? r.path : basePath + p) : r.path,
       title: [...prefixTitle],
       icon: ''
     }

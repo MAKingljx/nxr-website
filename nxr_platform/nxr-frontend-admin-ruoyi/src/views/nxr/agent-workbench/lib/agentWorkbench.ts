@@ -29,12 +29,13 @@ export type AgentCard = {
 }
 export type WorkbenchOrder = {
   id: number; orderNo: string; clientName: string; phone: string; email: string; statusCode: string;
+  customerAddress?: AgentAddress;
   intakeStatusCode: string; cardCount: number; gradingOrderId: number | null; gradingOrderNo: string | null;
   batchId: number | null; batchNo: string | null; createdAt: string; notes: string | null; canSubmit: boolean; legacy: boolean;
   gradedCardCount?: number; returnShippedCardCount?: number; deliveredCardCount?: number;
 }
 export type WorkbenchCardInput = { cardName: string; brandName: string; setName: string; officialCardNumber: string; languageCode: string; productType: string; category: string; frontPhotoId: number; backPhotoId: number }
-export type WorkbenchOrderInput = { clientName: string; phone: string; email: string; notes: string; cards: WorkbenchCardInput[] }
+export type WorkbenchOrderInput = { clientName: string; phone: string; email: string; notes: string; customerAddress: AgentAddress; cards: WorkbenchCardInput[] }
 export type WorkbenchOrderDetail = { order: WorkbenchOrder; cards: Array<AgentCard & { fulfillmentStatusCode?: string | null; brandName: string; setName: string; productType: string; category: string }>; events: AgentEvent[] }
 export type WorkbenchOrderOptions = { brands: Array<{ value: string; label: string }>; categories: Array<{ value: string; label: string }>; languages: Array<{ value: string; label: string }>; productTypes: Array<{ value: string; label: string }>; maxCardsPerOrder: number }
 export type PartnerReturnParcel = { id: number; parcelNo: string; companyId: number; carrierName: string; trackingNumber: string; statusCode: string; cardCount: number; shippedAt: string; deliveredAt: string | null; returnAddress: string; items?: Array<{ orderItemId: number; agentCardId: number; orderId: number; orderNo: string; orderReference?: string; batchId: number; batchNo: string; cardName: string; certId: string; itemStatus: string }> }
@@ -49,7 +50,7 @@ export type AgentIntakeInput = {
   clientId: number; carrierName: string; trackingNumber: string; expectedCardCount: number; notes: string;
   cards: Array<{ cardName: string; languageCode: string; notes: string; officialCardNumber: string }>;
 }
-export type AgentSubmissionInput = { intakeIds: number[]; returnAddressId: number; returnShippingOptionCode: string; currencyCode: string; batchName: string; quotedTotalAmount: number; quotedCurrencyCode: string }
+export type AgentSubmissionInput = { intakeIds: number[]; returnAddressId: number; returnShippingOptionCode: string; batchName: string; currencyCode?: string; quotedTotalAmount?: number; quotedCurrencyCode?: string; termsAccepted: boolean; termsVersion: string; termsText: string; turnaroundText: string }
 export type AgentSubmission = { id: number; batchId: number; batchNo: string; intakeIds: number[]; createdAt: string }
 export type AgentShipmentInput = { clientId: number; cardIds: number[]; carrierName: string; trackingNumber: string; address?: AgentAddress; note: string }
 
@@ -59,6 +60,7 @@ export type AgentOperator = { sysUserId: number; userName: string; nickName: str
 export type AgentOperatorCandidate = { sysUserId: number; userName: string; nickName: string }
 export type CustomerAddress = { id: number; label: string; contactName: string; contactPhone: string; addressLine1: string; addressLine2: string | null; city: string; region: string | null; postalCode: string; country: string; defaultAddress: boolean }
 export type OrderQuote = { currencyCode: string; cardCount: number; serviceFee: number; returnShippingFee: number; totalAmount: number; shippingSourceCode: string; shippingOptionCode: string; shippingDisplayName: string }
+export type AgentLogisticsOption = { optionCode: string; displayName: string; currencyCode: string }
 export type BatchQuote = { aggregate: OrderQuote; allocations: Array<{ reference: string; cardCount: number; totalAmount: number }> }
 export type AgentWallet = { currencyCode: string; balance: number | string; updatedAt: string | null }
 export type AgentRecharge = { id: number; rechargeNo: string; currencyCode: string; amount: number | string; statusCode: string; payerReference: string; proofReference: string; reviewNote?: string; createdAt: string; creditQuote?: CreditQuote | null }
@@ -66,7 +68,7 @@ export type AgentTransaction = { id: number; transactionTypeCode: string; direct
 export type AgentOrderCreditQuote = { quote: CreditQuote; balance: number | string; sufficient: boolean }
 export type AgentBatch = { id?: number; batchId?: number; batchNo: string; batchName: string; sourceName?: string | null; statusCode: string; totalRows?: number; acceptedRows?: number; rejectedRows?: number; createdAt: string; updatedAt?: string; orders?: Array<{ orderNo: string; clientReference: string; clientDisplayName?: string; admissionStatus?: string; statusCode: string; totalCardCount?: number; cardCount?: number }>; shipments?: Array<{ id: number; directionCode: string; carrierName: string; trackingNumber: string; statusCode: string; deliveredAt?: string }> }
 export type AgentOrder = { id?: number; orderNo: string; statusCode: string; totalCardCount: number; totalAmount: number; currencyCode: string; items: Array<{ id: number; cardName: string; languageCode: string; gradingCertId?: string; frontPhotoId?: number; backPhotoId?: number; statusCode: string }>; timeline: Array<{ id: number; title: string; eventCode?: string; detail?: string; createdAt: string }> }
-export type AgentAdmission = { admissionStatus: string; termsVersion: string; termsText: string; turnaroundText?: string; quoteAmount: number; quoteCurrency: string; canAcceptTerms: boolean; canPay: boolean; canResubmit: boolean; decisionNote?: string; paymentDueAtIso?: string; supplementalPhotoIds?: number[]; events: Array<{ id: number; title: string; eventCode?: string; detail?: string; createdAt: string }> }
+export type AgentAdmission = { paymentRequired?: boolean; admissionStatus: string; termsVersion: string; termsText: string; turnaroundText?: string; quoteAmount: number; quoteCurrency: string; canAcceptTerms: boolean; canPay: boolean; canResubmit: boolean; decisionNote?: string; paymentDueAtIso?: string; supplementalPhotoIds?: number[]; events: Array<{ id: number; title: string; eventCode?: string; detail?: string; createdAt: string }> }
 type Query = Record<string, string | number | boolean | undefined>
 function queryString(query: Query) { const params = new URLSearchParams(); Object.entries(query).forEach(([key,value]) => { if (value !== undefined && value !== '') params.set(key,String(value)) }); return params.toString() }
 export function formatPoints(amount: number | string) {
@@ -118,6 +120,7 @@ export function normalizeAgentReturnScan(value: string) {
 
 export function createAgentApi(companyId?: number) {
   const controller = new AbortController(), busy = ref(false)
+  const addressVersion = ref(0)
   let active = true
   const headers = () => ({ ...(companyId ? { 'X-NXR-Agent-Id': String(companyId) } : {}), repeatSubmit: false })
   async function send<T>(path: string, config: Record<string, unknown> = {}): Promise<T> {
@@ -171,10 +174,12 @@ const uploadAgentCardPhoto = (id: number, side: 'front' | 'back', file: File) =>
   const fetchOperators = (query: Query = {}) => send<AgentPage<AgentOperator>>(`${base}/operators?${queryString(query)}`)
   const fetchOperatorCandidates = (query: Query = {}) => send<AgentPage<AgentOperatorCandidate>>(`${base}/operator-candidates?${queryString(query)}`)
   const updateOperator = (id: number, data: { merchantCustomerId: number; active: boolean }) => send<AgentOperator>(`${base}/operators/${id}`, { method: 'put', data })
-  const fetchApplicationConfig = () => send<{ maxCardsPerOrder: number }>(`${base}/order-admission/config`)
+  const fetchApplicationConfig = () => send<{ maxCardsPerOrder: number; termsVersion: string; termsText: string; turnaroundText?: string }>(`${base}/order-admission/config`)
   const fetchCustomerAddresses = () => send<CustomerAddress[]>(`${base}/addresses`)
-  const saveAddress = (id: number | null, data: object, key: string) => send<CustomerAddress>(`${base}/addresses${id ? `/${id}` : ''}`, { method: id ? 'put' : 'post', data: { ...data, requestKey: key } })
+  const saveAddress = async (id: number | null, data: object, key: string) => { const value = await send<CustomerAddress>(`${base}/addresses${id ? `/${id}` : ''}`, { method: id ? 'put' : 'post', data: { ...data, requestKey: key } }); addressVersion.value++; return value }
+  const setDefaultAddress = async (id: number, key: string) => { const value = await post<CustomerAddress>(`/addresses/${id}/default`, {}, key); addressVersion.value++; return value }
   const deleteAddress = (id: number) => send(`${base}/addresses/${id}`, { method: 'delete' })
+  const fetchLogisticsOptions = (country: string, cardCount: number) => send<AgentLogisticsOption[]>(`${base}/logistics-options?${queryString({country,cardCount})}`)
   const fetchServicePrices = () => send<Array<{ currencyCode: string }>>(`${base}/service-prices`)
   const fetchShippingOptions = (country: string, currencyCode: string) => send<Array<{ optionCode: string; displayName: string }>>(`${base}/shipping-options?${queryString({country,currencyCode})}`)
   const fetchOrderQuote = (country: string, currency: string, count: number, shippingOptionCode: string) => send<OrderQuote>(`${base}/commerce/quote-preview?${queryString({ customerId: companyId, country,currency,count,shippingOptionCode })}`)
@@ -202,7 +207,7 @@ const uploadAgentCardPhoto = (id: number, side: 'front' | 'back', file: File) =>
   const resubmitOrder = (orderNo: string, data: { note: string; supplementalPhotoIds: number[] }, key: string) => post<AgentAdmission>(`/orders/${encodeURIComponent(orderNo)}/admission/resubmit`,data,key)
   const uploadSupplementalPhoto = (file: File) => { const body = new FormData();body.set('file',file);return scopedRequest<{id:number}>(`${base}/order-photos`,{method:'POST',body}) }
 
-  return { fetchWorkbenchOrders, fetchWorkbenchOrder, createWorkbenchOrder, fetchWorkbenchOrderOptions, fetchPartnerReturnParcels, fetchPartnerReturnParcel, companyId, busy, isActive: () => active, dispose: () => { active = false; controller.abort(); busy.value = false }, fetchAgentClients, fetchAgentClient, createAgentClient, updateAgentClient, fetchAgentIntakes, fetchAgentIntake, createAgentIntake, receiveAgentIntake, checkInAgentCard, fetchAgentCards, fetchAgentEvents, createAgentSubmission, checkAgentReturn, fetchAgentShipments, fetchAgentShipment, createAgentShipment, deliverAgentShipment, uploadAgentCardPhoto, fetchContext, fetchCompanies, fetchOperators, fetchOperatorCandidates, updateOperator, fetchApplicationConfig, fetchCustomerAddresses, saveAddress, deleteAddress, fetchServicePrices, fetchShippingOptions, fetchOrderQuote, fetchBatchQuote, fetchPhoto, fetchMerchantProfile, saveMerchantProfile, fetchWallets, fetchEnterpriseCredit, fetchCreditQuote, fetchOrderCreditQuote, fetchTransactions, fetchRecharges, requestRecharge, fetchBatches, fetchBatch, rotateTrackingLink, revokeTrackingLink, addBatchInbound, fetchOrder, fetchAdmission, acceptOrderTerms, payFromWallet, fetchPackingSlip, resubmitOrder, uploadSupplementalPhoto }
+  return { fetchWorkbenchOrders, fetchWorkbenchOrder, createWorkbenchOrder, fetchWorkbenchOrderOptions, fetchPartnerReturnParcels, fetchPartnerReturnParcel, companyId, busy, addressVersion, isActive: () => active, dispose: () => { active = false; controller.abort(); busy.value = false }, fetchAgentClients, fetchAgentClient, createAgentClient, updateAgentClient, fetchAgentIntakes, fetchAgentIntake, createAgentIntake, receiveAgentIntake, checkInAgentCard, fetchAgentCards, fetchAgentEvents, createAgentSubmission, checkAgentReturn, fetchAgentShipments, fetchAgentShipment, createAgentShipment, deliverAgentShipment, uploadAgentCardPhoto, fetchContext, fetchCompanies, fetchOperators, fetchOperatorCandidates, updateOperator, fetchApplicationConfig, fetchCustomerAddresses, saveAddress, setDefaultAddress, deleteAddress, fetchServicePrices, fetchShippingOptions, fetchLogisticsOptions, fetchOrderQuote, fetchBatchQuote, fetchPhoto, fetchMerchantProfile, saveMerchantProfile, fetchWallets, fetchEnterpriseCredit, fetchCreditQuote, fetchOrderCreditQuote, fetchTransactions, fetchRecharges, requestRecharge, fetchBatches, fetchBatch, rotateTrackingLink, revokeTrackingLink, addBatchInbound, fetchOrder, fetchAdmission, acceptOrderTerms, payFromWallet, fetchPackingSlip, resubmitOrder, uploadSupplementalPhoto }
 }
 
 export type AgentApi = ReturnType<typeof createAgentApi>
