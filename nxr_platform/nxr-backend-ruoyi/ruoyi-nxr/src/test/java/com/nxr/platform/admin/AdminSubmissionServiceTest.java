@@ -7,9 +7,12 @@ import com.nxr.platform.shared.CertificateIdPolicy;
 import com.nxr.platform.shared.GradeLabelResolver;
 import com.nxr.platform.shared.NxrDictionaryService;
 import java.math.BigDecimal;
+import java.util.List;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -88,6 +91,143 @@ class AdminSubmissionServiceTest {
         assertThat(created.finalGradeValue()).isEqualByComparingTo("9.0");
         assertThat(created.finalGradeLabel()).isEqualTo("9");
         assertThat(count("grading_score")).isOne();
+    }
+
+    @Test
+    void rejectsOutOfRangeScoresBeforeRoundingWithoutCreatingAnyRecord() {
+        for (String rawScore : List.of("0.99", "10.04")) {
+            BigDecimal score = new BigDecimal(rawScore);
+            assertThatThrownBy(() -> service.calculateGrade(
+                new AdminSubmissionService.ScoreRequest(score, score, score, score)
+            )).isInstanceOf(ResponseStatusException.class).hasMessageContaining("between 1 and 10");
+            assertThatThrownBy(() -> service.createSubmission(
+                request("5703018301", "graded_card", null, "trading_card", score)
+            )).isInstanceOf(ResponseStatusException.class).hasMessageContaining("between 1 and 10");
+        }
+        assertThat(count("grading_submission")).isZero();
+        assertThat(count("grading_score")).isZero();
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "1,1.00,8", "8.49,8.49,8", "8.495,8.49,8", "8.499999999999998,8.50,8.5",
+        "8.50,8.50,8.5", "8.994,8.99,8.5", "8.995,8.99,8.5", "9,9.00,9",
+        "9.344,9.34,9", "9.345,9.35,9.5", "9.35,9.35,9.5",
+        "9.744,9.74,9.5", "9.745,9.74,9.5", "9.75,9.75,10",
+        "9.994,9.99,10", "9.995,9.99,10", "10,10.00,Pristine 10",
+        "8.1234567890123456789012345,8.12,8"
+    })
+    void subScorePrecisionSurvivesPreviewCreateUpdateAndReadback(String raw, String average, String label) {
+        // Expected values come from Python's actual calculate_final_grade function.
+        BigDecimal score = new BigDecimal(raw);
+        var preview = service.calculateGrade(new AdminSubmissionService.ScoreRequest(score, score, score, score));
+        assertThat(preview.finalGradeValue()).isEqualByComparingTo(average);
+        assertThat(preview.finalGradeLabel()).isEqualTo(label);
+
+        var request = request("5703018302", "graded_card", null, "trading_card", score);
+        var created = service.createSubmission(request);
+        var loaded = service.loadSubmission(created.id()).orElseThrow();
+        for (BigDecimal saved : List.of(loaded.centeringScore(), loaded.edgesScore(), loaded.cornersScore(), loaded.surfaceScore())) {
+            assertThat(Double.doubleToLongBits(saved.doubleValue())).isEqualTo(Double.doubleToLongBits(score.doubleValue()));
+        }
+        assertThat(loaded.finalGradeValue()).isEqualByComparingTo(average);
+        assertThat(loaded.finalGradeLabel()).isEqualTo(label);
+
+        // Editing and resaving the value returned from DOUBLE must not change its grade.
+        var updated = service.updateSubmission(created.id(), request("5703018302", "graded_card", null,
+            "trading_card", loaded.centeringScore()));
+        assertThat(updated.finalGradeValue()).isEqualByComparingTo(average);
+        assertThat(updated.finalGradeLabel()).isEqualTo(label);
+        assertThat(updated.centeringScore()).isEqualByComparingTo(loaded.centeringScore());
+    }
+
+    @Test
+    void convertingLegacyDecimalInputsToDoubleDoesNotRecalculateHistory() {
+        List<String> columns = List.of("centering_score", "edges_score", "corners_score", "surface_score");
+        for (String column : columns) jdbcTemplate.execute("ALTER TABLE grading_score ALTER COLUMN " + column + " DECIMAL(4,1) NOT NULL");
+        var created = service.createSubmission(request("5703018303", "graded_card", null, "trading_card", new BigDecimal("8.6")));
+        // Retain an existing result even if it differs from today's calculation.
+        jdbcTemplate.update("UPDATE grading_score SET final_grade_value=9.25,final_grade_label='Historical label' WHERE submission_id=?", created.id());
+        var before = jdbcTemplate.queryForMap("SELECT final_grade_value,final_grade_label,created_at,updated_at FROM grading_score WHERE submission_id=?", created.id());
+        for (String column : columns) jdbcTemplate.execute("ALTER TABLE grading_score ALTER COLUMN " + column + " DOUBLE NOT NULL");
+        var after = jdbcTemplate.queryForMap("SELECT final_grade_value,final_grade_label,created_at,updated_at FROM grading_score WHERE submission_id=?", created.id());
+        assertThat(after).isEqualTo(before);
+        var loaded = service.loadSubmission(created.id()).orElseThrow();
+        assertThat(loaded.certId()).isEqualTo("5703018303");
+        assertThat(loaded.centeringScore().doubleValue()).isEqualTo(Double.parseDouble("8.6"));
+        assertThat(loaded.finalGradeValue()).isEqualByComparingTo("9.25");
+        assertThat(loaded.finalGradeLabel()).isEqualTo("Historical label");
+    }
+
+    @Test
+    void gradedCategoriesSharePythonScoringAndKeepOnlyTheirOwnCategoryFields() {
+        String[] categories = { "trading_card", "sports_card", "celebrity_card", "movie_film" };
+        var preview = service.calculateGrade(new AdminSubmissionService.ScoreRequest(
+            new BigDecimal("8.5"), new BigDecimal("8.5"), new BigDecimal("8.5"), new BigDecimal("9.0")
+        ));
+        assertThat(preview.finalGradeValue()).isEqualByComparingTo("8.62");
+        assertThat(preview.finalGradeLabel()).isEqualTo("8.5");
+
+        for (int i = 0; i < categories.length; i++) {
+            String category = categories[i];
+            var created = service.createSubmission(categoryRequest("570301831" + i, category,
+                "Basketball", "Test Group", "Test Film", "2000", "Test Studio", "35mm"));
+            assertThat(created.finalGradeValue()).isEqualByComparingTo(preview.finalGradeValue());
+            assertThat(created.finalGradeLabel()).isEqualTo(preview.finalGradeLabel());
+            assertThat(created.sportsType()).isEqualTo("sports_card".equals(category) ? "Basketball" : null);
+            assertThat(created.groupName()).isEqualTo("celebrity_card".equals(category) ? "Test Group" : null);
+            assertThat(created.movieName()).isEqualTo("movie_film".equals(category) ? "Test Film" : null);
+            assertThat(created.vintageClassification()).isNull();
+            assertThat(created.merchDescription()).isNull();
+            if ("movie_film".equals(category)) {
+                assertThat(created.cardName()).isEqualTo("Test Film");
+                assertThat(created.setName()).isEmpty();
+                assertThat(created.cardNumber()).isEmpty();
+                assertThat(created.languageCode()).isEmpty();
+            }
+        }
+        assertThat(count("grading_score")).isEqualTo(categories.length);
+    }
+
+    @Test
+    void gradedCategorySpecificRequiredFieldsCannotBeSkipped() {
+        assertThatThrownBy(() -> service.createSubmission(categoryRequest("5703018321", "sports_card",
+            null, "Test Group", "Test Film", "2000", "Test Studio", "35mm")))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("Sports Type is required");
+        assertThatThrownBy(() -> service.createSubmission(categoryRequest("5703018321", "celebrity_card",
+            "Basketball", null, "Test Film", "2000", "Test Studio", "35mm")))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("Group Name is required");
+        assertThatThrownBy(() -> service.createSubmission(categoryRequest("5703018321", "movie_film",
+            "Basketball", "Test Group", "Test Film", "2000", "Test Studio", null)))
+            .isInstanceOf(ResponseStatusException.class).hasMessageContaining("Film Type is required");
+        assertThat(count("grading_submission")).isZero();
+        assertThat(count("grading_score")).isZero();
+    }
+
+    @Test
+    void switchingToNonGradedProductsDropsStaleNumericAndCategoryData() {
+        var created = service.createSubmission(categoryRequest("5703018331", "sports_card",
+            "Basketball", "Test Group", "Test Film", "2000", "Test Studio", "35mm"));
+        var merch = service.updateSubmission(created.id(),
+            request("5703018331", "merch_product", "obsolete", "sports_card", new BigDecimal("9.9")));
+        assertThat(merch.centeringScore()).isNull();
+        assertThat(merch.finalGradeValue()).isNull();
+        assertThat(merch.finalGradeLabel()).isNull();
+        assertThat(merch.sportsType()).isNull();
+        assertThat(merch.vintageClassification()).isNull();
+
+        addVintageClassification("Archive");
+        var vintage = service.updateSubmission(created.id(),
+            request("5703018331", "vintage_product", "archive", "celebrity_card", new BigDecimal("9.9")));
+        assertThat(vintage.vintageClassification()).isEqualTo("Archive");
+        assertThat(vintage.centeringScore()).isNull();
+        assertThat(vintage.finalGradeValue()).isNull();
+        assertThat(vintage.finalGradeLabel()).isNull();
+        assertThat(vintage.merchDescription()).isNull();
+        assertThat(vintage.groupName()).isNull();
+        assertThat(vintage.cardCategory()).isEqualTo("trading_card");
+        assertThat(count("grading_submission")).isOne();
+        assertThat(count("grading_score")).isZero();
     }
 
     @Test
@@ -347,6 +487,19 @@ class AdminSubmissionServiceTest {
         assertThat(result.total()).isEqualTo(2);
     }
 
+    private AdminSubmissionService.MutateSubmissionRequest categoryRequest(
+        String certId, String category, String sportsType, String groupName,
+        String movieName, String releaseYear, String productionCompany, String filmType
+    ) {
+        return new AdminSubmissionService.MutateSubmissionRequest(
+            certId, "graded_card", "stale classification", "stale description", category, "Test Card",
+            movieName, releaseYear, productionCompany, filmType, sportsType, groupName,
+            "1999", "Pokemon", null, null, "Base Set", "4/102", "EN", 1,
+            new BigDecimal("8.5"), new BigDecimal("8.5"), new BigDecimal("8.5"), new BigDecimal("9.0"),
+            "test", 1L
+        );
+    }
+
     private AdminSubmissionService.MutateSubmissionRequest request(
         String certId,
         String productType,
@@ -473,10 +626,10 @@ class AdminSubmissionServiceTest {
             """
             CREATE TABLE grading_score (
                 submission_id BIGINT PRIMARY KEY,
-                centering_score DECIMAL(4,1) NOT NULL,
-                edges_score DECIMAL(4,1) NOT NULL,
-                corners_score DECIMAL(4,1) NOT NULL,
-                surface_score DECIMAL(4,1) NOT NULL,
+                centering_score DOUBLE NOT NULL,
+                edges_score DOUBLE NOT NULL,
+                corners_score DOUBLE NOT NULL,
+                surface_score DOUBLE NOT NULL,
                 final_grade_value DECIMAL(4,2) NOT NULL,
                 final_grade_label VARCHAR(64) NOT NULL,
                 ai_grade_value DECIMAL(4,1),

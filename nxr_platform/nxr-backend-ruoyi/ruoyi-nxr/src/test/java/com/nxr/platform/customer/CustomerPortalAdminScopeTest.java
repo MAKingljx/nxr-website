@@ -21,7 +21,7 @@ class CustomerPortalAdminScopeTest {
         template.execute(
             """
             CREATE TABLE customer_account (
-              id BIGINT PRIMARY KEY, email VARCHAR(191), display_name VARCHAR(191)
+              id BIGINT PRIMARY KEY, email VARCHAR(191), display_name VARCHAR(191), account_type_code VARCHAR(32) DEFAULT 'merchant'
             );
             CREATE TABLE merchant_order_batch(id BIGINT PRIMARY KEY,merchant_customer_id BIGINT,status_code VARCHAR(32),batch_no VARCHAR(48));
             CREATE TABLE merchant_order_batch_item(id BIGINT PRIMARY KEY,batch_id BIGINT,order_id BIGINT UNIQUE,client_reference VARCHAR(128));
@@ -29,6 +29,7 @@ class CustomerPortalAdminScopeTest {
             CREATE TABLE commerce_work_center (id BIGINT PRIMARY KEY, is_active TINYINT NOT NULL);
             CREATE TABLE grading_order (
               id BIGINT PRIMARY KEY, order_no VARCHAR(40), customer_id BIGINT, status_code VARCHAR(32),
+              admission_status_code VARCHAR(32), approved_terms_version VARCHAR(64), accepted_terms_version VARCHAR(64), terms_accepted_at TIMESTAMP,
               service_level_code VARCHAR(32), return_shipping_option_code VARCHAR(64),
               return_shipping_option_name VARCHAR(128), total_card_count INT, total_amount DECIMAL(12,2),
               currency_code VARCHAR(8), business_line_id BIGINT, work_center_id BIGINT,

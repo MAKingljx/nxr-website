@@ -94,6 +94,10 @@ public class AgentCommerceController {
     public OrderFulfillmentService.CustomerAddress updateAddress(@RequestHeader(name=COMPANY,required=false) Long company,@PathVariable long addressId,@RequestBody OrderFulfillmentService.AddressRequest request) {
         return fulfillment.saveAddress(owner(company),addressId,request);
     }
+    @PostMapping("/addresses/{addressId}/default")
+    public OrderFulfillmentService.CustomerAddress defaultAddress(@RequestHeader(name=COMPANY,required=false) Long company,@PathVariable long addressId) {
+        return fulfillment.setMerchantDefaultAddress(owner(company),addressId);
+    }
     @DeleteMapping("/addresses/{addressId}")
     public Map<String,Boolean> deleteAddress(@RequestHeader(name=COMPANY,required=false) Long company,@PathVariable long addressId) {
         fulfillment.deleteAddress(owner(company),addressId);return Map.of("success",true);
@@ -134,11 +138,16 @@ public class AgentCommerceController {
         return wallet.createRecharge(owner(company),request);
     }
     @GetMapping("/order-admission/config")
-    public OrderAdmissionService.PublicConfig config(@RequestHeader(name=COMPANY,required=false) Long company) { owner(company);return admission.publicConfig(); }
+    public OrderAdmissionService.PublicConfig config(@RequestHeader(name=COMPANY,required=false) Long company) { owner(company);return admission.merchantPublicConfig(); }
     @GetMapping("/shipping-options")
     public List<OrderFulfillmentService.ShippingOption> shippingOptions(@RequestHeader(name=COMPANY,required=false) Long company,
         @RequestParam(required=false) String country,@RequestParam(required=false) String currencyCode) {
         owner(company);return fulfillment.listShippingOptions(country,currencyCode,false);
+    }
+    @GetMapping("/logistics-options")
+    public List<CommercePolicyService.MerchantLogisticsOption> logisticsOptions(@RequestHeader(name=COMPANY,required=false) Long company,
+        @RequestParam String country,@RequestParam(defaultValue="1") int cardCount) {
+        return commerce.merchantLogisticsOptions(owner(company),country,cardCount);
     }
     @GetMapping("/service-prices")
     public List<OrderFulfillmentService.ServicePrice> servicePrices(@RequestHeader(name=COMPANY,required=false) Long company) { owner(company);return fulfillment.activeServicePrices(); }

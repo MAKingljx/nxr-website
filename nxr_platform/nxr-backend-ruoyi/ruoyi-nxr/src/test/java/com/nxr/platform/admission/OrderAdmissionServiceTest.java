@@ -57,7 +57,8 @@ class OrderAdmissionServiceTest {
               id BIGINT AUTO_INCREMENT PRIMARY KEY, order_id BIGINT NOT NULL, customer_id BIGINT NOT NULL,
               terms_version VARCHAR(64) NOT NULL, accepted_quote_amount DECIMAL(12,2) NOT NULL,
               accepted_quote_currency VARCHAR(8) NOT NULL, accepted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-              UNIQUE(order_id, terms_version)
+              terms_text CLOB,turnaround_text VARCHAR(1000),item_snapshot_hash CHAR(64) NOT NULL DEFAULT '',
+              UNIQUE(order_id, terms_version,item_snapshot_hash)
             );
             CREATE TABLE order_admission_supplemental_photo (
               id BIGINT AUTO_INCREMENT PRIMARY KEY, order_id BIGINT NOT NULL, photo_id BIGINT NOT NULL,
@@ -71,7 +72,14 @@ class OrderAdmissionServiceTest {
             CREATE TABLE payment_attempt (
               id BIGINT AUTO_INCREMENT PRIMARY KEY, order_id BIGINT NOT NULL, active_order_id BIGINT,
               status_code VARCHAR(32) NOT NULL
-            )
+            );
+            CREATE TABLE grading_order_item(id BIGINT PRIMARY KEY,order_id BIGINT,item_no INT,card_name VARCHAR(255),
+              brand_name VARCHAR(128),set_name VARCHAR(255),card_number VARCHAR(128),language_code VARCHAR(32),
+              product_type VARCHAR(64),category VARCHAR(128),year_label VARCHAR(32),rarity VARCHAR(128),
+              declared_value DECIMAL(12,2),item_note VARCHAR(2000));
+            CREATE TABLE customer_account(id BIGINT PRIMARY KEY,account_type_code VARCHAR(32));
+            CREATE TABLE merchant_order_batch(id BIGINT PRIMARY KEY,merchant_customer_id BIGINT);
+            CREATE TABLE merchant_order_batch_item(id BIGINT AUTO_INCREMENT PRIMARY KEY,batch_id BIGINT,order_id BIGINT)
             """
         );
         template.update(
@@ -81,11 +89,220 @@ class OrderAdmissionServiceTest {
             "INSERT INTO grading_order(id,order_no,customer_id,status_code,admission_status_code,admission_revision,admission_submitted_at,payment_deadline_status_code,total_amount,currency_code) VALUES(10,'NXR-100',7,'admission_review','pending_review',1,CURRENT_TIMESTAMP,'not_started',100.00,'USD')"
         );
         template.update("INSERT INTO payment_record(order_id,status_code) VALUES(10,'pending')");
+        template.update("INSERT INTO customer_account(id,account_type_code) VALUES(7,'customer'),(8,'merchant')");
+        template.update("INSERT INTO grading_order_item(id,order_id,item_no,card_name,product_type,category) VALUES(11,10,1,'Test card','graded_card','trading_card')");
         jdbc = JdbcClient.create(dataSource);
         service = new OrderAdmissionService(
             jdbc, null, Clock.fixed(Instant.parse("2026-09-08T02:00:00Z"), ZoneOffset.UTC)
         );
         transactions = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
+    }
+
+    @Test
+    void partnerSubmissionRequiresAnExplicitExactCurrentContractWithoutWrites() {
+        merchantOrder();
+        var shown=service.merchantPublicConfig();
+        for (var request:java.util.List.of(
+            new OrderAdmissionService.MerchantTermsRequest(false,shown.termsVersion(),shown.termsText(),shown.turnaroundText()),
+            new OrderAdmissionService.MerchantTermsRequest(null,shown.termsVersion(),shown.termsText(),shown.turnaroundText()),
+            new OrderAdmissionService.MerchantTermsRequest(true,"stale",shown.termsText(),shown.turnaroundText()),
+            new OrderAdmissionService.MerchantTermsRequest(true,shown.termsVersion(),"different text",shown.turnaroundText()),
+            new OrderAdmissionService.MerchantTermsRequest(true,shown.termsVersion(),shown.termsText(),"different turnaround")
+        )) assertThatThrownBy(()->tx(()->service.requireMerchantSubmissionTerms(request))).isInstanceOf(ResponseStatusException.class);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM order_terms_acceptance").query(Integer.class).single()).isZero();
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM order_admission_event").query(Integer.class).single()).isZero();
+        assertThat(jdbc.sql("SELECT status_code FROM grading_order WHERE id=10").query(String.class).single()).isEqualTo("admission_review");
+        assertThat(jdbc.sql("SELECT admission_revision FROM grading_order WHERE id=10").query(Integer.class).single()).isEqualTo(1);
+    }
+
+    @Test
+    void submissionConsentFreezesDisplayedTextAndApprovalDoesNotReplaceItOrRequestPayment() {
+        merchantOrder();
+        acceptSubmission();
+        var original=service.requireAdminAdmission(10);
+        assertThat(original.termsAcceptedAt()).isNotNull();
+        assertThat(original.admissionStatus()).isEqualTo("pending_review");
+        assertThat(original.canPay()).isFalse();
+        jdbc.sql("UPDATE order_admission_config SET terms_text='Changed without version change',turnaround_text='Later turnaround' WHERE config_id=1").update();
+        var approved=tx(()->service.decide(10,9,new OrderAdmissionService.DecisionRequest("approve","Approved",1)));
+        assertThat(approved.termsVersion()).isEqualTo("terms-v1");
+        assertThat(approved.termsText()).isEqualTo("Terms v1");
+        assertThat(approved.turnaroundText()).isEqualTo("以受理确认为准");
+        assertThat(approved.termsAcceptedAt()).isEqualTo(original.termsAcceptedAt());
+        assertThat(approved.canAcceptTerms()).isFalse();assertThat(approved.canPay()).isFalse();
+        assertThat(approved.paymentDueAt()).isNull();
+        assertThat(jdbc.sql("SELECT status_code FROM grading_order WHERE id=10").query(String.class).single()).isEqualTo("awaiting_inbound");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM order_terms_acceptance").query(Integer.class).single()).isOne();
+        assertThat(jdbc.sql("SELECT terms_text FROM order_terms_acceptance").query(String.class).single()).isEqualTo("Terms v1");
+        tx(()->{service.prepareMerchantFulfillment(10);return null;});
+        assertThat(jdbc.sql("SELECT status_code FROM payment_record WHERE order_id=10").query(String.class).single()).isEqualTo("pending");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM payment_attempt").query(Integer.class).single()).isZero();
+    }
+
+    @Test
+    void supplementalInformationPreservesConsentButChangedCardListRequiresNewConfirmation() {
+        merchantOrder();acceptSubmission();
+        var acceptedAt=service.requireAdminAdmission(10).termsAcceptedAt();
+        tx(()->service.decide(10,9,new OrderAdmissionService.DecisionRequest("request_information","Please provide clearer photos",1)));
+        assertThat(service.requireAdminAdmission(10).termsAcceptedAt()).isEqualTo(acceptedAt);
+        var resubmitted=tx(()->service.resubmit(7,"NXR-100",new OrderAdmissionService.ResubmitRequest("Additional information")));
+        assertThat(resubmitted.termsAcceptedAt()).isEqualTo(acceptedAt);
+        jdbc.sql("UPDATE grading_order_item SET card_name='Corrected card' WHERE id=11").update();
+        var approved=tx(()->service.decide(10,9,new OrderAdmissionService.DecisionRequest("approve","Corrected list approved",resubmitted.admissionRevision())));
+        assertThat(approved.canAcceptTerms()).isTrue();assertThat(approved.termsAcceptedAt()).isNull();
+        assertThat(jdbc.sql("SELECT status_code FROM grading_order WHERE id=10").query(String.class).single()).isEqualTo("terms_confirmation");
+        assertThat(jdbc.sql("SELECT accepted_at FROM order_terms_acceptance").query(java.time.LocalDateTime.class).single()).isEqualTo(acceptedAt);
+        tx(()->service.acceptTerms(7,"NXR-100",new OrderAdmissionService.AcceptTermsRequest("terms-v1",null,null)));
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM order_terms_acceptance").query(Integer.class).single()).isEqualTo(2);
+        assertThat(jdbc.sql("SELECT COUNT(DISTINCT item_snapshot_hash) FROM order_terms_acceptance").query(Integer.class).single()).isEqualTo(2);
+        assertThat(jdbc.sql("SELECT status_code FROM grading_order WHERE id=10").query(String.class).single()).isEqualTo("awaiting_inbound");
+    }
+
+    @Test
+    void unchangedCardListAfterInformationRequestKeepsOriginalConsent() {
+        merchantOrder();acceptSubmission();
+        var original=service.requireAdminAdmission(10);
+        tx(()->service.decide(10,9,new OrderAdmissionService.DecisionRequest("request_information","Please explain",1)));
+        var resubmitted=tx(()->service.resubmit(7,"NXR-100",new OrderAdmissionService.ResubmitRequest("Explanation only")));
+        jdbc.sql("UPDATE order_admission_config SET terms_version='terms-v2',terms_text='Terms v2' WHERE config_id=1").update();
+        var approved=tx(()->service.decide(10,9,new OrderAdmissionService.DecisionRequest("approve","Approved",resubmitted.admissionRevision())));
+        assertThat(approved.termsVersion()).isEqualTo("terms-v1");assertThat(approved.termsAcceptedAt()).isEqualTo(original.termsAcceptedAt());
+        assertThat(approved.canAcceptTerms()).isFalse();
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM order_terms_acceptance").query(Integer.class).single()).isOne();
+    }
+
+    @Test
+    void rejectionPreservesHistoricalConsentAndNeverPermitsShipping() {
+        merchantOrder();acceptSubmission();
+        var original=service.requireAdminAdmission(10);
+        var rejected=tx(()->service.decide(10,9,new OrderAdmissionService.DecisionRequest("reject","Cannot accept",1)));
+        assertThat(rejected.termsAcceptedAt()).isEqualTo(original.termsAcceptedAt());
+        assertThat(rejected.termsVersion()).isEqualTo("terms-v1");
+        assertThatThrownBy(()->tx(()->{service.prepareMerchantFulfillment(10);return null;})).isInstanceOf(ResponseStatusException.class);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM order_terms_acceptance").query(Integer.class).single()).isOne();
+    }
+
+    @Test
+    void failedSubmissionTransactionRollsBackConsentAndItsAuditTogether() {
+        merchantOrder();
+        assertThatThrownBy(()->tx(()->{recordSubmissionConsent();throw new IllegalStateException("Later item linkage failed");}))
+            .isInstanceOf(IllegalStateException.class);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM order_terms_acceptance").query(Integer.class).single()).isZero();
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM order_admission_event").query(Integer.class).single()).isZero();
+        assertThat(service.requireAdminAdmission(10).termsAcceptedAt()).isNull();
+    }
+
+    private void acceptSubmission() {
+        tx(()->{recordSubmissionConsent();return null;});
+    }
+
+    private void recordSubmissionConsent() {
+        var shown=service.merchantPublicConfig();
+        var accepted=service.requireMerchantSubmissionTerms(new OrderAdmissionService.MerchantTermsRequest(
+            true,shown.termsVersion(),shown.termsText(),shown.turnaroundText()));
+        service.recordMerchantSubmissionTerms(10,7,accepted);
+    }
+
+    @Test
+    void merchantReviewAndTermsNeedNoPaymentOrDeadlineAndKeepFinancialHistoryUnchanged() {
+        merchantOrder();
+        jdbc.sql("UPDATE payment_record SET status_code='proof_submitted' WHERE order_id=10").update();
+        var approved=tx(()->service.decide(10,9,new OrderAdmissionService.DecisionRequest("approve","Approved service",1)));
+        assertThat(approved.paymentRequired()).isFalse();assertThat(approved.paymentDueAt()).isNull();
+        assertThat(approved.canPay()).isFalse();assertThat(approved.canAcceptTerms()).isTrue();
+        assertThat(jdbc.sql("SELECT payment_deadline_status_code FROM grading_order WHERE id=10").query(String.class).single()).isEqualTo("not_required");
+        assertThatThrownBy(()->tx(()->service.acceptTerms(7,"NXR-100",new OrderAdmissionService.AcceptTermsRequest("wrong",null,null))))
+            .hasMessageContaining("terms do not match");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM order_terms_acceptance").query(Integer.class).single()).isZero();
+        var accepted=tx(()->service.acceptTerms(7,"NXR-100",new OrderAdmissionService.AcceptTermsRequest("terms-v1",null,null)));
+        assertThat(accepted.canPay()).isFalse();assertThat(accepted.termsAcceptedAt()).isNotNull();
+        assertThat(jdbc.sql("SELECT status_code FROM grading_order WHERE id=10").query(String.class).single()).isEqualTo("awaiting_inbound");
+        assertThat(jdbc.sql("SELECT status_code FROM payment_record WHERE order_id=10").query(String.class).single()).isEqualTo("proof_submitted");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM payment_attempt").query(Integer.class).single()).isZero();
+        tx(()->{service.requireGenericStatusChangeAllowed(10);return null;});
+        assertThatThrownBy(()->tx(()->{service.requirePaymentAllowed(10,7);return null;})).hasMessageContaining("do not require payment");
+    }
+
+    @Test
+    void legacyMerchantExpiryIsReadOnlyUntilAnExplicitTermsOrShippingCommand() {
+        merchantOrder();
+        tx(()->service.decide(10,9,new OrderAdmissionService.DecisionRequest("approve","Approved",1)));
+        jdbc.sql("UPDATE grading_order SET status_code='payment_expired',payment_deadline_status_code='expired',payment_due_at=TIMESTAMP '2026-09-01 00:00:00' WHERE id=10").update();
+        int events=jdbc.sql("SELECT COUNT(*) FROM order_admission_event").query(Integer.class).single();
+        var response=tx(()->service.requireCustomerAdmission(7,"NXR-100"));
+        assertThat(response.canAcceptTerms()).isTrue();assertThat(response.paymentExpired()).isFalse();assertThat(response.paymentDueAt()).isNull();
+        tx(()->{service.expireDuePayments();return null;});
+        assertThat(jdbc.sql("SELECT status_code FROM grading_order WHERE id=10").query(String.class).single()).isEqualTo("payment_expired");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM order_admission_event").query(Integer.class).single()).isEqualTo(events);
+        assertThatThrownBy(()->tx(()->{service.prepareMerchantFulfillment(10);return null;})).hasMessageContaining("accepted service terms");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM order_terms_acceptance").query(Integer.class).single()).isZero();
+        tx(()->service.acceptTerms(7,"NXR-100",new OrderAdmissionService.AcceptTermsRequest("terms-v1",null,null)));
+        jdbc.sql("UPDATE grading_order SET status_code='awaiting_payment',payment_deadline_status_code='active',payment_due_at=TIMESTAMP '2026-09-01 00:00:00' WHERE id=10").update();
+        tx(()->{service.prepareMerchantFulfillment(10);return null;});
+        assertThat(jdbc.sql("SELECT status_code FROM grading_order WHERE id=10").query(String.class).single()).isEqualTo("awaiting_inbound");
+        assertThat(jdbc.sql("SELECT payment_due_at FROM grading_order WHERE id=10").query(java.time.LocalDateTime.class).optional()).isEmpty();
+        assertThat(jdbc.sql("SELECT status_code FROM payment_record WHERE order_id=10").query(String.class).single()).isEqualTo("pending");
+    }
+
+    @Test
+    void foreignBatchOrMerchantAccountAloneNeverBypassesConsumerPayment() {
+        jdbc.sql("UPDATE customer_account SET account_type_code='merchant' WHERE id=7").update();
+        jdbc.sql("INSERT INTO merchant_order_batch(id,merchant_customer_id) VALUES(1,8)").update();
+        jdbc.sql("INSERT INTO merchant_order_batch_item(batch_id,order_id) VALUES(1,10)").update();
+        var approved=tx(()->service.decide(10,9,new OrderAdmissionService.DecisionRequest("approve","Approved",1)));
+        assertThat(approved.paymentRequired()).isTrue();assertThat(approved.paymentDueAt()).isNotNull();
+        assertThatThrownBy(()->tx(()->{service.prepareMerchantFulfillment(10);return null;})).hasMessageContaining("partner batch order");
+        var accepted=tx(()->service.acceptTerms(7,"NXR-100",new OrderAdmissionService.AcceptTermsRequest("terms-v1",new BigDecimal("100.00"),"USD")));
+        assertThat(accepted.canPay()).isTrue();
+        assertThat(jdbc.sql("SELECT status_code FROM grading_order WHERE id=10").query(String.class).single()).isEqualTo("awaiting_payment");
+    }
+
+    private void merchantOrder() {
+        jdbc.sql("UPDATE customer_account SET account_type_code='merchant' WHERE id=7").update();
+        jdbc.sql("INSERT INTO merchant_order_batch(id,merchant_customer_id) VALUES(1,7)").update();
+        jdbc.sql("INSERT INTO merchant_order_batch_item(batch_id,order_id) VALUES(1,10)").update();
+    }
+
+    @Test
+    void merchantApprovalUsesServiceDefaultAndLegacyProjectionNeverRewritesSavedTerms() {
+        String defaultText="Please confirm the submitted item list, approved quote, and current NXR service terms before payment.";
+        String merchantText="Please confirm the submitted item list and current NXR service terms before shipping.";
+        merchantOrder();
+        jdbc.sql("UPDATE order_admission_config SET terms_text=:text WHERE config_id=1").param("text",defaultText).update();
+        var approved=tx(()->service.decide(10,9,new OrderAdmissionService.DecisionRequest("approve","Approved service",1)));
+        assertThat(approved.termsText()).isEqualTo(merchantText);
+        assertThat(jdbc.sql("SELECT approved_terms_text FROM grading_order WHERE id=10").query(String.class).single()).isEqualTo(merchantText);
+        assertThat(jdbc.sql("SELECT terms_text FROM order_admission_config WHERE config_id=1").query(String.class).single()).isEqualTo(defaultText);
+        jdbc.sql("UPDATE grading_order SET approved_terms_text=:text WHERE id=10").param("text",defaultText).update();
+        int events=jdbc.sql("SELECT COUNT(*) FROM order_admission_event").query(Integer.class).single();
+        int revision=jdbc.sql("SELECT admission_revision FROM grading_order WHERE id=10").query(Integer.class).single();
+        assertThat(tx(()->service.requireCustomerAdmission(7,"NXR-100")).termsText()).isEqualTo(merchantText);
+        assertThat(service.requireAdminAdmission(10).termsText()).isEqualTo(merchantText);
+        assertThat(jdbc.sql("SELECT approved_terms_text FROM grading_order WHERE id=10").query(String.class).single()).isEqualTo(defaultText);
+        assertThat(jdbc.sql("SELECT admission_revision FROM grading_order WHERE id=10").query(Integer.class).single()).isEqualTo(revision);
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM order_admission_event").query(Integer.class).single()).isEqualTo(events);
+    }
+
+    @Test
+    void customMerchantTermsRemainExactEvenWhenTheyContainPaymentWording() {
+        String custom="Please confirm the submitted item list, approved quote, and current NXR service terms before payment. Custom contract: 30-day settlement.";
+        merchantOrder();
+        jdbc.sql("UPDATE order_admission_config SET terms_text=:text WHERE config_id=1").param("text",custom).update();
+        var approved=tx(()->service.decide(10,9,new OrderAdmissionService.DecisionRequest("approve","Approved custom terms",1)));
+        assertThat(approved.termsText()).isEqualTo(custom);
+        assertThat(tx(()->service.requireCustomerAdmission(7,"NXR-100")).termsText()).isEqualTo(custom);
+        assertThat(jdbc.sql("SELECT approved_terms_text FROM grading_order WHERE id=10").query(String.class).single()).isEqualTo(custom);
+    }
+
+    @Test
+    void consumerSystemDefaultRetainsPaymentWordingAndPaymentWorkflow() {
+        String defaultText="Please confirm the submitted item list, approved quote, and current NXR service terms before payment.";
+        jdbc.sql("UPDATE order_admission_config SET terms_text=:text WHERE config_id=1").param("text",defaultText).update();
+        var approved=tx(()->service.decide(10,9,new OrderAdmissionService.DecisionRequest("approve","Approved direct order",1)));
+        assertThat(approved.termsText()).isEqualTo(defaultText);assertThat(approved.paymentRequired()).isTrue();
+        assertThat(approved.paymentDueAt()).isNotNull();
+        assertThat(tx(()->service.requireCustomerAdmission(7,"NXR-100")).termsText()).isEqualTo(defaultText);
+        assertThat(jdbc.sql("SELECT approved_terms_text FROM grading_order WHERE id=10").query(String.class).single()).isEqualTo(defaultText);
     }
 
     @Test

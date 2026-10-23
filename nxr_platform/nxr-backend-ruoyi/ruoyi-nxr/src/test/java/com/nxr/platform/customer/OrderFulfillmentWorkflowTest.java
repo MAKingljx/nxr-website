@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.util.List;
+import com.nxr.platform.commerce.CommercePolicyService;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -35,6 +36,62 @@ class OrderFulfillmentWorkflowTest {
         portalService = new CustomerPortalService(jdbcClient, jdbcTemplate, fulfillmentService);
         merchantBulkOrderService = new MerchantBulkOrderService(portalService, fulfillmentService);
         seedReferenceData();
+    }
+
+    @Test
+    void realMerchantBatchCreationCreatesNoPaymentAndDirectOrderRemainsPayable() {
+        // The production commerce migration adds these metadata columns.
+        for(String column:List.of("order_origin_code VARCHAR(32)","business_line_id BIGINT","work_center_id BIGINT",
+            "commerce_price_policy_id BIGINT","commerce_shipping_policy_id BIGINT","quoted_unit_price DECIMAL(12,2)",
+            "quoted_card_weight_grams INT","quoted_packaging_weight_grams INT","quoted_chargeable_weight_grams INT",
+            "pricing_source_code VARCHAR(32)","shipping_source_code VARCHAR(32)"))jdbcTemplate.execute("ALTER TABLE grading_order ADD "+column);
+        var address=fulfillmentService.saveAddress(1,null,new OrderFulfillmentService.AddressRequest("Partner","Partner","123","Partner street",null,"City",null,"1","US",true));
+        var routing=new CommercePolicyService.RoutingAssignment(null,null,null,null,"customer_submission");
+        var quote=new CommercePolicyService.QuoteResult(1,"business","US","USD",1,null,null,"global_price","global_shipping",
+            new BigDecimal("20.00"),new BigDecimal("20.00"),new BigDecimal("12.00"),new BigDecimal("32.00"),null,null,null,null,"economy_line","Economy Line",routing);
+        var order=portalService.createOrderWithBatchQuote(1,orderRequest(address.id(),"economy_line","EN",1,"Partner"),quote,
+            new CommercePolicyService.AllocatedBatchQuote("A",1,new BigDecimal("20.00"),new BigDecimal("12.00"),new BigDecimal("32.00")));
+        assertThat(order.statusCode()).isEqualTo("awaiting_inbound");assertThat(order.intakeCode()).isNotBlank();
+        assertThat(order.totalAmount()).isEqualByComparingTo("32.00");assertThat(order.payments()).isEmpty();
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM payment_record WHERE order_id=?",Integer.class,order.id())).isZero();
+        var unquoted=new CommercePolicyService.QuoteResult(1,"business","US","USD",1,null,null,"unquoted_business","global_shipping",
+            BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,null,null,null,null,"economy_line","Economy Line",routing);
+        var unpriced=portalService.createOrderWithBatchQuote(1,orderRequest(address.id(),"economy_line","EN",1,"Unquoted partner"),unquoted,
+            new CommercePolicyService.AllocatedBatchQuote("B",1,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO));
+        assertThat(unpriced.payments()).isEmpty();assertThat(unpriced.totalAmount()).isEqualByComparingTo("0");
+        var weightQuote=new CommercePolicyService.QuoteResult(1,"business","US","CNY",1,null,42L,"unquoted_business","weight_policy",
+            BigDecimal.ZERO,BigDecimal.ZERO,new BigDecimal("5.00"),new BigDecimal("5.00"),50,100,150,300,"weight_42","Weight return",routing);
+        var weightRequest=new CustomerPortalService.CreateOrderRequest("basic_grading",address.id(),false,"weight_42",
+            null,null,null,null,null,null,null,null,"Selected weight route",List.of(new CustomerPortalService.LanguageGroupRequest("EN",1)),List.of(),"CNY");
+        var weightOrder=portalService.createOrderWithBatchQuote(1,weightRequest,weightQuote,
+            new CommercePolicyService.AllocatedBatchQuote("C",1,BigDecimal.ZERO,new BigDecimal("5.00"),new BigDecimal("5.00")));
+        assertThat(weightOrder.returnShippingOptionCode()).isEqualTo("weight_42");assertThat(weightOrder.currencyCode()).isEqualTo("CNY");
+        assertThat(weightOrder.payments()).isEmpty();
+        var direct=portalService.createOrder(1,orderRequest(address.id(),"economy_line","EN",1,"Direct order"));
+        assertThat(direct.statusCode()).isEqualTo("awaiting_payment");assertThat(direct.payments()).hasSize(1);
+        jdbcTemplate.update("INSERT INTO merchant_order_batch(id,batch_no,merchant_customer_id,batch_name,status_code,total_rows,accepted_rows) VALUES(90,'MB-NONPAYING',1,'Partner','open',1,1)");
+        jdbcTemplate.update("INSERT INTO merchant_order_batch_item(batch_id,order_id,row_no,client_reference) VALUES(90,?,1,'A')",order.id());
+        for(long id:List.of(order.id(),direct.id())) {
+            jdbcTemplate.update("UPDATE grading_order SET status_code='completed' WHERE id=?",id);
+            jdbcTemplate.update("INSERT INTO shipping_change_request(order_id,old_option_code,old_option_name,old_price_amount,new_option_code,new_option_name,new_price_amount,currency_code,difference_amount,status_code,reason) VALUES(?,'economy_line','Economy',12,'standard_express','Express',25,'USD',13,'awaiting_settlement','Approved upgrade')",id);
+        }
+        assertThat(fulfillmentService.assertOutboundReady(order.id()).optionCode()).isEqualTo("standard_express");
+        assertThatThrownBy(()->fulfillmentService.assertOutboundReady(direct.id())).hasMessageContaining("Settle the return shipping change");
+        assertThat(jdbcTemplate.queryForObject("SELECT status_code FROM shipping_change_request WHERE order_id=?",String.class,order.id())).isEqualTo("awaiting_settlement");
+    }
+
+    @Test
+    void lateLegacyMerchantPaymentIsRecordedWithoutPausingOrAdvancingFulfillment() {
+        var address=fulfillmentService.saveAddress(1,null,new OrderFulfillmentService.AddressRequest("Partner","Partner","123","Partner street",null,"City",null,"1","US",true));
+        var order=portalService.createOrder(1,orderRequest(address.id(),"economy_line","EN",1,"Legacy partner"));
+        var session=portalService.createPaymentSession(1,order.orderNo(),new CustomerPortalService.PaymentSessionRequest("stripe"));
+        jdbcTemplate.update("INSERT INTO merchant_order_batch(id,batch_no,merchant_customer_id,batch_name,status_code,total_rows,accepted_rows) VALUES(91,'MB-LEGACY',1,'Legacy','open',1,1)");
+        jdbcTemplate.update("INSERT INTO merchant_order_batch_item(batch_id,order_id,row_no,client_reference) VALUES(91,?,1,'A')",order.id());
+        jdbcTemplate.update("UPDATE grading_order SET status_code='grading' WHERE id=?",order.id());
+        portalService.receivePaymentCallback("stripe",new CustomerPortalService.PaymentCallbackRequest("legacy-event",session.paymentNo(),"legacy-transaction",order.totalAmount(),"USD","succeeded","{}"));
+        assertThat(jdbcTemplate.queryForObject("SELECT status_code FROM grading_order WHERE id=?",String.class,order.id())).isEqualTo("grading");
+        assertThat(jdbcTemplate.queryForObject("SELECT status_code FROM payment_record WHERE order_id=?",String.class,order.id())).isEqualTo("confirmed");
+        assertThat(jdbcTemplate.queryForObject("SELECT COUNT(*) FROM order_timeline_event WHERE order_id=? AND event_code='merchant_payment_recorded'",Integer.class,order.id())).isEqualTo(1);
     }
 
     @Test

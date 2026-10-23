@@ -91,7 +91,7 @@ public class AgentOverviewService {
                 "FROM agent_intake r JOIN customer_account c ON c.id=r.merchant_customer_id"
                     + " JOIN agent_client cl ON cl.id=r.client_id AND cl.merchant_customer_id=r.merchant_customer_id"
                     + " LEFT JOIN grading_order o ON o.id=r.order_id AND o.customer_id=r.merchant_customer_id",
-                "r.intake_no", "r.intake_no", "cl.display_name", "COALESCE(o.status_code,r.status_code)",
+                "r.intake_no", "r.intake_no", "cl.display_name", "COALESCE("+MerchantOrderPolicy.visibleStatusSql("o")+",r.status_code)",
                 "r.expected_card_count", "NULL", "NULL", "COALESCE(o.order_no,'')", "r.updated_at",
                 List.of("r.intake_no", "cl.display_name", "cl.phone", "cl.email", "o.order_no"));
             case "intakes" -> new View(

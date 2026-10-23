@@ -6,7 +6,6 @@ import com.nxr.platform.shared.GradeLabelResolver;
 import com.nxr.platform.shared.NxrDictionaryService;
 import com.nxr.platform.shared.ProductTypePolicy;
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -1212,11 +1211,12 @@ public class AdminSubmissionService {
         if (score == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, label + " score is required");
         }
-        BigDecimal normalized = score.setScale(1, RoundingMode.HALF_UP);
-        if (normalized.compareTo(BigDecimal.ONE) < 0 || normalized.compareTo(BigDecimal.TEN) > 0) {
+        if (score.compareTo(BigDecimal.ONE) < 0 || score.compareTo(BigDecimal.TEN) > 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, label + " score must be between 1 and 10");
         }
-        return normalized;
+        // The form's 0.1 step is only an input convenience. Keep valid submitted
+        // precision until GradeLabelResolver performs the Python binary64 average.
+        return score;
     }
 
     private String requireValue(String value, String label) {

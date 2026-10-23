@@ -216,6 +216,45 @@ class JavaDomainMigrationTests(unittest.TestCase):
     def tearDown(self):
         self.fixture.close()
 
+    def test_subscores_preserve_sqlite_binary64_precision_without_recalculating_final_grades(self):
+        values = (8.49, 8.123456789012346, 9.345, 9.745)
+        temp = sqlite3.connect(self.fixture.temp_path)
+        insert_temp_card(temp, "PRECISE1", status="approved")
+        temp.execute(
+            "UPDATE temp_cards SET centering=?,edges=?,corners=?,surface=?,final_grade=9.3,final_grade_text='Historical label' WHERE cert_id='PRECISE1'",
+            values,
+        )
+        temp.commit()
+        temp.close()
+        with migration.SourceBundle(self.fixture.cards_path, self.fixture.temp_path) as source:
+            source.validate()
+            row = next(source.iter_submissions())
+        with sync.SyncSource(self.fixture.cards_path, self.fixture.temp_path) as source:
+            synced = next(source.iter_submissions_for_certs(["PRECISE1"]))
+        self.assertEqual(row, synced)
+        for field, value in zip(("centering_score", "edges_score", "corners_score", "surface_score"), values):
+            self.assertEqual(float(row[field]).hex(), value.hex())
+        self.assertEqual(row["final_grade_value"], migration.decimal.Decimal("9.30"))
+        self.assertEqual(row["final_grade_label"], "Historical label")
+
+    def test_one_decimal_subscores_keep_existing_sync_fingerprints(self):
+        temp = sqlite3.connect(self.fixture.temp_path)
+        insert_temp_card(temp, "UNCHANGED1", status="approved")
+        temp.commit()
+        temp.close()
+        with migration.SourceBundle(self.fixture.cards_path, self.fixture.temp_path) as source:
+            source.validate()
+            row = next(source.iter_submissions())
+        previous = dict(row)
+        for field in ("centering_score", "edges_score", "corners_score", "surface_score"):
+            previous[field] = migration.to_decimal(row[field])
+        self.assertEqual(row["source_fingerprint"], migration.submission_fingerprint(previous))
+        self.assertEqual(migration.to_score_decimal("8.49"), migration.decimal.Decimal("8.49"))
+        self.assertEqual(migration.to_decimal("8.49"), migration.decimal.Decimal("8.5"))
+        for invalid in ("NaN", "Infinity", "-Infinity", "invalid"):
+            with self.assertRaises(migration.MigrationError):
+                migration.to_score_decimal(invalid)
+
     def test_merges_published_card_and_temp_record_without_duplication(self):
         cards = sqlite3.connect(self.fixture.cards_path)
         cards.execute(

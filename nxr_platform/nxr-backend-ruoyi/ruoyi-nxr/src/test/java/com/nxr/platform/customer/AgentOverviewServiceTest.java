@@ -136,6 +136,21 @@ class AgentOverviewServiceTest {
         assertThat(first("clients").companyName()).isEqualTo("Merchant A");
     }
 
+    @Test void partnerOverviewProjectsLegacyPaymentStatesWithoutChangingStoredRows() {
+        jdbc.update("UPDATE agent_intake SET order_id=51 WHERE id=11");
+        jdbc.update("UPDATE grading_order SET status_code='payment_expired',admission_status_code='approved',approved_terms_version='v1' WHERE id=51");
+        assertThat(first("orders").statusCode()).isEqualTo("terms_confirmation");
+        jdbc.update("UPDATE grading_order SET terms_accepted_at=CURRENT_TIMESTAMP,accepted_terms_version='v1' WHERE id=51");
+        assertThat(first("orders").statusCode()).isEqualTo("awaiting_inbound");
+        for (String admission : List.of("pending_review", "rejected", "needs_information")) {
+            jdbc.update("UPDATE grading_order SET admission_status_code=? WHERE id=51", admission);
+            assertThat(first("orders").statusCode()).isEqualTo("admission_review");
+        }
+        assertThat(jdbc.queryForObject("SELECT status_code FROM grading_order WHERE id=51",String.class)).isEqualTo("payment_expired");
+        jdbc.update("UPDATE merchant_order_batch SET merchant_customer_id=202 WHERE id=41");
+        assertThat(first("orders").statusCode()).isEqualTo("payment_expired");
+    }
+
     @Test void relatedRowsAlwaysMatchTheirOwnerEvenWithDamagedHistoricalLinks() {
         jdbc.update("INSERT INTO agent_card VALUES(100,202,11,21)");
         jdbc.update("INSERT INTO merchant_order_batch_item VALUES(100,41,52)");

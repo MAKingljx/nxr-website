@@ -429,6 +429,24 @@ def to_grade_decimal(value: Any, *, default: str = "0") -> decimal.Decimal:
         raise MigrationError(f"Expected a grade-compatible value, got {value!r}") from exc
 
 
+def to_score_decimal(value: Any, *, default: str = "0") -> decimal.Decimal:
+    """Preserve the SQLite REAL/binary64 value without rounding sub-scores.
+
+    Keep Decimal's existing fingerprint representation for one-decimal source
+    values, so this change does not mark unchanged historical rows for syncing.
+    The staging and target DOUBLE columns retain the same binary64 value.
+    """
+    if value is None or clean(value) == "":
+        value = default
+    try:
+        result = decimal.Decimal(str(float(value)))
+        if not result.is_finite():
+            raise ValueError("Non-finite sub-score")
+        return result
+    except (decimal.InvalidOperation, ValueError, TypeError, OverflowError) as exc:
+        raise MigrationError(f"Expected a finite score-compatible value, got {value!r}") from exc
+
+
 def to_confidence(value: Any) -> decimal.Decimal | None:
     if value is None or clean(value) == "":
         return None
@@ -556,10 +574,10 @@ def _base_submission(row: Mapping[str, Any]) -> dict[str, Any]:
         "published_at": None,
         "created_at": created_at or dt.datetime(1970, 1, 1),
         "updated_at": updated_at or created_at or dt.datetime(1970, 1, 1),
-        "centering_score": to_decimal(row["centering"]) if has_grading else None,
-        "edges_score": to_decimal(row["edges"]) if has_grading else None,
-        "corners_score": to_decimal(row["corners"]) if has_grading else None,
-        "surface_score": to_decimal(row["surface"]) if has_grading else None,
+        "centering_score": to_score_decimal(row["centering"]) if has_grading else None,
+        "edges_score": to_score_decimal(row["edges"]) if has_grading else None,
+        "corners_score": to_score_decimal(row["corners"]) if has_grading else None,
+        "surface_score": to_score_decimal(row["surface"]) if has_grading else None,
         "final_grade_value": to_grade_decimal(row["final_grade"]) if has_grading else None,
         "final_grade_label": grade_label(row) if has_grading else None,
         "ai_grade_value": None,
@@ -1351,10 +1369,10 @@ class JavaMySqlMigration:
                 published_at DATETIME(6) NULL,
                 created_at DATETIME(6) NOT NULL,
                 updated_at DATETIME(6) NOT NULL,
-                centering_score DECIMAL(4,1) NULL,
-                edges_score DECIMAL(4,1) NULL,
-                corners_score DECIMAL(4,1) NULL,
-                surface_score DECIMAL(4,1) NULL,
+                centering_score DOUBLE NULL,
+                edges_score DOUBLE NULL,
+                corners_score DOUBLE NULL,
+                surface_score DOUBLE NULL,
                 final_grade_value DECIMAL(4,2) NULL,
                 final_grade_label VARCHAR(64) NULL,
                 ai_grade_value DECIMAL(4,1) NULL,
