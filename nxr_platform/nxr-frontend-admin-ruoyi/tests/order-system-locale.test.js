@@ -73,6 +73,12 @@ function localeFixture(environment = 'java-stage', savedLocale = 'en', localePol
   return context.api
 }
 
+test('parcel receipt and payment receipt keep separate Chinese labels', () => {
+  const api = localeFixture('java-stage', 'zh-CN')
+  assert.equal(api.tx('Confirm parcel receipt'), '确认收货')
+  assert.equal(api.tx('Confirm receipt'), '确认到账')
+})
+
 test('recognized system titles and errors translate both directions without changing unknown content', () => {
   assert.equal(localizeKnownOrderText('Agent workbench', 'zh-CN'), '送评工作台')
   assert.equal(localizeKnownOrderText('送评工作台', 'en'), 'Agent workbench')
@@ -280,7 +286,7 @@ test('review decisions and configuration saves retain custom note and frozen tex
   const api = localeFixture('java-stage','zh-CN'), scope = effectScope(), posts = [], decisions = []
   const note = 'Warehouse intake is complete.\n操作员原文'
   const terms = 'Please confirm custom terms.\n原始冻结条款 {count}'
-  const context = {computed,reactive,ref,watch,defineProps:() => ({orderId:42,orderAmount:23,currencyCode:'USD'}),defineEmits:() => () => {},localizeOrderTerms:api.localizeOrderTerms,localizeOrderEventDetail:api.localizeOrderEventDetail,
+  const context = {computed,reactive,ref,watch,useRouter:() => ({push:() => {}}),useRoute:() => ({meta:{}}),ADMIN_BATCHES_PATH:'/nxr/submissions/batches',ADMIN_RETURNS_PATH:'/nxr/submissions/partner-fulfillment',defineProps:() => ({orderId:42,orderAmount:23,currencyCode:'USD'}),defineEmits:() => () => {},localizeOrderTerms:api.localizeOrderTerms,localizeOrderEventDetail:api.localizeOrderEventDetail,
     getCurrentInstance:() => ({proxy:{$tx:api.tx,parseTime:v => v,$modal:{msgWarning:() => {},msgSuccess:() => {},confirm:async () => {}}}}),
     getOrderAdmission:async () => ({data:{admissionStatus:'pending_review',admissionRevision:3,termsText:terms,turnaroundText:'Custom turnaround'}}),
     getOrderAdmissionConfig:async () => ({data:{paymentDeadlineHours:48,maxCardsPerOrder:500,termsVersion:'custom-1',termsText:terms,turnaroundText:'Custom turnaround'}}),

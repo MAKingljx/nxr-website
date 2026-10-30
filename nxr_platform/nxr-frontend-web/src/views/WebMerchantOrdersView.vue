@@ -19,7 +19,7 @@ import {
 
 type ParsedRow = {
   rowNo: number
-  clientReference: string
+  quoteKey: string
   clientDisplayName: string
   cardNames: string[]
   languageCode: string
@@ -50,7 +50,7 @@ const validRows = computed(() => rows.value.filter((row) => !row.error))
 function parseCsv(content: string) {
   const lines = csvRows(content)
   const headers = (lines.shift() || []).map(header => header.toLowerCase())
-  const required = ['client_reference', 'language_code', 'quantity', 'return_address_id', 'return_shipping_option_code']
+  const required = ['language_code', 'quantity', 'return_address_id', 'return_shipping_option_code']
   if (required.some((header) => !headers.includes(header))) throw new Error(`CSV headers must include: ${required.join(', ')}`)
   rows.value = lines.slice(0, 200).map((values, index) => {
     const cell = (name: string) => values[headers.indexOf(name)] || ''
@@ -59,7 +59,6 @@ function parseCsv(content: string) {
     const cardNames = cell('card_names').split('|').map(name => name.trim()).filter(Boolean)
     const addressExists = addresses.value.some((address) => address.id === returnAddressId)
     const problems = [
-      !cell('client_reference') ? 'client_reference is required' : '',
       !cell('language_code') ? 'language_code is required' : '',
       !Number.isInteger(quantity) || quantity < 1 || quantity > maxCards.value ? `quantity must be 1–${maxCards.value}` : '',
       !Number.isInteger(returnAddressId) || !addressExists ? 'return_address_id is not in your address book' : '',
@@ -68,7 +67,7 @@ function parseCsv(content: string) {
     ].filter(Boolean)
     return {
       rowNo: index + 2,
-      clientReference: cell('client_reference'),
+      quoteKey: `ROW-${index + 2}`,
       clientDisplayName: cell('client_name'),
       cardNames,
       languageCode: cell('language_code').toUpperCase(),
@@ -91,14 +90,10 @@ async function loadBatchQuote() {
     errorMessage.value = 'A batch must use one agent return address, currency and return service.'
     return
   }
-  if (new Set(validRows.value.map(row => row.clientReference)).size !== validRows.value.length) {
-    errorMessage.value = 'Each customer reference must be unique within a batch.'
-    return
-  }
   const address = addresses.value.find(address => address.id === first.returnAddressId)
   if (!address) return
   quoting.value = true
-  try { quote.value = await fetchBatchQuote(address.country, first.currencyCode, first.returnShippingOptionCode, validRows.value.map(row => ({ reference: row.clientReference, cardCount: row.quantity }))) }
+  try { quote.value = await fetchBatchQuote(address.country, first.currencyCode, first.returnShippingOptionCode, validRows.value.map(row => ({ reference: row.quoteKey, cardCount: row.quantity }))) }
   catch (e) { errorMessage.value = e instanceof Error ? e.message : 'Unable to calculate this batch quote.' }
   finally { quoting.value = false }
 }
@@ -137,7 +132,7 @@ async function downloadTemplate() {
   try {
     const addressId = addresses.value[0]?.id || 'YOUR_ADDRESS_ID'
     const optionCode = returnReferences.value.find(option => option.addressId === addresses.value[0]?.id)?.code || 'RETURN_OPTION_CODE'
-    const content = '\uFEFFclient_reference,client_name,card_names,language_code,quantity,return_address_id,return_shipping_option_code,currency_code,customer_note\nCLIENT-001,Customer one,Pikachu|Charizard,EN,2,' + addressId + ',' + optionCode + ',' + referenceCurrency.value + ',Keep in separate inner package\n'
+    const content = '\uFEFFclient_name,card_names,language_code,quantity,return_address_id,return_shipping_option_code,currency_code,customer_note\nCustomer one,Pikachu|Charizard,EN,2,' + addressId + ',' + optionCode + ',' + referenceCurrency.value + ',Keep in separate inner package\n'
     const url = URL.createObjectURL(new Blob([content], { type: 'text/csv;charset=utf-8' }))
     const link = document.createElement('a')
     link.href = url
@@ -159,13 +154,13 @@ async function submitImport() {
       batchName: batchName.value || fileName.value,
       expectedTotalAmount: Number(quote.value.aggregate.totalAmount),
       orders: validRows.value.map((row) => ({
-        clientReference: row.clientReference,
+        clientReference: row.quoteKey,
         clientDisplayName: row.clientDisplayName,
         clientContactHint: '',
         order: {
         serviceLevel: 'basic_grading',
         currencyCode: row.currencyCode,
-        quotedTotalAmount: Number(quote.value!.allocations.find(part => part.reference === row.clientReference)!.totalAmount),
+        quotedTotalAmount: Number(quote.value!.allocations.find(part => part.reference === row.quoteKey)!.totalAmount),
         quotedCurrencyCode: row.currencyCode,
         returnAddressId: row.returnAddressId,
         saveReturnAddress: false,
@@ -174,7 +169,7 @@ async function submitImport() {
         returnCity: '', returnRegion: '', returnPostalCode: '', returnCountry: '',
         customerNote: row.customerNote,
         languageGroups: [],
-        items: Array.from({ length: row.quantity }, (_, index) => ({ cardName: row.cardNames[index] || `${row.clientReference} card ${index + 1}`, languageCode: row.languageCode, productType: 'graded_card', category: 'trading_card' })),
+        items: Array.from({ length: row.quantity }, (_, index) => ({ cardName: row.cardNames[index] || `Card ${index + 1}`, languageCode: row.languageCode, productType: 'graded_card', category: 'trading_card' })),
         },
       })),
     })
@@ -222,9 +217,9 @@ onMounted(async () => {
         <h2>2. Upload and validate</h2>
         <label>Batch name<input v-model="batchName" maxlength="191" placeholder="e.g. September customer shipment" /></label>
         <input type="file" accept=".csv,text/csv" @change="selectFile" />
-        <div v-if="rows.length" class="table-scroll"><table class="portal-table"><thead><tr><th>CSV row</th><th>Customer reference</th><th>Language</th><th>Qty</th><th>Address</th><th>Return option</th><th>Validation</th></tr></thead><tbody><tr v-for="row in rows" :key="row.rowNo"><td>{{ row.rowNo }}</td><td>{{ row.clientReference }}</td><td>{{ row.languageCode }}</td><td>{{ row.quantity }}</td><td>{{ row.returnAddressId }}</td><td>{{ row.returnShippingOptionCode }}</td><td :class="row.error ? 'cell-error' : 'cell-success'">{{ row.error || 'Ready' }}</td></tr></tbody></table></div>
+        <div v-if="rows.length" class="table-scroll"><table class="portal-table"><thead><tr><th>CSV row</th><th>Language</th><th>Qty</th><th>Address</th><th>Return option</th><th>Validation</th></tr></thead><tbody><tr v-for="row in rows" :key="row.rowNo"><td>{{ row.rowNo }}</td><td>{{ row.languageCode }}</td><td>{{ row.quantity }}</td><td>{{ row.returnAddressId }}</td><td>{{ row.returnShippingOptionCode }}</td><td :class="row.error ? 'cell-error' : 'cell-success'">{{ row.error || 'Ready' }}</td></tr></tbody></table></div>
         <p v-if="quoting" class="muted-copy">Calculating the batch quote…</p>
-        <div v-if="quote" class="quote-panel"><h3>Batch quote</h3><p>{{ quote.aggregate.cardCount }} cards · Grading {{ formatMoney(quote.aggregate.serviceFee, quote.aggregate.currencyCode) }} · One return parcel {{ formatMoney(quote.aggregate.returnShippingFee, quote.aggregate.currencyCode) }}</p><strong>Total {{ formatMoney(quote.aggregate.totalAmount, quote.aggregate.currencyCode) }}</strong><p class="muted-copy">The return fee is shared across child orders. Each order requires review and confirmation before payment.</p><div v-for="part in quote.allocations" :key="part.reference">{{ part.reference }} · {{ formatMoney(part.totalAmount, quote.aggregate.currencyCode) }}</div></div>
+        <div v-if="quote" class="quote-panel"><h3>Batch quote</h3><p>{{ quote.aggregate.cardCount }} cards · Grading {{ formatMoney(quote.aggregate.serviceFee, quote.aggregate.currencyCode) }} · One return parcel {{ formatMoney(quote.aggregate.returnShippingFee, quote.aggregate.currencyCode) }}</p><strong>Total {{ formatMoney(quote.aggregate.totalAmount, quote.aggregate.currencyCode) }}</strong><p class="muted-copy">The return fee is shared across child orders. Each order requires review and confirmation before payment.</p><div v-for="part in quote.allocations" :key="part.reference">Row {{ part.reference.replace('ROW-', '') }} · {{ formatMoney(part.totalAmount, quote.aggregate.currencyCode) }}</div></div>
         <button v-if="validRows.length" type="button" class="btn-primary form-submit" :disabled="submitting || quoting || !quote || Boolean(result)" @click="submitImport">{{ result ? 'Batch created' : submitting ? 'Creating orders...' : `Create ${validRows.length} valid order${validRows.length === 1 ? '' : 's'}` }}</button>
       </section>
       <section v-if="result" class="form-section">

@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { ref, watch, onBeforeUnmount } from 'vue'
+import { ElMessageBox } from 'element-plus'
 import { tx, localizeBackendMessage } from '@/i18n'
-import { agentDateLabel, emptyAgentPage, useAgentApi, type PartnerReturnParcel } from '../lib/agentWorkbench'
+import { agentDateLabel, emptyAgentPage, useAgentActions, useAgentApi, type PartnerReturnParcel } from '../lib/agentWorkbench'
 import AgentPagination from './AgentPagination.vue'
 const props = defineProps<{ orderId?: number | null; batchId?: number | null }>()
+const emit = defineEmits<{ changed: [] }>()
 const api = useAgentApi(), rows = ref(emptyAgentPage<PartnerReturnParcel>()), loading = ref(false), error = ref('')
 const selected = ref<PartnerReturnParcel | null>(null), detailLoading = ref(false)
+const { busy, run, error: actionError } = useAgentActions()
 let generation = 0, detailGeneration = 0
 async function load(page = 1) {
   const current = ++generation
@@ -22,6 +25,13 @@ async function open(row: PartnerReturnParcel) {
   catch (e) { if (current === detailGeneration) error.value = e instanceof Error ? e.message : tx('Unable to load return parcels.') }
   finally { if (current === detailGeneration) detailLoading.value = false }
 }
+async function confirmDelivery() {
+  const id = selected.value?.id
+  if (!id || busy.value || selected.value?.deliveredAt) return
+  try { await ElMessageBox.confirm(tx('Confirm receipt of this return parcel?'), tx('Confirm parcel receipt'), { type: 'warning' }) } catch { return }
+  const saved = await run(`partner-parcel:${id}:delivered`, { id }, key => api.deliverPartnerReturnParcel(id, key), value => { selected.value = value }, tx('Return parcel received.'))
+  if (saved) { await load(rows.value.page); emit('changed') }
+}
 watch(() => [props.orderId, props.batchId], () => { selected.value = null; detailGeneration++; void load() }, { immediate: true })
 onBeforeUnmount(() => { generation++; detailGeneration++ })
 </script>
@@ -29,6 +39,7 @@ onBeforeUnmount(() => { generation++; detailGeneration++ })
   <section class="partner-return-history" data-testid="agent-partner-returns">
     <div class="agent-toolbar"><h3>{{ $tx('Return parcels') }}</h3><el-button link :loading="loading" @click="load(rows.page)">{{ $tx('Refresh') }}</el-button></div>
     <el-alert v-if="error" :title="localizeBackendMessage(error)" type="error" :closable="false" />
+    <el-alert v-if="actionError" :title="localizeBackendMessage(actionError)" type="error" :closable="false" />
     <el-table v-loading="loading" :data="rows.items" border :empty-text="$tx('No return parcels yet.')" data-testid="agent-partner-return-table">
       <el-table-column prop="parcelNo" :label="$tx('Parcel')" min-width="160" />
       <el-table-column :label="$tx('Carrier / tracking number')" min-width="200"><template #default="{ row }">{{ row.carrierName }}<br><code>{{ row.trackingNumber }}</code></template></el-table-column>
@@ -38,7 +49,7 @@ onBeforeUnmount(() => { generation++; detailGeneration++ })
       <el-table-column :label="$tx('Actions')" width="85"><template #default="{ row }"><el-button link type="primary" :loading="detailLoading" @click="open(row)">{{ $tx('View') }}</el-button></template></el-table-column>
     </el-table>
     <AgentPagination v-if="rows.total > rows.pageSize" v-bind="rows" :disabled="loading" @change="load" />
-    <el-drawer :model-value="Boolean(selected)" :title="selected?.parcelNo || $tx('Return parcel')" size="min(1000px, 94vw)" :append-to-body="false" @close="selected = null; detailGeneration++">
+    <el-drawer :model-value="Boolean(selected)" :title="selected?.parcelNo || $tx('Return parcel')" size="min(1000px, 94vw)" :append-to-body="false" :show-close="!busy" :close-on-click-modal="!busy" :close-on-press-escape="!busy" @close="selected = null; detailGeneration++">
       <template v-if="selected">
         <dl class="agent-facts"><div><dt>{{ $tx('Carrier') }}</dt><dd>{{ selected.carrierName }}</dd></div><div><dt>{{ $tx('Tracking number') }}</dt><dd>{{ selected.trackingNumber }}</dd></div><div><dt>{{ $tx('Return address') }}</dt><dd>{{ selected.returnAddress }}</dd></div><div><dt>{{ $tx('Delivered at') }}</dt><dd>{{ agentDateLabel(selected.deliveredAt) }}</dd></div></dl>
         <el-table :data="selected.items || []" border>
@@ -48,6 +59,7 @@ onBeforeUnmount(() => { generation++; detailGeneration++ })
           <el-table-column prop="certId" :label="$tx('Certificate ID')" min-width="150" />
         </el-table>
       </template>
+      <template #footer><el-button v-if="selected && !selected.deliveredAt" type="primary" :loading="busy" data-testid="agent-confirm-partner-parcel" @click="confirmDelivery">{{ $tx('Confirm parcel receipt') }}</el-button></template>
     </el-drawer>
   </section>
 </template>

@@ -140,7 +140,7 @@ export function addPartnerFulfillmentRoute(routes = [], translate = key => key) 
     return false
   }
   if (inspect(routes) || !source) return routes
-  const permissions = ['nxr:order:manage', 'nxr:order:workbench', 'nxr:order:shipping', 'nxr:order:batch']
+  const permissions = ['nxr:order:manage', 'nxr:order:workbench', 'nxr:order:shipping', 'nxr:order:batch', 'nxr:order:admission']
   return [...routes, {
     path: '/nxr/submissions', component: 'Layout', hidden: source.hidden, permissions,
     children: [{

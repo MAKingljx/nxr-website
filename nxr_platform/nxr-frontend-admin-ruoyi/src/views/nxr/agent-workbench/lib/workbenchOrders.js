@@ -8,7 +8,10 @@ export function orderReturnProgress(order) {
   const total = Number(order.cardCount)
   const delivered = Number(order.deliveredCardCount)
   const shipped = Number(order.returnShippedCardCount)
-  if (!Number.isFinite(total) || !Number.isFinite(delivered) || !Number.isFinite(shipped)) return null
+  if (!Number.isFinite(total) || !Number.isFinite(delivered) || !Number.isFinite(shipped) || total <= 0) return null
+  // The master Submit travels together to NXR. This progress belongs only to
+  // later card returns, which may be split across multiple parcels.
+  if (delivered <= 0 && shipped <= 0) return null
   return { total, delivered, shipped, complete: total > 0 && delivered === total }
 }
 

@@ -12,13 +12,13 @@
     </nxr-page-header>
     <AdminOrderTabs />
 
-    <el-card v-hasPermi="['nxr:order:manage','nxr:order:warehouse']" shadow="never" class="intake-lookup-card mb12">
+    <el-card v-if="showIntakeLookup(queryParams.orderChannel, detailOpen, detail)" v-hasPermi="['nxr:order:manage','nxr:order:warehouse']" shadow="never" class="intake-lookup-card mb12">
       <div class="intake-lookup-row"><strong>{{ $tx('Warehouse Intake Scan') }}</strong><el-input v-model="intakeLookupCode" clearable :placeholder="$tx('Scan or enter an intake code')" @keyup.enter="lookupIntakeOrder" /><el-button type="primary" icon="Search" :loading="lookingUpIntake" @click="lookupIntakeOrder">{{ $tx('Find Order') }}</el-button></div>
     </el-card>
 
-    <order-card-lookup v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:workbench']" @open-order="openDetail" />
+    <order-card-lookup v-if="showIntakeLookup(queryParams.orderChannel, detailOpen, detail)" v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:workbench']" @open-order="openDetail" />
 
-    <merchant-batch-panel v-if="!route.meta.adminUnified" ref="merchantBatchPanel" @open-order="openDetail" @open-returns="router.push('/nxr/submissions/partner-fulfillment?tab=returns')" v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:shipping','nxr:order:batch']" />
+    <merchant-batch-panel v-if="!route.meta.adminUnified" ref="merchantBatchPanel" @open-order="openDetail" @open-returns="router.push('/nxr/submissions/partner-fulfillment?tab=returns')" v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:shipping','nxr:order:batch','nxr:order:admission']" />
 
     <el-form ref="queryRef" :model="queryParams" :inline="true" @submit.prevent>
       <el-form-item :label="$tx('Order Status')" prop="status">
@@ -79,12 +79,12 @@
           <el-tab-pane :label="$tx('Warehouse')" name="warehouse">
 
         <el-form v-if="operations && fulfillmentOpen" v-hasPermi="['nxr:order:manage','nxr:order:warehouse']" :inline="true" :model="intakeForm" class="operation-form">
-          <el-form-item :label="$tx('Intake Code')"><el-input v-model="intakeForm.intakeCode" style="width:180px" /></el-form-item>
+          <el-form-item v-if="detail.partnerCardReturnEligible !== true" :label="$tx('Intake Code')"><el-input v-model="intakeForm.intakeCode" style="width:180px" /></el-form-item>
           <el-form-item :label="$tx('Package No.')"><el-input v-model="intakeForm.packageNo" style="width:150px" /></el-form-item>
           <el-form-item :label="$tx('Received card count')"><el-input-number v-model="intakeForm.receivedCount" :min="0" :max="1000" /></el-form-item>
-          <el-form-item :label="$tx('Exceptions')"><el-select v-model="intakeForm.exceptionTypes" multiple clearable style="width:220px"><el-option :label="$tx('Damaged')" value="damaged" /><el-option :label="$tx('Missing Barcode')" value="missing_barcode" /><el-option :label="$tx('Other')" value="other" /></el-select></el-form-item>
+          <el-form-item :label="$tx('Exceptions')"><el-select v-model="intakeForm.exceptionTypes" multiple clearable style="width:220px"><el-option :label="$tx('Damaged')" value="damaged" /><el-option v-if="detail.partnerCardReturnEligible !== true" :label="$tx('Missing Barcode')" value="missing_barcode" /><el-option :label="$tx('Other')" value="other" /></el-select></el-form-item>
           <el-form-item :label="$tx('Note')"><el-input v-model="intakeForm.conditionNote" style="width:220px" /></el-form-item>
-          <el-form-item><el-button type="primary" :loading="receivingOrder" @click="receiveOrder">{{ $tx('Confirm Intake') }}</el-button></el-form-item>
+          <el-form-item><el-button type="primary" :loading="receivingOrder" data-testid="order-receive" @click="receiveOrder">{{ $tx(detail.partnerCardReturnEligible === true ? 'Confirm parcel receipt' : 'Confirm Intake') }}</el-button></el-form-item>
         </el-form>
         <p v-if="operations && !operations.receipts.length && !operations.exceptions.length" class="order-section-empty">{{ $tx('No intake records') }}</p>
         <el-table v-if="operations?.receipts.length" :data="operations.receipts" size="small" border class="mb12">
@@ -103,12 +103,13 @@
           <el-table-column :label="$tx('Application Details')" min-width="240"><template #default="scope">{{ [scope.row.brandName, scope.row.setName, scope.row.cardNumber, scope.row.year, scope.row.rarity, localizeOrderCode('productType', scope.row.productType), localizeOrderCode('cardCategory', scope.row.category), scope.row.languageCode].filter(Boolean).join(' · ') || '-' }}</template></el-table-column>
           <el-table-column :label="$tx('Application Photos')" min-width="210"><template #default="scope"><order-application-photo v-if="scope.row.frontPhotoId" :photo-id="scope.row.frontPhotoId" :order-id="detail.id" :label="$tx('Front')" /><order-application-photo v-if="scope.row.backPhotoId" :photo-id="scope.row.backPhotoId" :order-id="detail.id" :label="$tx('Back')" /><span v-if="!scope.row.frontPhotoId && !scope.row.backPhotoId">-</span></template></el-table-column>
           <el-table-column :label="$tx('Item Status')" width="130"><template #default="scope"><el-tag>{{ labelStatus(scope.row.statusCode) }}</el-tag></template></el-table-column>
-          <el-table-column :label="$tx('Grading Entry')" min-width="220"><template #default="scope"><span v-if="scope.row.gradingSubmissionId">#{{ scope.row.gradingSubmissionId }} · {{ scope.row.gradingCertId }} · {{ labelStatus(scope.row.gradingStatusCode) }}</span><div v-else-if="fulfillmentOpen" class="link-submission"><el-input-number v-model="submissionLinks[scope.row.id]" :min="1" :controls="false" :placeholder="$tx('Entry ID')" /><el-button v-hasPermi="['nxr:order:manage','nxr:order:grading']" link type="primary" :loading="linkingItemId === scope.row.id" @click="linkSubmission(scope.row)">{{ $tx('Link') }}</el-button></div><span v-else>-</span></template></el-table-column>
+          <el-table-column :label="$tx('Grading Entry')" min-width="220"><template #default="scope"><span v-if="scope.row.gradingSubmissionId">#{{ scope.row.gradingSubmissionId }} · {{ scope.row.gradingCertId }} · {{ labelStatus(scope.row.gradingStatusCode) }}</span><div v-else-if="fulfillmentOpen" class="link-submission"><el-input-number v-model="submissionLinks[scope.row.id]" :min="1" :controls="false" :placeholder="$tx('Entry ID')" /><el-button v-hasPermi="['nxr:order:manage','nxr:order:grading']" link type="primary" :disabled="detail.partnerCardReturnEligible === true && Boolean(partnerGradingBlock(detail.statusCode, scope.row.statusCode))" :loading="linkingItemId === scope.row.id" @click="linkSubmission(scope.row)">{{ $tx('Link') }}</el-button></div><span v-else>-</span></template></el-table-column>
         </el-table>
 
-        <el-divider content-position="left">{{ $tx('Order Workbench & Packing Verification') }}</el-divider>
-        <order-workbench-panel v-if="fulfillmentOpen" v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:grading','nxr:order:workbench']" :order-id="detail.id" :order-items="detail.items" />
+        <el-divider v-if="detail.partnerCardReturnEligible !== true" content-position="left">{{ $tx('Order Workbench & Packing Verification') }}</el-divider>
+        <order-workbench-panel v-if="fulfillmentOpen" v-hasPermi="['nxr:order:manage','nxr:order:warehouse','nxr:order:grading','nxr:order:workbench']" :order-id="detail.id" :order-items="detail.items" :order-return-mode="detail.partnerCardReturnEligible === true" :order-status="detail.statusCode" @changed="refreshDetail" />
 
+        <template v-if="detail.partnerCardReturnEligible !== true">
         <el-divider content-position="left">{{ $tx('Internal Tasks & Quality Check') }}</el-divider>
         <template v-if="operations">
           <el-form v-if="fulfillmentOpen" v-hasPermi="['nxr:order:manage','nxr:order:grading']" :inline="true" :model="taskForm" class="operation-form">
@@ -120,6 +121,7 @@
             <el-table-column :label="$tx('Task')" width="150"><template #default="scope">{{ taskLabel(scope.row.taskTypeCode) }}</template></el-table-column><el-table-column :label="$tx('Card ID')" prop="orderItemId" width="90" align="center" /><el-table-column :label="$tx('Status')" width="150"><template #default="scope"><el-select v-model="taskDrafts[scope.row.id].statusCode" size="small"><el-option :label="$tx('Pending')" value="pending" /><el-option :label="$tx('In Progress')" value="in_progress" /><el-option :label="$tx('Completed')" value="completed" /><el-option :label="$tx('Failed / Retry')" value="failed" /></el-select></template></el-table-column><el-table-column :label="$tx('Attempts')" prop="attemptCount" width="90" align="center" /><el-table-column :label="$tx('Result / Failure Reason')" min-width="240"><template #default="scope"><el-input v-model="taskDrafts[scope.row.id].summary" size="small" :placeholder="taskDrafts[scope.row.id].statusCode === 'failed' ? $tx('Enter failure reason') : $tx('Enter task result')" /></template></el-table-column><el-table-column :label="$tx('Actions')" width="100"><template #default="scope"><el-button v-hasPermi="['nxr:order:manage','nxr:order:grading']" link type="primary" :loading="savingTaskId === scope.row.id" @click="saveTask(scope.row)">{{ $tx('Save') }}</el-button></template></el-table-column>
           </el-table>
           <el-form v-if="fulfillmentOpen" v-hasPermi="['nxr:order:manage','nxr:order:grading']" :inline="true" :model="qualityForm" class="operation-form quality-form"><el-form-item :label="$tx('QC Result')"><el-radio-group v-model="qualityForm.passed"><el-radio-button :value="true">{{ $tx('Pass') }}</el-radio-button><el-radio-button :value="false">{{ $tx('Rework') }}</el-radio-button></el-radio-group></el-form-item><el-form-item :label="$tx('QC Note')"><el-input v-model="qualityForm.note" style="width:300px" /></el-form-item><el-form-item><el-button type="success" :loading="savingQuality" @click="saveQualityCheck">{{ $tx('Submit QC') }}</el-button></el-form-item></el-form>
+        </template>
         </template>
 
           </el-tab-pane>
@@ -207,10 +209,11 @@
 <script setup name="NxrOrders">
 import { localizeOrderEventDetail, localizeOrderCode } from '@/i18n'
 import auth from '@/plugins/auth'
+import { partnerGradingBlock } from './gradingForm'
 import OrderFinanceExceptionPanel from './components/OrderFinanceExceptionPanel.vue'
 import { useRoute, useRouter } from 'vue-router'
 import { onDeactivated } from 'vue'
-import { orderDetailSection, orderManualStatuses, isPartnerOrder, paymentOrderStatuses } from './orderPresentation'
+import { orderDetailSection, orderManualStatuses, isPartnerOrder, paymentOrderStatuses, orderChannelFromRoute, showIntakeLookup } from './orderPresentation'
 import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
 import CommercePolicyPanel from './components/CommercePolicyPanel.vue'
 import MediaCapacityPanel from './components/MediaCapacityPanel.vue'
@@ -298,7 +301,7 @@ const savingShippingConfig = ref(false)
 const savingServicePrice = ref(false)
 const submissionLinks = reactive({})
 const taskDrafts = reactive({})
-const queryParams = reactive({ page: 1, pageSize: 20, status: undefined, query: undefined, orderChannel: route.query.orderChannel === 'individual' ? 'individual' : route.meta.adminUnified ? 'partner' : undefined })
+const queryParams = reactive({ page: 1, pageSize: 20, status: undefined, query: undefined, orderChannel: orderChannelFromRoute(route.query.orderChannel, route.meta.adminUnified) })
 const statusForm = reactive({ statusCode: '' })
 const shipmentForm = reactive({ direction: 'inbound', carrierName: '', trackingNumber: '', note: '' })
 const paymentForm = reactive({ providerTransactionId: '', note: '' })
@@ -448,6 +451,7 @@ function markDelivered(shipment) {
 }
 
 function linkSubmission(item) {
+  if (detail.value?.partnerCardReturnEligible === true && partnerGradingBlock(detail.value.statusCode, item.statusCode)) return
   if (!detail.value || !submissionLinks[item.id]) { proxy.$modal.msgWarning(tx('Enter a grading entry ID')); return }
   linkingItemId.value = item.id
   linkGradingOrderItem(detail.value.id, item.id, submissionLinks[item.id]).then((res) => { detail.value = res.data; statusForm.statusCode = detail.value.statusCode; proxy.$modal.msgSuccess(tx('Grading entry linked')) }).finally(() => { linkingItemId.value = null })
@@ -466,11 +470,13 @@ async function lookupIntakeOrder() {
 }
 
 async function receiveOrder() {
-  if (!detail.value || !intakeForm.intakeCode.trim()) { proxy.$modal.msgWarning(tx('Intake code is required')); return }
+  if (!detail.value) return
+  const orderReturnMode = detail.value.partnerCardReturnEligible === true
+  if (!orderReturnMode && !intakeForm.intakeCode.trim()) { proxy.$modal.msgWarning(tx('Intake code is required')); return }
   receivingOrder.value = true
   try {
     await receiveGradingOrder(detail.value.id, intakeForm)
-    proxy.$modal.msgSuccess(tx('Warehouse intake and card count recorded'))
+    proxy.$modal.msgSuccess(tx(orderReturnMode ? 'Order receipt confirmed.' : 'Warehouse intake and card count recorded'))
     intakeForm.packageNo = ''
     intakeForm.conditionNote = ''
     intakeForm.exceptionTypes = []
@@ -685,7 +691,7 @@ onDeactivated(() => {
 })
 
 watch(() => [route.query.status, route.query.orderChannel], ([raw, channel]) => {
-  queryParams.orderChannel = channel === 'individual' ? 'individual' : route.meta.adminUnified ? 'partner' : undefined
+  queryParams.orderChannel = orderChannelFromRoute(channel, route.meta.adminUnified)
   queryParams.status = filterStatusOptions.value.some(option => option.value === raw) ? raw : undefined
   void loadOrders(true)
 }, { immediate: true })

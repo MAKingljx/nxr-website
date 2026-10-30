@@ -16,6 +16,9 @@ import java.util.List;
 import java.util.HexFormat;
 import java.util.Locale;
 import java.util.Set;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.function.LongConsumer;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -384,6 +387,88 @@ public class OrderAdmissionService {
 
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public AdmissionResponse decide(long orderId, long adminUserId, DecisionRequest request) {
+        if (isPartnerSubmitOrder(orderId)) {
+            throw conflict("Review the complete partner submission together");
+        }
+        return decideOrder(orderId, adminUserId, request, false);
+    }
+
+    private boolean isPartnerSubmitOrder(long orderId) {
+        return partnerSubmitBatchId(orderId) != null;
+    }
+
+    private Long partnerSubmitBatchId(long orderId) {
+        return jdbcClient.sql("""
+            SELECT s.batch_id FROM merchant_order_batch_item bi
+            JOIN agent_submission s ON s.batch_id=bi.batch_id
+            WHERE bi.order_id=:id
+            """).param("id", orderId).query(Long.class).optional().orElse(null);
+    }
+
+    private List<Long> partnerSubmitOrders(long batchId, boolean forUpdate) {
+        var batch = jdbcClient.sql("""
+            SELECT b.id FROM merchant_order_batch b JOIN agent_submission s
+              ON s.batch_id=b.id AND s.merchant_customer_id=b.merchant_customer_id
+            WHERE b.id=:id
+            """ + (forUpdate ? " FOR UPDATE" : ""))
+            .param("id", batchId).query(Long.class).optional();
+        if (batch.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Partner submission not found");
+        List<Long> ids = jdbcClient.sql("SELECT order_id FROM merchant_order_batch_item WHERE batch_id=:id ORDER BY order_id")
+            .param("id", batchId).query(Long.class).list();
+        if (ids.isEmpty() || ids.stream().anyMatch(id -> id == null || id <= 0) || ids.stream().distinct().count() != ids.size()) {
+            throw conflict("Partner submission has invalid order membership");
+        }
+        return ids;
+    }
+
+    public PartnerSubmitAdmission requirePartnerSubmitAdmission(long batchId, LongConsumer checkAccess) {
+        boolean eligible = jdbcClient.sql("SELECT COUNT(*) FROM agent_submission WHERE batch_id=:id")
+            .param("id", batchId).query(Integer.class).single() > 0;
+        if (!eligible) {
+            boolean exists = jdbcClient.sql("SELECT COUNT(*) FROM merchant_order_batch WHERE id=:id")
+                .param("id", batchId).query(Integer.class).single() > 0;
+            if (!exists) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Partner submission not found");
+            List<Long> ids = jdbcClient.sql("SELECT order_id FROM merchant_order_batch_item WHERE batch_id=:id ORDER BY order_id")
+                .param("id", batchId).query(Long.class).list();
+            if (ids.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Partner submission not found");
+            ids.forEach(checkAccess::accept);
+            return new PartnerSubmitAdmission(batchId, false, List.of());
+        }
+        List<Long> ids = partnerSubmitOrders(batchId, false);
+        ids.forEach(checkAccess::accept);
+        return new PartnerSubmitAdmission(batchId, true, ids.stream().map(this::requireAdminAdmission).toList());
+    }
+
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public PartnerSubmitAdmission decidePartnerSubmit(long batchId, long adminUserId, PartnerSubmitDecision request,
+                                                       LongConsumer checkAccess) {
+        List<Long> ids = partnerSubmitOrders(batchId, true);
+        ids.forEach(checkAccess::accept);
+        if (request == null || request.orders() == null || request.orders().size() != ids.size()) {
+            throw conflict("Submission changed; refresh before recording a decision");
+        }
+        Map<Long, Integer> revisions = new HashMap<>();
+        for (PartnerSubmitOrderRevision order : request.orders()) {
+            if (order == null || order.orderId() == null || order.expectedRevision() == null
+                || revisions.putIfAbsent(order.orderId(), order.expectedRevision()) != null) {
+                throw conflict("Submission changed; refresh before recording a decision");
+            }
+        }
+        if (!revisions.keySet().equals(Set.copyOf(ids))) throw conflict("Submission changed; refresh before recording a decision");
+        // Lock every order before writing any of them. A stale or changed member rolls back the entire transaction.
+        for (long id : ids) {
+            AdmissionRow row = requireById(id, true);
+            if (row.revision() != revisions.get(id) || !"pending_review".equals(row.admissionStatus())
+                || !"admission_review".equals(row.orderStatus())) {
+                throw conflict("Submission changed; refresh before recording a decision");
+            }
+        }
+        List<AdmissionResponse> result = ids.stream().map(id -> decideOrder(id, adminUserId,
+            new DecisionRequest(request.decision(), request.note(), revisions.get(id)), true)).toList();
+        return new PartnerSubmitAdmission(batchId, true, result);
+    }
+
+    private AdmissionResponse decideOrder(long orderId, long adminUserId, DecisionRequest request, boolean partnerSubmit) {
         AdmissionRow row = requireById(orderId, true);
         String decision = clean(request == null ? null : request.decision(), 32).toLowerCase(Locale.ROOT);
         if (!DECISIONS.contains(decision)) {
@@ -402,7 +487,13 @@ public class OrderAdmissionService {
         if (!row.merchantBatch() && hasPaymentActivity(orderId)) {
             throw conflict("Admission cannot be changed after payment processing has started");
         }
-        String note = requireText(request == null ? null : request.note(), "Decision note", 2000);
+        String note;
+        if (partnerSubmit && "approve".equals(decision)) {
+            note = clean(request.note(), 2001);
+            if (note.length() > 2000) throw badRequest("Decision note is too long");
+        } else {
+            note = requireText(request.note(), "Decision note", 2000);
+        }
         if ("approve".equals(decision)) {
             Config config = configForUpdate();
             MerchantAcceptance submissionAcceptance = merchantSubmissionAcceptance(row);
@@ -700,7 +791,7 @@ public class OrderAdmissionService {
             !row.merchantBatch() && ((legacyOrder && Set.of("awaiting_payment", "payment_review").contains(row.orderStatus()))
                 || ("approved".equals(row.admissionStatus()) && Set.of("awaiting_payment", "payment_review").contains(row.orderStatus())
                     && accepted && !expired && quoteMatches)), config().maxCardsPerOrder(),
-            supplementalPhotoIds(row.orderId()), admissionEvents(row.orderId()),!row.merchantBatch()
+            supplementalPhotoIds(row.orderId()), admissionEvents(row.orderId()),!row.merchantBatch(), partnerSubmitBatchId(row.orderId())
         );
     }
 
@@ -876,6 +967,10 @@ public class OrderAdmissionService {
 
     public record DecisionRequest(String decision, String note, Integer expectedRevision) { }
 
+    public record PartnerSubmitOrderRevision(Long orderId, Integer expectedRevision) { }
+    public record PartnerSubmitDecision(String decision, String note, List<PartnerSubmitOrderRevision> orders) { }
+    public record PartnerSubmitAdmission(long batchId, boolean eligible, List<AdmissionResponse> orders) { }
+
     public record ResubmitRequest(String note, List<Long> supplementalPhotoIds) {
         public ResubmitRequest(String note) {
             this(note, List.of());
@@ -894,6 +989,7 @@ public class OrderAdmissionService {
         boolean paymentExpired,
         String termsVersion, String termsText, String turnaroundText, String acceptedTermsVersion, LocalDateTime termsAcceptedAt,
         BigDecimal quoteAmount, String quoteCurrency, boolean canResubmit, boolean canAcceptTerms, boolean canPay,
-        int maxCardsPerOrder, List<Long> supplementalPhotoIds, List<AdmissionEvent> events,boolean paymentRequired
+        int maxCardsPerOrder, List<Long> supplementalPhotoIds, List<AdmissionEvent> events,boolean paymentRequired,
+        Long partnerSubmitBatchId
     ) { }
 }

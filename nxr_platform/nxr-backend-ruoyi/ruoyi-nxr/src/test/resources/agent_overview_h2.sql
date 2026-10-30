@@ -20,7 +20,7 @@ CREATE TABLE merchant_order_batch (
  id BIGINT PRIMARY KEY, merchant_customer_id BIGINT, batch_no VARCHAR(48), batch_name VARCHAR(191),
  source_name VARCHAR(255), status_code VARCHAR(32), updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-CREATE TABLE merchant_order_batch_item (id BIGINT PRIMARY KEY,batch_id BIGINT,order_id BIGINT);
+CREATE TABLE merchant_order_batch_item (id BIGINT PRIMARY KEY,batch_id BIGINT,order_id BIGINT,intake_no VARCHAR(64));
 CREATE TABLE grading_order (id BIGINT PRIMARY KEY,customer_id BIGINT,total_card_count INT);
 CREATE TABLE merchant_wallet (
  id BIGINT PRIMARY KEY,customer_id BIGINT,currency_code VARCHAR(8),balance DECIMAL(18,2),updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -53,7 +53,7 @@ INSERT INTO merchant_order_batch(id,merchant_customer_id,batch_no,batch_name,sou
  (43,404,'BAT-D','Doris batch','Historic source','completed'),
  (44,303,'BAT-C','Collector batch','Invalid source','created');
 INSERT INTO grading_order VALUES(51,101,2),(52,202,1),(53,404,1),(54,303,1);
-INSERT INTO merchant_order_batch_item VALUES(61,41,51),(62,42,52),(63,43,53),(64,44,54);
+INSERT INTO merchant_order_batch_item(id,batch_id,order_id) VALUES(61,41,51),(62,42,52),(63,43,53),(64,44,54);
 INSERT INTO merchant_wallet(id,customer_id,currency_code,balance) VALUES
  (71,101,'USD',123.45),(72,202,'CNY',2000),(73,404,'EUR',5.67),(74,303,'USD',10000);
 INSERT INTO customer_address(id,customer_id,label,contact_name,address_line1,city,postal_code,country,is_default) VALUES

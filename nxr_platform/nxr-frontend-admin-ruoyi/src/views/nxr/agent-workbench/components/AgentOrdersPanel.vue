@@ -4,8 +4,9 @@ import { onBeforeRouteLeave, onBeforeRouteUpdate, useRoute, useRouter } from 'vu
 import { ElMessageBox } from 'element-plus'
 import { tx, localizeBackendMessage, localizeOrderEventDetail } from '@/i18n'
 import { workspacePath } from '@/utils/submissionWorkspace'
+import { secureUuid } from '@/utils/secureUuid'
 import { ADMIN_BATCHES_PATH, ADMIN_ORDERS_PATH } from '@/utils/adminOrderNavigation'
-import { useAgentApi, useAgentActions, emptyAgentAddress, emptyAgentPage, agentDateLabel, agentStatusLabel, agentFulfillmentStatusLabel, privateTrackingUrl, type WorkbenchOrder, type WorkbenchOrderDetail, type WorkbenchOrderOptions, type AgentOrder } from '../lib/agentWorkbench'
+import { useAgentApi, useAgentActions, emptyAgentAddress, emptyAgentPage, agentDateLabel, agentStatusLabel, agentFulfillmentStatusLabel, type WorkbenchOrder, type WorkbenchOrderDetail, type WorkbenchOrderOptions, type AgentOrder } from '../lib/agentWorkbench'
 import { addressLabel, canCompleteExistingIntake, displayedCardStatus, draftFingerprint, orderReturnProgress, orderSelection, submissionOrderIds, validateOrderDraft } from '../lib/workbenchOrders'
 import AgentPagination from './AgentPagination.vue'
 import AgentOrderNumberLink from './AgentOrderNumberLink.vue'
@@ -14,6 +15,7 @@ import AgentPrivatePhoto from './AgentPrivatePhoto.vue'
 import AgentTimeline from './AgentTimeline.vue'
 import AgentIntakesPanel from './AgentIntakesPanel.vue'
 import AgentPartnerReturns from './AgentPartnerReturns.vue'
+import AgentTrackingLink from './AgentTrackingLink.vue'
 const props = defineProps<{ initialRecordId?: number; detailOnly?: boolean }>()
 const emit = defineEmits<{ closed: [] }>()
 const api = useAgentApi(), route = useRoute(), router = useRouter(), { busy, error, success, run } = useAgentActions()
@@ -22,11 +24,11 @@ const loading = ref(false), detailLoading = ref(false), detail = ref<WorkbenchOr
 const selected = ref<Record<number, WorkbenchOrder>>({}), selectedOrders = computed<WorkbenchOrder[]>(() => orderSelection(selected.value))
 const options = ref<WorkbenchOrderOptions | null>(null), optionsLoading = ref(false)
 const mode = ref<'new' | 'detail' | ''>(''), photoCard = ref<number | null>(null), photoProgress = ref('')
-const trackingLink = ref(''), legacyIntakeId = ref<number | null>(null)
+const legacyIntakeId = ref<number | null>(null)
 const fulfillmentOrder = ref<AgentOrder | null>(null), timelineLoading = ref(false), timelineError = ref('')
 type Photo = { file: File | null; id: number | null; url: string }
 type CardDraft = { localId: string; cardName: string; brandName: string; setName: string; officialCardNumber: string; languageCode: string; productType: string; category: string; front: Photo; back: Photo }
-const newCard = (): CardDraft => ({ localId: crypto.randomUUID(), cardName: '', brandName: '', setName: '', officialCardNumber: '', languageCode: '', productType: options.value?.productTypes[0]?.value || '', category: '', front: { file: null, id: null, url: '' }, back: { file: null, id: null, url: '' } })
+const newCard = (): CardDraft => ({ localId: secureUuid(), cardName: '', brandName: '', setName: '', officialCardNumber: '', languageCode: '', productType: options.value?.productTypes[0]?.value || '', category: '', front: { file: null, id: null, url: '' }, back: { file: null, id: null, url: '' } })
 const draft = reactive({ clientName: '', phone: '', email: '', notes: '', customerAddress: emptyAgentAddress(), cards: [] as CardDraft[] })
 const drawerTitle = computed(() => mode.value === 'new' ? tx('New Order') : detail.value?.order.orderNo || tx('Order'))
 let listGeneration = 0, detailGeneration = 0
@@ -51,7 +53,7 @@ async function loadOptions() {
 }
 function releasePhoto(photo: Photo) { if (photo.url) URL.revokeObjectURL(photo.url) }
 function clearDraft() { for (const card of draft.cards) { releasePhoto(card.front); releasePhoto(card.back) }; Object.assign(draft, { clientName: '', phone: '', email: '', notes: '', customerAddress: emptyAgentAddress(), cards: [newCard()] }) }
-function newOrder() { clearDraft(); error.value = ''; success.value = ''; mode.value = 'new'; if (!options.value) void loadOptions() }
+function newOrder() { try { clearDraft(); error.value = ''; success.value = ''; mode.value = 'new'; if (!options.value) void loadOptions() } catch (e) { error.value = e instanceof Error ? e.message : tx('The operation was not completed. Please try again.') } }
 async function canLeaveDraft() {
   if (busy.value) return false
   const dirty = draft.clientName || draft.phone || draft.email || draft.notes || Object.values(draft.customerAddress).some(Boolean) || draft.cards.some(card => card.cardName || card.brandName || card.setName || card.officialCardNumber || card.languageCode || card.front.file || card.back.file)
@@ -96,7 +98,7 @@ async function create() {
 }
 async function show(id: number) {
   const current = ++detailGeneration
-  mode.value = 'detail'; detail.value = null; fulfillmentOrder.value = null; timelineLoading.value = false; timelineError.value = ''; detailLoading.value = true; photoCard.value = null; trackingLink.value = ''; error.value = ''
+  mode.value = 'detail'; detail.value = null; fulfillmentOrder.value = null; timelineLoading.value = false; timelineError.value = ''; detailLoading.value = true; photoCard.value = null; error.value = ''
   try { const value = await api.fetchWorkbenchOrder(id); if (current === detailGeneration) { detail.value = value; if (value.order.gradingOrderNo) void loadFulfillment(value.order.gradingOrderNo, current) } }
   catch (e) { if (current === detailGeneration) error.value = e instanceof Error ? e.message : tx('Unable to load order details.') }
   finally { if (current === detailGeneration) detailLoading.value = false }
@@ -111,6 +113,12 @@ async function closeLegacyIntake() {
   const id = legacyIntakeId.value
   legacyIntakeId.value = null
   if (id) { await show(id); await load(rows.value.page) }
+}
+async function receiveLegacyReturn() {
+  const order = detail.value?.order
+  if (!order || busy.value) return
+  try { await ElMessageBox.confirm(tx('Confirm receipt of the returned order?'), tx('Confirm parcel receipt'), { type: 'warning' }) } catch { return }
+  if (await run(`legacy-return:${order.id}`, { id: order.id }, key => api.receiveLegacyReturnedOrder(order.id, key), () => {}, tx('Returned order received.'))) await show(order.id)
 }
 function selectOrder(row: WorkbenchOrder, event: Event) { if ((event.target as HTMLInputElement).checked) selected.value[row.id] = row; else delete selected.value[row.id] }
 async function selectForSubmit() {
@@ -130,12 +138,6 @@ function openGradingOrder() {
     void router.push({ path: ADMIN_ORDERS_PATH, query: { orderId: String(detail.value.order.gradingOrderId) } })
   }
 }
-async function createTrackingLink() {
-  const order = detail.value?.order
-  if (!order?.batchNo || !order.gradingOrderNo) return
-  await run(`tracking:${order.id}`, { orderId: order.id }, () => api.rotateTrackingLink(order.batchNo!, order.gradingOrderNo!), value => { trackingLink.value = privateTrackingUrl(value.trackingUrl) }, tx('Customer tracking link updated. The previous link is no longer valid.'))
-}
-async function copyLink() { try { await navigator.clipboard.writeText(trackingLink.value); success.value = tx('Customer tracking link copied.') } catch { error.value = tx('The browser did not allow copying. Select the link and copy it manually.') } }
 onBeforeRouteLeave(canLeaveDraft)
 onBeforeRouteUpdate((to, from) => to.path !== from.path || to.query.company !== from.query.company ? canLeaveDraft() : true)
 onMounted(async () => { if (!props.detailOnly) await load(); if (props.initialRecordId) await show(props.initialRecordId) })
@@ -154,7 +156,7 @@ onBeforeUnmount(() => { listGeneration++; detailGeneration++; for (const card of
       <el-button native-type="submit" :loading="loading" :disabled="busy">{{ $tx('Search') }}</el-button><el-button :disabled="busy" @click="query = ''; status = ''; load()">{{ $tx('Reset') }}</el-button>
     </form>
     <div v-if="selectedOrders.length" class="order-selection" data-testid="agent-order-selection"><span>{{ $tx('{count} orders selected', { count: selectedOrders.length }) }}</span><el-button type="primary" :disabled="busy || !selectedOrders.length" data-testid="agent-start-submit" @click="selectForSubmit">{{ $tx('New Submit') }}</el-button><el-button v-if="selectedOrders.length" link :disabled="busy" @click="selected = {}">{{ $tx('Clear selection') }}</el-button><span v-if="!selectedOrders.length" class="muted-copy">{{ $tx('Select orders ready to submit.') }}</span></div>
-    <div class="agent-table-scroll" :aria-busy="loading"><table class="agent-results-table" data-testid="agent-orders-table"><thead><tr><th class="agent-select-column">{{ $tx('Select') }}</th><th>{{ $tx('Order ID') }}</th><th>{{ $tx('Customer') }}</th><th>{{ $tx('Cards') }}</th><th>{{ $tx('Status') }}</th><th>{{ $tx('Delivered / total') }}</th><th>{{ $tx('Submit') }}</th><th>{{ $tx('Created At') }}</th><th>{{ $tx('Actions') }}</th></tr></thead><tbody>
+    <div class="agent-table-scroll" :aria-busy="loading"><table class="agent-results-table" data-testid="agent-orders-table"><thead><tr><th class="agent-select-column">{{ $tx('Select') }}</th><th>{{ $tx('Order ID') }}</th><th>{{ $tx('Customer') }}</th><th>{{ $tx('Cards') }}</th><th>{{ $tx('Status') }}</th><th>{{ $tx('Return progress') }}</th><th>{{ $tx('Submit') }}</th><th>{{ $tx('Created At') }}</th><th>{{ $tx('Actions') }}</th></tr></thead><tbody>
       <tr v-if="loading"><td colspan="9" class="agent-table-empty">{{ $tx('Loading…') }}</td></tr><tr v-else-if="!rows.items.length"><td colspan="9" class="agent-table-empty">{{ $tx('No matching orders.') }}</td></tr>
       <tr v-for="row in loading ? [] : rows.items" :key="row.id"><td class="agent-select-column"><input v-if="row.canSubmit" type="checkbox" :checked="Boolean(selected[row.id])" :disabled="busy" :aria-label="$tx('Select order {number}', { number: row.orderNo })" :data-testid="`agent-select-order-${row.id}`" @change="selectOrder(row, $event)" /><span v-else>—</span></td><td><AgentOrderNumberLink :order-id="row.id" :order-no="row.orderNo" :company-id="api.companyId" :disabled="busy" @preview="show(row.id)" /></td><td>{{ row.clientName }}</td><td>{{ row.cardCount }}</td><td><span class="status-pill">{{ orderStatus(row) }}</span></td><td>{{ orderReturnProgress(row) ? `${row.deliveredCardCount} / ${row.cardCount}` : '—' }}<small v-if="row.returnShippedCardCount">{{ $tx('{count} cards returning', { count: row.returnShippedCardCount }) }}</small></td><td>{{ row.batchNo || '—' }}</td><td class="agent-date-cell">{{ agentDateLabel(row.createdAt) }}</td><td><el-button link type="primary" :disabled="busy" :data-testid="`agent-view-order-${row.id}`" @click="show(row.id)">{{ $tx('View') }}</el-button></td></tr>
     </tbody></table></div>
@@ -179,10 +181,11 @@ onBeforeUnmount(() => { listGeneration++; detailGeneration++; for (const card of
       <p v-else-if="detailLoading" role="status">{{ $tx('Loading order…') }}</p>
       <template v-else-if="detail">
         <div class="order-detail-heading"><el-button :disabled="busy" @click="show(detail.order.id)">{{ $tx('Refresh') }}</el-button><el-tag>{{ orderStatus(detail.order) }}</el-tag><el-button v-if="!detailOnly && detail.order.batchNo" type="primary" plain :disabled="busy" @click="viewSubmit">{{ $tx('View Submit and review') }}</el-button><el-button v-if="!detailOnly && route.meta.adminUnified && detail.order.gradingOrderId" v-hasPermi="['nxr:order:list']" :disabled="busy" @click="openGradingOrder">{{ $t('nav.admissionGrading') }}</el-button><el-button v-if="!detailOnly && detail.order.canSubmit" type="primary" :disabled="busy" @click="selected[detail.order.id] = detail.order; selectForSubmit()">{{ $tx('Add to Submit') }}</el-button></div>
-        <el-alert v-if="canCompleteExistingIntake(detail.order)" type="warning" :closable="false"><template #title>{{ $tx('This existing intake still needs receipt or card checks.') }}</template><el-button :disabled="busy" data-testid="agent-complete-existing-intake" @click="legacyIntakeId = detail.order.id">{{ $tx('Complete existing intake') }}</el-button></el-alert><dl class="agent-facts"><div><dt>{{ $tx('Customer') }}</dt><dd>{{ detail.order.clientName }}</dd></div><div><dt>{{ $tx('Phone number') }}</dt><dd>{{ detail.order.phone || '—' }}</dd></div><div><dt>{{ $tx('Email') }}</dt><dd>{{ detail.order.email || '—' }}</dd></div><div data-testid="agent-order-customer-address-detail"><dt>{{ $tx('Customer address') }}</dt><dd>{{ addressLabel(detail.order.customerAddress) || $tx('Not provided') }}</dd></div><div><dt>{{ $tx('Cards') }}</dt><dd>{{ detail.order.cardCount }}</dd></div><div v-if="detail.order.notes"><dt>{{ $tx('Notes') }}</dt><dd>{{ detail.order.notes }}</dd></div></dl>
-        <div v-if="detail.order.batchNo && detail.order.gradingOrderNo" class="order-tracking"><el-button :disabled="busy" @click="createTrackingLink">{{ trackingLink ? $tx('Replace link') : $tx('Create customer tracking link') }}</el-button><el-input v-if="trackingLink" :model-value="trackingLink" readonly :aria-label="$tx('Private customer tracking link')" /><el-button v-if="trackingLink" :disabled="busy" @click="copyLink">{{ $tx('Copy') }}</el-button></div>
+        <el-alert v-if="canCompleteExistingIntake(detail.order)" type="warning" :closable="false"><template #title>{{ $tx('This existing intake still needs receipt confirmation.') }}</template><el-button :disabled="busy" data-testid="agent-complete-existing-intake" @click="legacyIntakeId = detail.order.id">{{ $tx('Complete existing intake') }}</el-button></el-alert><dl class="agent-facts"><div><dt>{{ $tx('Customer') }}</dt><dd>{{ detail.order.clientName }}</dd></div><div><dt>{{ $tx('Phone number') }}</dt><dd>{{ detail.order.phone || '—' }}</dd></div><div><dt>{{ $tx('Email') }}</dt><dd>{{ detail.order.email || '—' }}</dd></div><div data-testid="agent-order-customer-address-detail"><dt>{{ $tx('Customer address') }}</dt><dd>{{ addressLabel(detail.order.customerAddress) || $tx('Not provided') }}</dd></div><div><dt>{{ $tx('Cards') }}</dt><dd>{{ detail.order.cardCount }}</dd></div><div v-if="detail.order.notes"><dt>{{ $tx('Notes') }}</dt><dd>{{ detail.order.notes }}</dd></div></dl>
+        <div class="order-tracking"><strong>{{ $tx('Private customer tracking') }}</strong><AgentTrackingLink :key="detail.order.id" :order-id="detail.order.id" /></div>
         <h3>{{ $tx('Order cards') }}</h3><el-table :data="detail.cards" border data-testid="agent-order-cards"><el-table-column prop="cardName" :label="$tx('Card name')" min-width="170" /><el-table-column prop="brandName" :label="$tx('Brand')" min-width="120" /><el-table-column prop="setName" :label="$tx('Card set')" min-width="150" /><el-table-column prop="officialCardNumber" :label="$tx('Official card number')" min-width="140" /><el-table-column prop="languageCode" :label="$tx('Language')" min-width="90" /><el-table-column :label="$tx('Status')" min-width="150"><template #default="{row}">{{ row.fulfillmentStatusCode === 'received' ? $tx('Awaiting grading') : agentFulfillmentStatusLabel(displayedCardStatus(detail.order.statusCode, row.fulfillmentStatusCode || row.statusCode)) }}</template></el-table-column><el-table-column prop="gradingCertId" :label="$tx('Certificate ID')" min-width="140" /><el-table-column :label="$tx('Images')" width="90"><template #default="{row}"><el-button link type="primary" @click="photoCard = row.id">{{ $tx('View') }}</el-button></template></el-table-column></el-table>
-        <AgentPartnerReturns v-if="detail.order.gradingOrderId" :key="detail.order.gradingOrderId" :order-id="detail.order.gradingOrderId" />
+        <AgentPartnerReturns v-if="detail.order.gradingOrderId" :key="detail.order.gradingOrderId" :order-id="detail.order.gradingOrderId" @changed="show(detail.order.id)" />
+        <el-button v-if="detail.order.legacy && detail.order.statusCode === 'delivered'" :loading="busy" data-testid="agent-receive-legacy-return" @click="receiveLegacyReturn">{{ $tx('Confirm returned order receipt') }}</el-button>
         <section v-if="detail.order.gradingOrderNo" class="order-progress" data-testid="agent-order-fulfillment-progress"><h3>{{ $tx('Grading and shipping progress') }}</h3><p v-if="timelineLoading" role="status">{{ $tx('Loading history…') }}</p><el-alert v-if="timelineError" :title="localizeBackendMessage(timelineError)" type="error" :closable="false" /><el-button v-if="timelineError" @click="loadFulfillment(detail.order.gradingOrderNo)">{{ $tx('Retry') }}</el-button><ol v-if="fulfillmentOrder?.timeline.length" class="agent-timeline"><li v-for="event in fulfillmentOrder.timeline" :key="event.id"><div><strong>{{ $tx(event.title) }}</strong><time>{{ agentDateLabel(event.createdAt) }}</time></div><p v-if="event.detail">{{ localizeOrderEventDetail(event) }}</p></li></ol><p v-else-if="!timelineLoading && !timelineError" class="muted-copy">{{ $tx('No records yet.') }}</p></section>
         <AgentIntakesPanel v-if="legacyIntakeId" :key="legacyIntakeId" :initial-record-id="legacyIntakeId" legacy-only @closed="closeLegacyIntake" />
         <AgentTimeline :events="detail.events" :scope="{ intakeId: detail.order.id }" />

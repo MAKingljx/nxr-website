@@ -81,7 +81,7 @@ public class MerchantBatchService {
     }
 
     public BatchCreateResult createBatch(long merchantCustomerId, BatchCreateRequest request) {
-        return createBatch(merchantCustomerId, request, false);
+        return createBatch(merchantCustomerId, request, false, false);
     }
 
     /** Internal composition entry: inventory linkage and batch creation must commit together. */
@@ -90,10 +90,11 @@ public class MerchantBatchService {
         if (!org.springframework.transaction.support.TransactionSynchronizationManager.isActualTransactionActive()) {
             throw new IllegalStateException("An active transaction is required for agent batch creation");
         }
-        return createBatch(merchantCustomerId, request, true);
+        return createBatch(merchantCustomerId, request, true, true);
     }
 
-    private BatchCreateResult createBatch(long merchantCustomerId, BatchCreateRequest request, boolean joinTransaction) {
+    private BatchCreateResult createBatch(long merchantCustomerId, BatchCreateRequest request,
+                                          boolean joinTransaction, boolean preserveIntakeLinks) {
         orderFulfillmentService.requireMerchant(merchantCustomerId);
         List<BatchOrderRequest> rows = request == null || request.orders() == null ? List.of() : request.orders();
         if (rows.isEmpty() || rows.size() > 200) {
@@ -102,9 +103,9 @@ public class MerchantBatchService {
         Set<String> references = new java.util.HashSet<>();
         List<CommercePolicyService.BatchPartRequest> quoteParts = new ArrayList<>();
         BatchRoute batchRoute = null;
-        for (BatchOrderRequest row : rows) {
-            String reference = requireText(row == null ? null : row.clientReference(), "Client reference", 64)
-                .toUpperCase(Locale.ROOT);
+        for (int index = 0; index < rows.size(); index += 1) {
+            BatchOrderRequest row = rows.get(index);
+            String reference = quoteKey(row, index);
             if (!references.add(reference)) {
                 throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Client references must be unique within a merchant batch");
             }
@@ -136,9 +137,11 @@ public class MerchantBatchService {
         }
         String resolvedBatchName = batchName;
         BatchCreateResult result = joinTransaction ? createBatchAtomically(
-            merchantCustomerId, rows, batchQuote, allocations, batchNo, sourceName, resolvedBatchName, request
+            merchantCustomerId, rows, batchQuote, allocations, batchNo, sourceName, resolvedBatchName, request,
+            preserveIntakeLinks
         ) : batchTransaction.execute(status -> createBatchAtomically(
-            merchantCustomerId, rows, batchQuote, allocations, batchNo, sourceName, resolvedBatchName, request
+            merchantCustomerId, rows, batchQuote, allocations, batchNo, sourceName, resolvedBatchName, request,
+            preserveIntakeLinks
         ));
         if (result == null) {
             throw new IllegalStateException("Merchant batch transaction returned no result");
@@ -154,7 +157,8 @@ public class MerchantBatchService {
         String batchNo,
         String sourceName,
         String batchName,
-        BatchCreateRequest request
+        BatchCreateRequest request,
+        boolean preserveIntakeLinks
     ) {
         if (orderAdmissionService == null) {
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"Order admission configuration is not installed");
@@ -181,22 +185,27 @@ public class MerchantBatchService {
 
         List<BatchCreateRow> results = new ArrayList<>();
         int rowNo = 1;
-        for (BatchOrderRequest row : rows) {
-            String clientReference = requireText(row.clientReference(), "Client reference", 64);
-            CommercePolicyService.AllocatedBatchQuote allocation = allocations.get(
-                clientReference.toUpperCase(Locale.ROOT)
-            );
+        for (int index = 0; index < rows.size(); index += 1) {
+            BatchOrderRequest row = rows.get(index);
+            String quoteReference = quoteKey(row, index);
+            CommercePolicyService.AllocatedBatchQuote allocation = allocations.get(quoteReference);
             if (allocation == null) {
                 throw new IllegalStateException("Batch quote allocation is missing");
             }
             CustomerPortalService.OrderDetailResponse order = customerPortalService.createOrderWithBatchQuote(
                 merchantCustomerId, row.order(), batchQuote.aggregate(), allocation
             );
-            long batchItemId = insertBatchItem(batchId, order.id(), rowNo, clientReference, row);
+            // The platform order number is the single customer-facing reference for a batch row.
+            // clientReference stays an internal quote-allocation key only.
+            String unifiedReference = order.orderNo();
+            long batchItemId = insertBatchItem(
+                batchId, order.id(), rowNo, unifiedReference, row,
+                preserveIntakeLinks ? row.sourceIntakeNo() : null
+            );
             orderAdmissionService.recordMerchantSubmissionTerms(order.id(),merchantCustomerId,terms);
             TrackingToken token = issueToken(batchItemId);
             results.add(new BatchCreateRow(
-                rowNo, "accepted", order.id(), order.orderNo(), clientReference,
+                rowNo, "accepted", order.id(), order.orderNo(), unifiedReference,
                 token.rawToken(), trackingUrl(token.rawToken()), null
             ));
             rowNo += 1;
@@ -276,6 +285,57 @@ public class MerchantBatchService {
         return new TrackingTokenResponse(orderNo, issued.rawToken(), trackingUrl(issued.rawToken()));
     }
 
+    /** Staff-facing view of the currently active link without rotating the token. */
+    public TrackingLinkView trackingLinkView(long batchId, String orderNo) {
+        BatchRow batch = findBatchById(batchId, false);
+        return trackingLinkView(batch.merchantCustomerId(), batch.batchNo(), orderNo);
+    }
+
+    private TrackingLinkView trackingLinkView(long merchantCustomerId, String batchNo, String orderNo) {
+        String normalizedOrderNo = requireText(orderNo, "Order number", 64).toUpperCase(Locale.ROOT);
+        LinkRow row = jdbcClient.sql("""
+                SELECT o.order_no, t.token_value
+                FROM merchant_batch_tracking_token t
+                JOIN merchant_order_batch_item bi ON bi.id = t.batch_item_id
+                JOIN merchant_order_batch b ON b.id = bi.batch_id
+                JOIN grading_order o ON o.id = bi.order_id
+                WHERE b.merchant_customer_id = :customerId AND UPPER(b.batch_no) = UPPER(:batchNo)
+                  AND UPPER(o.order_no) = :orderNo AND t.status_code = 'active' AND t.revoked_at IS NULL
+                ORDER BY t.id DESC LIMIT 1
+                """).param("customerId", merchantCustomerId).param("batchNo", batchNo)
+            .param("orderNo", normalizedOrderNo)
+            .query((rs, n) -> new LinkRow(rs.getString("order_no"), rs.getString("token_value")))
+            .optional()
+            .orElse(null);
+        if (row == null) {
+            return new TrackingLinkView(normalizedOrderNo, false, false, null);
+        }
+        if (row.tokenValue() == null || row.tokenValue().isBlank()) {
+            return new TrackingLinkView(row.orderNo(), false, true, null);
+        }
+        return new TrackingLinkView(row.orderNo(), true, false, trackingUrl(row.tokenValue()));
+    }
+
+    private record LinkRow(String orderNo, String tokenValue) {
+    }
+
+    public record TrackingLinkView(String orderNo, boolean viewable, boolean legacy, String trackingUrl) {
+    }
+
+    /** Staff-facing link regeneration; the caller has already verified batch access. */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public TrackingTokenResponse rotateTrackingTokenForStaff(long batchId, String orderNo) {
+        BatchRow batch = findBatchById(batchId, false);
+        return rotateTrackingToken(batch.merchantCustomerId(), batch.batchNo(), orderNo);
+    }
+
+    /** Staff-facing link revocation; the caller has already verified batch access. */
+    @Transactional(isolation = Isolation.READ_COMMITTED)
+    public void revokeTrackingTokenForStaff(long batchId, String orderNo) {
+        BatchRow batch = findBatchById(batchId, false);
+        revokeTrackingToken(batch.merchantCustomerId(), batch.batchNo(), orderNo);
+    }
+
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public void revokeTrackingToken(long merchantCustomerId, String batchNo, String orderNo) {
         BatchItemRow item = lockOwnedBatchItem(merchantCustomerId, batchNo, orderNo);
@@ -283,21 +343,35 @@ public class MerchantBatchService {
     }
 
     public PublicTrackingResponse publicTracking(String rawToken) {
+        return publicTrackingForOrder(resolveTrackingOrder(rawToken));
+    }
+
+    public long resolveTrackingOrder(String rawToken) {
         String tokenHash = hashToken(requireText(rawToken, "Tracking token", 256));
+        return jdbcClient.sql("""
+            SELECT o.id FROM merchant_batch_tracking_token t
+            JOIN merchant_order_batch_item bi ON bi.id=t.batch_item_id
+            JOIN merchant_order_batch b ON b.id=bi.batch_id
+            JOIN grading_order o ON o.id=bi.order_id AND o.customer_id=b.merchant_customer_id
+            WHERE t.token_hash=:hash AND t.status_code='active' AND t.revoked_at IS NULL
+            """).param("hash",tokenHash).query(Long.class).optional()
+            .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Private tracking link is invalid or revoked"));
+    }
+
+    public PublicTrackingResponse publicTrackingForOrder(long orderId) {
         PublicOrder row = jdbcClient.sql(
                 """
                 SELECT bi.id AS batch_item_id, bi.client_reference, o.id AS order_id, o.order_no,
-                """+MerchantOrderPolicy.visibleStatusSql("o")+"""
+                """+MerchantOrderPolicy.visibleBatchStatusSql("o", "b")+"""
                        AS status_code, o.admission_status_code, o.total_card_count, o.created_at, o.updated_at,
                        b.id AS batch_id
-                FROM merchant_batch_tracking_token t
-                JOIN merchant_order_batch_item bi ON bi.id = t.batch_item_id
+                FROM merchant_order_batch_item bi
                 JOIN merchant_order_batch b ON b.id = bi.batch_id
                 JOIN grading_order o ON o.id = bi.order_id AND o.customer_id = b.merchant_customer_id
-                WHERE t.token_hash = :tokenHash AND t.status_code = 'active' AND t.revoked_at IS NULL
+                WHERE o.id = :orderId
                 """
             )
-            .param("tokenHash", tokenHash)
+            .param("orderId", orderId)
             .query((rs, rowNum) -> new PublicOrder(
                 rs.getLong("batch_item_id"), rs.getString("client_reference"), rs.getLong("order_id"),
                 rs.getString("order_no"), rs.getString("status_code"), rs.getString("admission_status_code"),
@@ -388,6 +462,17 @@ public class MerchantBatchService {
     public BatchPage listAdminBatches(
         int page, int pageSize, String status, String query, OrderAccessScopeService.AccessScope scope
     ) {
+        return listAdminBatches(page, pageSize, status, query, scope, false);
+    }
+
+    public boolean isAgentSubmission(long batchId) {
+        return jdbcClient.sql("SELECT COUNT(*) FROM agent_submission s JOIN merchant_order_batch b ON b.id=s.batch_id AND b.merchant_customer_id=s.merchant_customer_id WHERE b.id=:id")
+            .param("id",batchId).query(Integer.class).single() > 0;
+    }
+
+    public BatchPage listAdminBatches(
+        int page, int pageSize, String status, String query, OrderAccessScopeService.AccessScope scope, boolean agentOnly
+    ) {
         int safePage = Math.max(1, page);
         int safeSize = Math.min(100, Math.max(1, pageSize));
         String normalizedStatus = blankToNull(clean(status, 32));
@@ -422,7 +507,7 @@ public class MerchantBatchService {
                           OR io.work_center_id NOT IN (:centerIds))
                     )
                   ))
-                """
+                """ + (agentOnly ? " AND EXISTS (SELECT 1 FROM agent_submission s WHERE s.batch_id=b.id AND s.merchant_customer_id=b.merchant_customer_id) " : "")
             )
             .param("status", normalizedStatus)
             .param("query", like)
@@ -456,6 +541,7 @@ public class MerchantBatchService {
                           OR io.work_center_id NOT IN (:centerIds))
                     )
                   ))
+                """ + (agentOnly ? " AND EXISTS (SELECT 1 FROM agent_submission s WHERE s.batch_id=b.id AND s.merchant_customer_id=b.merchant_customer_id) " : "") + """
                 ORDER BY b.created_at DESC, b.id DESC LIMIT :limit OFFSET :offset
                 """
             )
@@ -557,24 +643,35 @@ public class MerchantBatchService {
             enqueueBatchStatus(orders, "delivered", "The agent's return master parcel has been delivered.");
         } else if ("inbound".equals(shipment.directionCode()) && "inbound_shipped".equals(batch.statusCode())) {
             updateBatchStatus(batch.id(), "received");
+            addChildTimeline(batch.id(), "batch_inbound_received", "NXR received the agent parcel",
+                "NXR has received the agent's master parcel.", "received");
         }
         return loadDetail(findBatchById(batch.id(), false));
     }
 
+    /** Internal quote-allocation key only; the stored customer-facing reference is the order number. */
+    private static String quoteKey(BatchOrderRequest row, int index) {
+        String reference = row == null ? null : row.clientReference();
+        String cleaned = reference == null ? "" : reference.trim();
+        return cleaned.isEmpty() ? "ROW-" + (index + 1) : cleaned.toUpperCase(Locale.ROOT);
+    }
+
     private long insertBatchItem(
-        long batchId, long orderId, int rowNo, String clientReference, BatchOrderRequest row
+        long batchId, long orderId, int rowNo, String clientReference, BatchOrderRequest row,
+        String intakeNo
     ) {
         jdbcClient.sql(
                 """
                 INSERT INTO merchant_order_batch_item
-                    (batch_id, order_id, row_no, client_reference, client_display_name, client_contact_hint)
-                VALUES (:batchId, :orderId, :rowNo, :reference, :displayName, :contactHint)
+                    (batch_id, order_id, row_no, client_reference, intake_no, client_display_name, client_contact_hint)
+                VALUES (:batchId, :orderId, :rowNo, :reference, :intakeNo, :displayName, :contactHint)
                 """
             )
             .param("batchId", batchId)
             .param("orderId", orderId)
             .param("rowNo", rowNo)
             .param("reference", clientReference)
+            .param("intakeNo", blankToNull(clean(intakeNo, 64)))
             .param("displayName", blankToNull(clean(row.clientDisplayName(), 128)))
             .param("contactHint", blankToNull(clean(row.clientContactHint(), 191)))
             .update();
@@ -590,12 +687,13 @@ public class MerchantBatchService {
             String raw = newRawToken();
             try {
                 jdbcClient.sql(
-                        "INSERT INTO merchant_batch_tracking_token (batch_item_id, token_hash, token_hint, status_code) "
-                            + "VALUES (:itemId, :hash, :hint, 'active')"
+                        "INSERT INTO merchant_batch_tracking_token (batch_item_id, token_hash, token_hint, token_value, status_code) "
+                            + "VALUES (:itemId, :hash, :hint, :tokenValue, 'active')"
                     )
                     .param("itemId", batchItemId)
                     .param("hash", hashToken(raw))
                     .param("hint", raw.substring(0, Math.min(10, raw.length())))
+                    .param("tokenValue", raw)
                     .update();
                 return new TrackingToken(raw);
             } catch (org.springframework.dao.DataIntegrityViolationException exception) {
@@ -672,9 +770,9 @@ public class MerchantBatchService {
     private BatchDetail loadDetail(BatchRow batch) {
         List<BatchOrderItem> orders = jdbcClient.sql(
                 """
-                SELECT bi.id, bi.row_no, bi.client_reference, bi.client_display_name, bi.client_contact_hint,
+                SELECT bi.id, bi.row_no, bi.client_reference, bi.intake_no, bi.client_display_name, bi.client_contact_hint,
                        o.id AS order_id, o.order_no,
-                """+MerchantOrderPolicy.visibleStatusSql("o")+"""
+                """+MerchantOrderPolicy.visibleBatchStatusSql("o", "b")+"""
                        AS status_code, o.admission_status_code, o.total_card_count,
                        (SELECT token_hint FROM merchant_batch_tracking_token t
                         WHERE t.batch_item_id = bi.id AND t.status_code = 'active' AND t.revoked_at IS NULL
@@ -690,7 +788,7 @@ public class MerchantBatchService {
                 rs.getLong("id"), rs.getInt("row_no"), rs.getLong("order_id"), rs.getString("order_no"),
                 rs.getString("client_reference"), rs.getString("client_display_name"), rs.getString("client_contact_hint"),
                 rs.getString("status_code"), rs.getString("admission_status_code"),
-                rs.getInt("total_card_count"), rs.getString("token_hint")
+                rs.getInt("total_card_count"), rs.getString("token_hint"), rs.getString("intake_no")
             ))
             .list();
         List<BatchShipment> shipments = jdbcClient.sql(
@@ -975,8 +1073,14 @@ public class MerchantBatchService {
         String clientReference,
         String clientDisplayName,
         String clientContactHint,
-        CustomerPortalService.CreateOrderRequest order
+        CustomerPortalService.CreateOrderRequest order,
+        String sourceIntakeNo
     ) {
+        /** Merchant/customer batch rows have no agent intake link. */
+        public BatchOrderRequest(String clientReference, String clientDisplayName,
+                                 String clientContactHint, CustomerPortalService.CreateOrderRequest order) {
+            this(clientReference, clientDisplayName, clientContactHint, order, null);
+        }
     }
 
     public record BatchCreateRow(
@@ -1002,8 +1106,12 @@ public class MerchantBatchService {
     public record BatchOrderItem(
         long batchItemId, int rowNo, long orderId, String orderNo, String clientReference,
         String clientDisplayName, String clientContactHint, String statusCode, String admissionStatus,
-        int totalCardCount, String trackingTokenHint
+        int totalCardCount, String trackingTokenHint, String intakeNo, Long workbenchOrderId
     ) {
+        public BatchOrderItem(long batchItemId,int rowNo,long orderId,String orderNo,String clientReference,String clientDisplayName,String clientContactHint,String statusCode,String admissionStatus,int totalCardCount,String trackingTokenHint,String intakeNo) {
+            this(batchItemId,rowNo,orderId,orderNo,clientReference,clientDisplayName,clientContactHint,statusCode,admissionStatus,totalCardCount,trackingTokenHint,intakeNo,null);
+        }
+        public BatchOrderItem withWorkbenchOrderId(Long id) {return new BatchOrderItem(batchItemId,rowNo,orderId,orderNo,clientReference,clientDisplayName,clientContactHint,statusCode,admissionStatus,totalCardCount,trackingTokenHint,intakeNo,id);}
     }
 
     public record BatchShipment(
@@ -1017,6 +1125,7 @@ public class MerchantBatchService {
         int totalRows, int acceptedRows, int rejectedRows, LocalDateTime createdAt, LocalDateTime updatedAt,
         List<BatchOrderItem> orders, List<BatchShipment> shipments
     ) {
+        public BatchDetail withOrders(List<BatchOrderItem> value){return new BatchDetail(id,batchNo,batchName,sourceName,statusCode,totalRows,acceptedRows,rejectedRows,createdAt,updatedAt,value,shipments);}
     }
 
     public record TrackingTokenResponse(String orderNo, String trackingToken, String trackingUrl) {
@@ -1040,11 +1149,18 @@ public class MerchantBatchService {
         String orderNo, String clientReference, String statusCode, String admissionStatus, int totalCardCount,
         LocalDateTime createdAt, LocalDateTime updatedAt,
         List<PublicTimelineEvent> timeline, List<PublicShipment> shipments,
-        List<PartnerReturnService.PublicParcel> returnParcels
+        List<PartnerReturnService.PublicParcel> returnParcels, List<AgentOrderTrackingService.Card> cards
     ) {
         public PublicTrackingResponse(String orderNo,String clientReference,String statusCode,String admissionStatus,int totalCardCount,
+            LocalDateTime createdAt,LocalDateTime updatedAt,List<PublicTimelineEvent> timeline,List<PublicShipment> shipments,List<PartnerReturnService.PublicParcel> returnParcels) {
+            this(orderNo,clientReference,statusCode,admissionStatus,totalCardCount,createdAt,updatedAt,timeline,shipments,returnParcels,List.of());
+        }
+        public PublicTrackingResponse withCards(List<AgentOrderTrackingService.Card> value) {
+            return new PublicTrackingResponse(orderNo,clientReference,statusCode,admissionStatus,totalCardCount,createdAt,updatedAt,timeline,shipments,returnParcels,value);
+        }
+        public PublicTrackingResponse(String orderNo,String clientReference,String statusCode,String admissionStatus,int totalCardCount,
             LocalDateTime createdAt,LocalDateTime updatedAt,List<PublicTimelineEvent> timeline,List<PublicShipment> shipments) {
-            this(orderNo,clientReference,statusCode,admissionStatus,totalCardCount,createdAt,updatedAt,timeline,shipments,List.of());
+            this(orderNo,clientReference,statusCode,admissionStatus,totalCardCount,createdAt,updatedAt,timeline,shipments,List.of(),List.of());
         }
     }
 }

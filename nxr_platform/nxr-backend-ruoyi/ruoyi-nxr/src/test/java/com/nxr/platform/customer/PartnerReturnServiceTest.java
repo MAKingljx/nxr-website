@@ -50,15 +50,59 @@ class PartnerReturnServiceTest {
         assertThat(service.partnerParcels(2,1,20,null,null,null).total()).isZero();
         assertThatThrownBy(()->service.partnerDetail(2,parcel.id())).isInstanceOf(ResponseStatusException.class);
     }
-    @Test void rejectsUnfinishedMissingPhotosAndUnverifiedCardsWithoutWrites(){
-        assertThatThrownBy(()->create(List.of(1001L),"unchecked")).hasMessageContaining("quality and packing");
-        jdbc.update("DELETE FROM submission_media WHERE submission_id=101 AND media_side_code='back'");assertThatThrownBy(()->check(1001)).hasMessageContaining("Front and back");
-        jdbc.update("UPDATE grading_submission SET status_code='pending' WHERE id=102");assertThatThrownBy(()->check(1002)).hasMessageContaining("grading must be approved");
+    @Test void rejectsMissingPhotosAndUnapprovedCardsWithoutWrites(){
+        jdbc.update("DELETE FROM submission_media WHERE submission_id=101 AND media_side_code='back'");assertThatThrownBy(()->create(List.of(1001L),"missing")).hasMessageContaining("Front and back");
+        jdbc.update("UPDATE grading_submission SET status_code='pending' WHERE id=102");assertThatThrownBy(()->create(List.of(1002L),"unapproved")).hasMessageContaining("grading must be approved");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM partner_return_parcel",Integer.class)).isZero();assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM partner_return_card_check",Integer.class)).isZero();
     }
-    @Test void changedScoreOrImageInvalidatesCheck(){
-        check(1001);jdbc.update("UPDATE grading_score SET final_grade_value=7 WHERE submission_id=101");assertThatThrownBy(()->create(List.of(1001L),"changed")).hasMessageContaining("quality and packing");
-        check(1001);jdbc.update("UPDATE submission_media SET checksum_sha256='changed' WHERE submission_id=101 AND media_side_code='front'");assertThatThrownBy(()->create(List.of(1001L),"changed-image")).hasMessageContaining("quality and packing");
+    @Test void partnerCardReturnPreservesUnfinishedTasksWithoutMakingThemAReleaseGate(){
+        jdbc.update("INSERT INTO order_work_task(order_id,order_item_id,task_type_code,status_code,attempt_count) VALUES(10,1001,'preprocess','pending',0),(10,1001,'encapsulation','failed',1),(10,NULL,'manual_review','in_progress',0)");
+        assertThat(jdbc.queryForObject("SELECT status_code FROM grading_order WHERE id=10",String.class)).isEqualTo("grading");
+        assertThat(check(1001).eligible()).isTrue();
+        assertThat(create(List.of(1001L),"pending-tasks").cardCount()).isEqualTo(1);
+        assertThat(jdbc.queryForList("SELECT status_code FROM order_work_task WHERE order_id=10 ORDER BY id",String.class)).containsExactly("pending","failed","in_progress");
+    }
+    @Test void explicitQualityHoldStillBlocksPartnerCardChecksWithoutWrites(){
+        jdbc.update("UPDATE grading_order SET status_code='quality_hold' WHERE id=10");
+        assertThatThrownBy(()->check(1001)).hasMessageContaining("not ready for return");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM partner_return_card_check",Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM partner_return_parcel",Integer.class)).isZero();
+    }
+    @Test void incompleteCustodyOrNonMerchantCannotUseScanFreeRelease(){
+        jdbc.update("UPDATE agent_card SET order_item_id=NULL WHERE id=2");
+        assertThatThrownBy(()->create(List.of(1001L),"partial-binding")).hasMessageContaining("quality and packing");
+        jdbc.update("UPDATE agent_card SET order_item_id=1002 WHERE id=2");
+        jdbc.update("UPDATE customer_account SET account_type_code='customer' WHERE id=1");
+        assertThatThrownBy(()->create(List.of(1001L),"not-partner")).hasMessageContaining("quality and packing");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM partner_return_item",Integer.class)).isZero();
+    }
+    @Test void selectedCardsCanShipWithoutScansOrArtificialChecksAndKeepSnapshot(){
+        jdbc.update("UPDATE grading_order SET workbench_required=1 WHERE id=10");
+        assertThat(service.cards(1,1,20,null,10L,null,null).items().get(0).eligible()).isTrue();
+        ParcelDetail first=create(List.of(1001L),"no-scan");
+        assertThat(first.items()).extracting(ParcelItem::orderItemId).containsExactly(1001L);
+        assertThat(jdbc.queryForObject("SELECT check_id FROM partner_return_item WHERE order_item_id=1001",Long.class)).isNull();
+        assertThat(jdbc.queryForObject("SELECT content_fingerprint FROM partner_return_item WHERE order_item_id=1001",String.class)).hasSize(64);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM order_workbench_scan",Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM partner_return_card_check",Integer.class)).isZero();
+        tx.execute(s->service.partnerDelivered(1,first.id()));
+        assertThat(jdbc.queryForObject("SELECT status_code FROM agent_card WHERE id=1",String.class)).isEqualTo("returned");
+        assertThat(jdbc.queryForObject("SELECT status_code FROM agent_card WHERE id=2",String.class)).isEqualTo("submitted");
+        assertThat(create(List.of(1002L),"second-unsent").cardCount()).isEqualTo(1);
+    }
+    @Test void verifiedPartnerOrderCanBeReceivedWithoutIndividualScansButOtherOrdersCannot(){
+        var fulfillment=new OrderFulfillmentService(JdbcClient.create(jdbc),jdbc,null,workbench);
+        org.springframework.test.util.ReflectionTestUtils.setField(fulfillment,"partnerReturnService",service);
+        jdbc.update("UPDATE grading_order SET status_code='awaiting_inbound',workbench_required=1 WHERE id=10");
+        jdbc.update("UPDATE agent_card SET order_item_id=NULL WHERE id=2");
+        assertThatThrownBy(()->tx.execute(s->fulfillment.receiveOrder(10,1,new OrderFulfillmentService.ReceiveOrderRequest(null,"PACKAGE",2,"",List.of())))).hasMessageContaining("Intake code");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM order_intake_receipt WHERE order_id=10",Integer.class)).isZero();
+        jdbc.update("UPDATE agent_card SET order_item_id=1002 WHERE id=2");
+        tx.execute(s->fulfillment.receiveOrder(10,1,new OrderFulfillmentService.ReceiveOrderRequest(null,"PACKAGE",2,"",List.of())));
+        tx.execute(s->fulfillment.receiveOrder(10,1,new OrderFulfillmentService.ReceiveOrderRequest(null,"PACKAGE",2,"",List.of())));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM order_intake_receipt WHERE order_id=10",Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT status_code FROM grading_order WHERE id=10",String.class)).isEqualTo("received");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM order_workbench_scan",Integer.class)).isZero();
     }
     @Test void businessReturnDoesNotRequirePaymentButRetainsTermsAndLegacyShippingGates(){
         jdbc.update("UPDATE payment_record SET status_code='pending' WHERE order_id=10");assertThat(check(1001).eligible()).isTrue();
@@ -181,6 +225,26 @@ class PartnerReturnServiceTest {
         assertThat(portal.requireAdminOrder(10).merchantBatch().clientReference()).isEqualTo("NXR-1");
         jdbc.update("UPDATE merchant_order_batch SET merchant_customer_id=2 WHERE id=1");
         assertThat(portal.requireAdminOrder(10).merchantBatch()).isNull();
+    }
+    @Test void orderDetailExposesPartnerCardPathOnlyWhenEveryCardHasExactlyMatchingCustody(){
+        var portal=new CustomerPortalService(JdbcClient.create(jdbc),jdbc);
+        portal.setPartnerReturnService(service);
+        assertThat(portal.requireAdminOrder(10).partnerCardReturnEligible()).isTrue();
+        assertThat(portal.requireAdminOrder(20).partnerCardReturnEligible()).isTrue();
+        jdbc.update("UPDATE agent_card SET order_item_id=NULL WHERE order_item_id=1002");
+        assertThat(portal.requireAdminOrder(10).partnerCardReturnEligible()).isFalse();
+        jdbc.update("UPDATE agent_card SET order_item_id=NULL WHERE order_item_id=1001");
+        assertThat(portal.requireAdminOrder(10).orderChannel()).isEqualTo("partner");
+        assertThat(portal.requireAdminOrder(10).partnerCardReturnEligible()).isFalse();
+        jdbc.update("UPDATE agent_card SET order_item_id=1001 WHERE id=1");
+        jdbc.update("UPDATE agent_card SET order_item_id=1002 WHERE id=2");
+        jdbc.update("UPDATE agent_intake SET merchant_customer_id=2 WHERE id=1");
+        assertThat(portal.requireAdminOrder(10).partnerCardReturnEligible()).isFalse();
+        jdbc.update("UPDATE agent_intake SET merchant_customer_id=1 WHERE id=1");
+        jdbc.update("UPDATE merchant_order_batch SET merchant_customer_id=2 WHERE id=1");
+        assertThat(portal.requireAdminOrder(10).partnerCardReturnEligible()).isFalse();
+        jdbc.update("DELETE FROM grading_order_item WHERE order_id=10");
+        assertThat(service.supportsWholeOrder(10)).isFalse();
     }
     @Test void concurrentDoubleShippingCommitsOnlyOneParcel()throws Exception {
         check(1001);ExecutorService pool=Executors.newFixedThreadPool(2);CountDownLatch start=new CountDownLatch(1);

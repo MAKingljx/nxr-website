@@ -66,6 +66,12 @@ public class AgentWorkbenchController {
     @PostMapping("/intakes/{id}/receive")
     public IntakeDetail receive(@RequestHeader(name=TOKEN,required=false) Long token,@PathVariable long id,
         @RequestBody(required=false) NoteRequest request) { return service.receive(owner(token),id,request); }
+    @PostMapping("/intakes/{id}/receive-order")
+    public IntakeDetail receiveOrder(@RequestHeader(name=TOKEN,required=false) Long token,@PathVariable long id,
+        @RequestBody ReceiveOrderRequest request) { return service.receiveOrder(owner(token),id,request); }
+    @PostMapping("/intakes/{id}/return-received")
+    public IntakeDetail receiveReturnedOrder(@RequestHeader(name=TOKEN,required=false) Long token,@PathVariable long id,
+        @RequestBody(required=false) NoteRequest request) { return service.receiveReturnedOrder(owner(token),id,request); }
     @PostMapping("/intakes/{id}/check-in")
     public IntakeDetail checkIn(@RequestHeader(name=TOKEN,required=false) Long token,@PathVariable long id,@RequestBody CheckInRequest request) {
         return service.checkIn(owner(token),id,request);

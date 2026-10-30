@@ -56,6 +56,18 @@ public final class MerchantOrderPolicy {
         return "CASE WHEN "+isBatchOrderSql(alias)+" THEN "+effectiveStatusSql(alias)+" ELSE "+alias+".status_code END";
     }
 
+    /**
+     * A delivered master inbound parcel is visible to the B-side customer as received,
+     * while the underlying child order stays inbound_shipped until warehouse intake is
+     * explicitly confirmed by NXR staff.
+     */
+    public static String visibleBatchStatusSql(String orderAlias, String batchAlias) {
+        validateAlias(orderAlias);
+        validateAlias(batchAlias);
+        return "CASE WHEN "+batchAlias+".status_code='received' AND "+orderAlias+".status_code='inbound_shipped'"
+            +" THEN 'received' ELSE "+visibleStatusSql(orderAlias)+" END";
+    }
+
     private static void validateAlias(String alias) {
         if(alias==null || !alias.matches("[a-z][a-z0-9_]*"))throw new IllegalArgumentException("Invalid internal SQL alias");
     }

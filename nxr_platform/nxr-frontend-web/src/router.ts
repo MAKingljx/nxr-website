@@ -3,7 +3,8 @@ import { createRouter, createWebHistory } from 'vue-router'
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
-    { path: "/track/:token", name: "private-order-tracking", component: () => import("./views/WebPrivateOrderTrackingView.vue"), props: true },
+    { path: '/track', name: 'private-order-tracking', component: () => import('./views/WebPrivateOrderTrackingView.vue'), props: route => ({ token: /^#[A-Za-z0-9_-]{43}$/.test(route.hash) ? route.hash.slice(1) : '' }) },
+    { path: '/track/:token', name: 'legacy-private-order-tracking', component: () => import('./views/WebPrivateOrderTrackingView.vue'), props: true },
     { path: '/', component: () => import('./views/WebHomeView.vue') },
     { path: '/services', component: () => import('./views/WebServicesView.vue') },
     { path: '/submit', component: () => import('./views/WebSubmitView.vue') },

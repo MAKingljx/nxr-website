@@ -41,6 +41,26 @@ public class AdminOrderAdmissionController {
         return AjaxResult.success(service.decide(orderId, SecurityUtils.getUserId(), request));
     }
 
+    @PreAuthorize("@ss.hasAnyPermi('nxr:order:admission,nxr:order:manage')")
+    @GetMapping("/partner-submits/{batchId}")
+    public AjaxResult partnerSubmit(@PathVariable long batchId) {
+        long userId = SecurityUtils.getUserId();
+        var result = service.requirePartnerSubmitAdmission(batchId, id -> accessScope.requireAccessibleOrder(userId, id));
+        if (!result.eligible() && !(SecurityUtils.hasPermi("nxr:order:manage") || SecurityUtils.hasPermi("nxr:order:warehouse")
+            || SecurityUtils.hasPermi("nxr:order:shipping") || SecurityUtils.hasPermi("nxr:order:batch"))) {
+            throw new org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND, "Partner submission not found");
+        }
+        return AjaxResult.success(result);
+    }
+
+    @PreAuthorize("@ss.hasAnyPermi('nxr:order:admission,nxr:order:manage')")
+    @Log(title = "合作伙伴送评受理审核", businessType = BusinessType.UPDATE)
+    @PostMapping("/partner-submits/{batchId}/decision")
+    public AjaxResult decidePartnerSubmit(@PathVariable long batchId, @RequestBody OrderAdmissionService.PartnerSubmitDecision request) {
+        long userId = SecurityUtils.getUserId();
+        return AjaxResult.success(service.decidePartnerSubmit(batchId, userId, request, id -> accessScope.requireAccessibleOrder(userId, id)));
+    }
+
     @PreAuthorize("@ss.hasAnyPermi('nxr:order:admission,nxr:order:config')")
     @GetMapping("/config")
     public AjaxResult config() {

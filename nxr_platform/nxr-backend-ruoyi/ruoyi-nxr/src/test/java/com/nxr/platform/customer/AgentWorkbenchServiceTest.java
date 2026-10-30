@@ -17,6 +17,8 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.imageio.ImageIO;
@@ -136,6 +138,226 @@ class AgentWorkbenchServiceTest {
             .containsExactly("graded_card","vintage_product");
     }
 
+    @Test void legacyIntakeCanBeReceivedAsAnOrderWithoutInventingCardScans() {
+        var intake=createIntake(1,createClient(1,"ORDER-RECEIPT").id(),2,"order-receipt");
+        long id=intake.intake().id(); long events=count("agent_event");
+        assertThatThrownBy(()->tx.execute(s->service.receiveOrder(1,id,new ReceiveOrderRequest(1,"",false)))).hasMessageContaining("count");
+        assertThat(count("agent_event")).isEqualTo(events);
+        var received=tx.execute(s->service.receiveOrder(1,id,new ReceiveOrderRequest(2,"Parcel received",false)));
+        assertThat(received.intake().statusCode()).isEqualTo("ready");
+        assertThat(received.intake().checkedInCardCount()).isEqualTo(2);
+        assertThat(received.cards()).allSatisfy(card->{assertThat(card.statusCode()).isEqualTo("in_stock");assertThat(card.checkedInAt()).isNull();});
+        long after=count("agent_event");
+        tx.execute(s->service.receiveOrder(1,id,new ReceiveOrderRequest(2,"Parcel received",false)));
+        assertThat(count("agent_event")).isEqualTo(after);
+        assertThat(submit(received,"order-receipt-submit").batchId()).isPositive();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM agent_card WHERE intake_id=? AND checked_in_at IS NOT NULL",Integer.class,id)).isZero();
+    }
+
+    @Test void missingOrderReceiptEvidenceCannotReplaceCardCheckIns() {
+        var intake=createIntake(1,createClient(1,"NO-RECEIPT-EVIDENCE").id(),1,"no-receipt-evidence");
+        long id=intake.intake().id();
+        jdbc.update("UPDATE agent_intake SET status_code='ready',received_at=CURRENT_TIMESTAMP WHERE id=?",id);
+        jdbc.update("UPDATE agent_card SET status_code='in_stock' WHERE intake_id=?",id);
+        assertThatThrownBy(()->submit(service.intakeDetail(1,id),"not-accepted")).hasMessageContaining("fully received");
+        assertThat(count("agent_submission")).isZero();
+    }
+    @Test void earlierOrderReceiptEventStillAllowsSubmitWithoutInventingScans() {
+        var intake=createIntake(1,createClient(1,"EARLIER-ORDER-RECEIPT").id(),2,"earlier-order-receipt");
+        long id=intake.intake().id();
+        var received=tx.execute(s->service.receiveOrder(1,id,new ReceiveOrderRequest(2,"Previously received",false)));
+        jdbc.update("UPDATE agent_event SET event_code='intake_received' WHERE intake_id=? AND event_code='intake_order_received'",id);
+        assertThat(submit(received,"previous-order-receipt-submit").batchId()).isPositive();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM agent_card WHERE intake_id=? AND checked_in_at IS NOT NULL",Integer.class,id)).isZero();
+    }
+
+    @Test void customerOrderLinkIsPrivateStableAndVersionedAcrossSubmission() throws Exception {
+        jdbc.execute("CREATE TABLE agent_order_tracking_token(id BIGINT AUTO_INCREMENT PRIMARY KEY,intake_id BIGINT NOT NULL,merchant_customer_id BIGINT NOT NULL,token_hash CHAR(64) UNIQUE,status_code VARCHAR(16),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,revoked_at TIMESTAMP)");
+        jdbc.execute("ALTER TABLE grading_order_item ADD COLUMN product_type VARCHAR(64)");
+        jdbc.execute("ALTER TABLE grading_order_item ADD COLUMN category VARCHAR(64)");
+        var original=createOrder(1,orderRequest(1,"private-customer-order"));
+        var other=createOrder(1,orderRequest(1,"private-other-order"));
+        long id=original.order().id(), card=original.cards().get(0).id(), otherCard=other.cards().get(0).id();
+        var links=new AgentOrderTrackingService(JdbcClient.create(jdbc),batches,photos);
+        org.springframework.test.util.ReflectionTestUtils.setField(links,"publicSiteBaseUrl","http://127.0.0.1:3000");
+        var createRequest=new AgentOrderTrackingService.CreateRequest("http://localhost:3001");
+        String url=tx.execute(s->links.create(1,id,createRequest,"localhost")).trackingUrl();
+        String token=url.substring(url.lastIndexOf('#')+1);
+        var state=links.state(1,id);assertThat(state.active()).isTrue();assertThat(state.legacyActive()).isFalse();
+        assertThatThrownBy(()->tx.execute(s->links.create(1,id,createRequest,"localhost"))).hasMessageContaining("already exists");
+        var before=links.publicView(token).orElseThrow();assertThat(before.orderNo()).isEqualTo(original.order().orderNo());
+        String publicJson=new ObjectMapper().findAndRegisterModules().writeValueAsString(before);
+        assertThat(publicJson).doesNotContain(original.order().phone(),original.order().email(),"Customer road");
+        assertThat(before.cards()).singleElement().satisfies(item->{assertThat(item.id()).isEqualTo(card);assertThat(item.hasFrontPhoto()).isTrue();assertThat(item.hasBackPhoto()).isTrue();});
+        assertThat(links.photo(token,card,"front").exists()).isTrue();
+        assertThatThrownBy(()->links.photo(token,otherCard,"front")).hasMessageContaining("404");
+        assertThatThrownBy(()->links.state(2,id)).hasMessageContaining("404");
+        assertThatThrownBy(()->tx.execute(s->links.replace(1,id,new AgentOrderTrackingService.ExpectedVersion(state.version()+1,"http://localhost:3001"),"localhost"))).hasMessageContaining("changed");
+        assertThatThrownBy(()->tx.execute(s->links.replace(1,id,new AgentOrderTrackingService.ExpectedVersion(state.version(),"http://192.0.2.10:3001"),"localhost"))).hasMessageContaining("not reachable");
+        assertThat(links.publicView(token)).isPresent();
+        var submitted=submit(service.intakeDetail(1,id),"private-submit");
+        assertThat(links.publicView(token).orElseThrow().orderNo()).isEqualTo(original.order().orderNo());
+        assertThat(links.photo(token,card,"back").exists()).isTrue();
+        submit(service.intakeDetail(1,other.order().id()),"other-private-submit");
+        Long otherItem=service.intakeDetail(1,other.order().id()).cards().get(0).orderItemId();
+        var updated=orders.detail(1,id).order();
+        var old=batches.rotateTrackingToken(1,submitted.batchNo(),updated.gradingOrderNo());
+        var batch=links.withWorkbenchOrderIds(1,batches.requireMerchantBatch(1,submitted.batchNo()));
+        assertThat(batch.orders()).singleElement().satisfies(item->assertThat(item.workbenchOrderId()).isEqualTo(id));
+        var legacyCards=links.legacyCards(old.trackingToken());assertThat(legacyCards).hasSize(1);
+        assertThat(links.photo(old.trackingToken(),legacyCards.get(0).id(),"front").exists()).isTrue();
+        assertThatThrownBy(()->links.photo(old.trackingToken(),otherItem,"front")).hasMessageContaining("404");
+        assertThat(links.state(1,id).legacyActive()).isTrue();
+        String replacement=tx.execute(s->links.replace(1,id,new AgentOrderTrackingService.ExpectedVersion(state.version(),"http://localhost:3001"),"localhost")).trackingUrl();
+        assertThat(links.publicView(token)).isEmpty();
+        assertThat(batches.publicTracking(old.trackingToken()).orderNo()).isEqualTo(updated.gradingOrderNo());
+        tx.execute(s->{links.revokeLegacy(1,id);return null;});
+        assertThatThrownBy(()->batches.publicTracking(old.trackingToken())).hasMessageContaining("invalid or revoked");
+        assertThatThrownBy(()->links.photo(old.trackingToken(),legacyCards.get(0).id(),"front")).hasMessageContaining("404");
+        String newToken=replacement.substring(replacement.lastIndexOf('#')+1);assertThat(links.publicView(newToken)).isPresent();
+        var current=links.state(1,id);
+        tx.execute(s->{links.revoke(1,id,new AgentOrderTrackingService.ExpectedVersion(current.version(),null));return null;});
+        assertThat(links.publicView(newToken)).isEmpty();
+        assertThatThrownBy(()->links.photo(newToken,card,"front")).hasMessageContaining("404");
+    }
+
+    @Test void simultaneousLinkCreationDoesNotReplaceTheWinningLink() throws Exception {
+        jdbc.execute("CREATE TABLE agent_order_tracking_token(id BIGINT AUTO_INCREMENT PRIMARY KEY,intake_id BIGINT NOT NULL,merchant_customer_id BIGINT NOT NULL,token_hash CHAR(64) UNIQUE,status_code VARCHAR(16),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,revoked_at TIMESTAMP)");
+        long id=createOrder(1,orderRequest(1,"concurrent-private-link")).order().id();
+        var links=new AgentOrderTrackingService(JdbcClient.create(jdbc),batches,photos);
+        org.springframework.test.util.ReflectionTestUtils.setField(links,"publicSiteBaseUrl","https://nxrgrading.com/x7k9m2q4r8v6c3p1");
+        var request=new AgentOrderTrackingService.CreateRequest("http://localhost:3001");
+        assertThatThrownBy(()->tx.execute(s->links.create(1,id,request,"localhost"))).hasMessageContaining("not configured");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM agent_order_tracking_token",Integer.class)).isZero();
+        org.springframework.test.util.ReflectionTestUtils.setField(links,"publicSiteBaseUrl","https://nxrgrading.com/portal");
+        ExecutorService pool=Executors.newFixedThreadPool(2);CountDownLatch start=new CountDownLatch(1);
+        try {
+            var jobs=java.util.List.of(pool.submit(()->{start.await();try{return tx.execute(s->links.create(1,id,request,"localhost"));}catch(ResponseStatusException e){return null;}}),pool.submit(()->{start.await();try{return tx.execute(s->links.create(1,id,request,"localhost"));}catch(ResponseStatusException e){return null;}}));
+            start.countDown();var one=jobs.get(0).get(10,TimeUnit.SECONDS);var two=jobs.get(1).get(10,TimeUnit.SECONDS);
+            assertThat(java.util.stream.Stream.of(one,two).filter(java.util.Objects::nonNull).count()).isEqualTo(1);
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM agent_order_tracking_token WHERE status_code='active'",Integer.class)).isEqualTo(1);
+        } finally {pool.shutdownNow();}
+    }
+
+    @Test void customerTimelineShowsOrderReceiptWithoutExposingPrivateNotes() throws Exception {
+        jdbc.execute("CREATE TABLE agent_order_tracking_token(id BIGINT AUTO_INCREMENT PRIMARY KEY,intake_id BIGINT NOT NULL,merchant_customer_id BIGINT NOT NULL,token_hash CHAR(64) UNIQUE,status_code VARCHAR(16),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,revoked_at TIMESTAMP)");
+        var intake=createIntake(1,createClient(1,"TIMELINE").id(),1,"timeline-intake");
+        tx.execute(s->service.receiveOrder(1,intake.intake().id(),new ReceiveOrderRequest(1,"private receipt note",false)));
+        var links=new AgentOrderTrackingService(JdbcClient.create(jdbc),batches,photos);
+        var link=tx.execute(s->links.create(1,intake.intake().id(),new AgentOrderTrackingService.CreateRequest("http://localhost:3001"),"localhost"));
+        String token=link.trackingUrl().substring(link.trackingUrl().lastIndexOf('#')+1);
+        var view=links.publicView(token).orElseThrow();
+        assertThat(view.timeline()).extracting(MerchantBatchService.PublicTimelineEvent::title).contains("Intake received");
+        assertThat(new ObjectMapper().findAndRegisterModules().writeValueAsString(view)).doesNotContain("private receipt note");
+    }
+
+    @Test void customerLinksRequireMatchingContactAndAuthorizationForDetailsAndPhotos() throws Exception {
+        jdbc.execute("CREATE TABLE agent_order_tracking_token(id BIGINT AUTO_INCREMENT PRIMARY KEY,intake_id BIGINT NOT NULL,merchant_customer_id BIGINT NOT NULL,token_hash CHAR(64) UNIQUE,status_code VARCHAR(16),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,revoked_at TIMESTAMP)");
+        jdbc.execute("ALTER TABLE grading_order_item ADD COLUMN product_type VARCHAR(64)");
+        jdbc.execute("ALTER TABLE grading_order_item ADD COLUMN category VARCHAR(64)");
+        var original=createOrder(1,orderRequest(1,"verified-customer-order"));
+        var other=createOrder(1,orderRequest(1,"verified-other-order"));
+        var links=new AgentOrderTrackingService(JdbcClient.create(jdbc),batches,photos);
+        String first=tx.execute(s->links.create(1,original.order().id(),new AgentOrderTrackingService.CreateRequest("http://localhost:3001"),"localhost")).trackingUrl().split("#")[1];
+        String second=tx.execute(s->links.create(1,other.order().id(),new AgentOrderTrackingService.CreateRequest("http://localhost:3001"),"localhost")).trackingUrl().split("#")[1];
+        var store=new TestTrackingStore();var access=new TrackingAccessService(JdbcClient.create(jdbc),store);
+        var controller=new MerchantBatchPublicController(batches);
+        org.springframework.test.util.ReflectionTestUtils.setField(controller,"orderTracking",links);
+        org.springframework.test.util.ReflectionTestUtils.setField(controller,"trackingAccess",access);
+        assertThatThrownBy(()->controller.tracking(first,null)).hasMessageContaining("401");
+        assertThatThrownBy(()->controller.photo(original.cards().get(0).id(),"front",first,null)).hasMessageContaining("401");
+        assertThatThrownBy(()->access.verify(new TrackingAccessService.VerifyRequest(first,"wrong@example.test"),"198.51.100.1")).hasMessageContaining("401").hasMessageNotContaining(original.order().email());
+        var proof=access.verify(new TrackingAccessService.VerifyRequest(first,"  "+original.order().email().toUpperCase(java.util.Locale.ROOT)+"  "),"198.51.100.1");
+        assertThat(proof.expiresInSeconds()).isEqualTo(900);
+        assertThat(controller.tracking(first,proof.accessToken()).getBody().cards()).hasSize(1);
+        jdbc.update("UPDATE agent_intake SET client_email_snapshot=? WHERE id=?","  "+original.order().email().toUpperCase(java.util.Locale.ROOT)+" ",original.order().id());
+        assertThat(controller.tracking(first,proof.accessToken()).getBody().cards()).hasSize(1);
+        jdbc.update("UPDATE agent_intake SET client_email_snapshot='changed@example.test' WHERE id=?",original.order().id());
+        assertThatThrownBy(()->controller.tracking(first,proof.accessToken())).hasMessageContaining("401");
+        jdbc.update("UPDATE agent_intake SET client_email_snapshot=? WHERE id=?",original.order().email(),original.order().id());
+        assertThat(controller.photo(original.cards().get(0).id(),"front",first,proof.accessToken()).getHeaders().getCacheControl()).contains("no-store");
+        assertThatThrownBy(()->controller.tracking(second,proof.accessToken())).hasMessageContaining("401");
+        assertThatThrownBy(()->controller.photo(other.cards().get(0).id(),"front",first,proof.accessToken())).hasMessageContaining("404");
+        var submitted=submit(service.intakeDetail(1,original.order().id()),"verified-submit");
+        assertThat(controller.tracking(first,proof.accessToken()).getBody().orderNo()).isEqualTo(original.order().orderNo());
+        var old=batches.rotateTrackingToken(1,submitted.batchNo(),orders.detail(1,original.order().id()).order().gradingOrderNo());
+        assertThatThrownBy(()->controller.tracking(old.trackingToken(),null)).hasMessageContaining("401");
+        Long item=service.intakeDetail(1,original.order().id()).cards().get(0).orderItemId();
+        assertThatThrownBy(()->controller.photo(item,"front",old.trackingToken(),null)).hasMessageContaining("401");
+        var oldProof=access.verify(new TrackingAccessService.VerifyRequest(old.trackingToken(),original.order().phone().replace("155","155\u00a0")),"198.51.100.1");
+        assertThat(controller.tracking(old.trackingToken(),oldProof.accessToken()).getBody().cards()).hasSize(1);
+        jdbc.update("UPDATE agent_intake SET client_phone_snapshot=? WHERE id=?",original.order().phone().replace("155","155 "),original.order().id());
+        assertThat(controller.tracking(old.trackingToken(),oldProof.accessToken()).getBody().cards()).hasSize(1);
+        jdbc.update("UPDATE agent_intake SET client_phone_snapshot='18800000000' WHERE id=?",original.order().id());
+        assertThatThrownBy(()->controller.tracking(old.trackingToken(),oldProof.accessToken())).hasMessageContaining("401");
+        jdbc.update("UPDATE agent_intake SET client_phone_snapshot=? WHERE id=?",original.order().phone(),original.order().id());
+        var state=links.state(1,original.order().id());
+        tx.execute(s->{links.revoke(1,original.order().id(),new AgentOrderTrackingService.ExpectedVersion(state.version(),null));return null;});
+        assertThatThrownBy(()->controller.tracking(first,proof.accessToken())).hasMessageContaining("401");
+        store.proofs.clear();assertThatThrownBy(()->controller.tracking(old.trackingToken(),oldProof.accessToken())).hasMessageContaining("401");
+        var validOldProof=access.verify(new TrackingAccessService.VerifyRequest(old.trackingToken(),original.order().phone()),"198.51.100.1");
+        tx.execute(s->{batches.revokeTrackingToken(1,submitted.batchNo(),orders.detail(1,original.order().id()).order().gradingOrderNo());return null;});
+        assertThatThrownBy(()->controller.tracking(old.trackingToken(),validOldProof.accessToken())).hasMessageContaining("401");
+        store.fail=true;
+        assertThatThrownBy(()->access.verify(new TrackingAccessService.VerifyRequest(second,other.order().email()),"198.51.100.2")).hasMessageContaining("503");
+        store.fail=false;
+        for(int n=0;n<5;n++){try{access.verify(new TrackingAccessService.VerifyRequest(second,"wrong"),"198.51.100.2");}catch(ResponseStatusException ignored){}}
+        assertThatThrownBy(()->access.verify(new TrackingAccessService.VerifyRequest(second,other.order().email()),"198.51.100.2")).hasMessageContaining("429");
+    }
+
+    @Test void customerLinksFailClosedForMissingContactAndCancelledOrders() throws Exception {
+        jdbc.execute("CREATE TABLE agent_order_tracking_token(id BIGINT AUTO_INCREMENT PRIMARY KEY,intake_id BIGINT NOT NULL,merchant_customer_id BIGINT NOT NULL,token_hash CHAR(64) UNIQUE,status_code VARCHAR(16),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,revoked_at TIMESTAMP)");
+        var original=createOrder(1,orderRequest(1,"no-contact-private-order"));
+        var links=new AgentOrderTrackingService(JdbcClient.create(jdbc),batches,photos);
+        String token=tx.execute(s->links.create(1,original.order().id(),new AgentOrderTrackingService.CreateRequest("http://localhost:3001"),"localhost")).trackingUrl().split("#")[1];
+        var access=new TrackingAccessService(JdbcClient.create(jdbc),new TestTrackingStore());
+        var proof=access.verify(new TrackingAccessService.VerifyRequest(token,original.order().email()),"198.51.100.20");
+        jdbc.update("UPDATE agent_intake SET client_email_snapshot=NULL,client_phone_snapshot=NULL WHERE id=?",original.order().id());
+        assertThatThrownBy(()->access.verify(new TrackingAccessService.VerifyRequest(token,original.order().email()),"198.51.100.20")).hasMessageContaining("401");
+        assertThatThrownBy(()->access.requireAccess(token,proof.accessToken())).hasMessageContaining("401");
+        jdbc.update("UPDATE agent_intake SET client_email_snapshot=? WHERE id=?",original.order().email(),original.order().id());
+        var submitted=submit(service.intakeDetail(1,original.order().id()),"cancelled-private-submit");
+        var old=batches.rotateTrackingToken(1,submitted.batchNo(),orders.detail(1,original.order().id()).order().gradingOrderNo());
+        jdbc.update("UPDATE grading_order SET status_code='cancelled' WHERE id=?",orders.detail(1,original.order().id()).order().gradingOrderId());
+        assertThatThrownBy(()->access.verify(new TrackingAccessService.VerifyRequest(token,original.order().email()),"198.51.100.20")).hasMessageContaining("401");
+        assertThatThrownBy(()->access.verify(new TrackingAccessService.VerifyRequest(old.trackingToken(),original.order().email()),"198.51.100.20")).hasMessageContaining("401");
+    }
+
+    @Test void phoneMatchingIgnoresFormattingButNeverUsesSuffixOrAcceptsInvalidCharacters() throws Exception {
+        jdbc.execute("CREATE TABLE agent_order_tracking_token(id BIGINT AUTO_INCREMENT PRIMARY KEY,intake_id BIGINT NOT NULL,merchant_customer_id BIGINT NOT NULL,token_hash CHAR(64) UNIQUE,status_code VARCHAR(16),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,revoked_at TIMESTAMP)");
+        var original=createOrder(1,orderRequest(1,"formatted-phone-order"));
+        jdbc.update("UPDATE agent_intake SET client_phone_snapshot='+1 (123)-456' WHERE id=?",original.order().id());
+        var links=new AgentOrderTrackingService(JdbcClient.create(jdbc),batches,photos);
+        String token=tx.execute(s->links.create(1,original.order().id(),new AgentOrderTrackingService.CreateRequest("http://localhost:3001"),"localhost")).trackingUrl().split("#")[1];
+        var access=new TrackingAccessService(JdbcClient.create(jdbc),new TestTrackingStore());
+        var proof=access.verify(new TrackingAccessService.VerifyRequest(token,"+1123456"),"198.51.100.21");
+        jdbc.update("UPDATE agent_intake SET client_phone_snapshot='+1 123-456' WHERE id=?",original.order().id());
+        access.requireAccess(token,proof.accessToken());
+        for(String invalid:List.of("123456","+441123456","( - )","+1abc123456"))
+            assertThatThrownBy(()->access.verify(new TrackingAccessService.VerifyRequest(token,invalid),"198.51.100.21")).hasMessageContaining("401");
+    }
+
+    private static class TestTrackingStore implements TrackingAccessStore {
+        final java.util.Map<String,Proof> proofs=new java.util.HashMap<>();
+        final java.util.Map<String,Integer> counts=new java.util.HashMap<>();
+        boolean fail;
+        public void checkRate(String link,String source){if(fail)throw new ResponseStatusException(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE);if(counts.merge("l"+link,1,Integer::sum)>5 || counts.merge("i"+source,1,Integer::sum)>30)throw new ResponseStatusException(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS);}
+        public void put(String access,Proof proof){if(fail)throw new ResponseStatusException(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE);proofs.put(access,proof);}
+        public Proof get(String access){if(fail)throw new ResponseStatusException(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE);return proofs.get(access);}
+    }
+
+    @Test void legacyOrderReceiptRequiresExplicitExceptionResolution() {
+        var intake=createIntake(1,createClient(1,"ORDER-EXCEPTION").id(),1,"order-exception");
+        receive(intake);check(intake,intake.cards().get(0),true);
+        long id=intake.intake().id(),events=count("agent_event");
+        assertThatThrownBy(()->tx.execute(s->service.receiveOrder(1,id,new ReceiveOrderRequest(1,"",false)))).hasMessageContaining("exceptions");
+        assertThat(count("agent_event")).isEqualTo(events);
+        var resolved=tx.execute(s->service.receiveOrder(1,id,new ReceiveOrderRequest(1,"Repacked and accepted",true)));
+        assertThat(resolved.intake().statusCode()).isEqualTo("ready");
+        assertThat(resolved.cards().get(0).conditionNote()).isEqualTo("Damaged sleeve");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM agent_event WHERE event_code='intake_exception_resolved'",Integer.class)).isEqualTo(1);
+    }
+
     @Test void submissionContractRejectionLeavesReadyInventoryAndAllGeneratedRowsUntouched() throws Exception {
         enableRealSubmissionTerms();
         var intake=ready(createClient(1,"TERMS").id(),1,"terms-ready");
@@ -173,7 +395,7 @@ class AgentWorkbenchServiceTest {
         assertThat(admission.requireAdminAdmission(orderId).termsAcceptedAt()).isNotNull();
         assertThat(tx.execute(s->service.submit(1,request)).id()).isEqualTo(submitted.id());
         assertThat(count("order_terms_acceptance")).isOne();
-        var approved=tx.execute(s->admission.decide(orderId,9,new OrderAdmissionService.DecisionRequest("approve","Approved",1)));
+        var approved=tx.execute(s->admission.decidePartnerSubmit(submitted.batchId(),9,new OrderAdmissionService.PartnerSubmitDecision("approve","Approved",java.util.List.of(new OrderAdmissionService.PartnerSubmitOrderRevision(orderId,1))),id -> {})).orders().get(0);
         assertThat(approved.canAcceptTerms()).isFalse();assertThat(approved.canPay()).isFalse();
         assertThat(jdbc.queryForObject("SELECT status_code FROM grading_order WHERE id=?",String.class,orderId)).isEqualTo("awaiting_inbound");
         tx.execute(s->{admission.prepareMerchantFulfillment(orderId);return null;});
@@ -428,7 +650,10 @@ class AgentWorkbenchServiceTest {
             assertThat(f1.get(15,TimeUnit.SECONDS).batchId()).isEqualTo(f2.get(15,TimeUnit.SECONDS).batchId());
         } finally { pool.shutdownNow(); }
         assertThat(count("grading_order")).isEqualTo(2); assertThat(count("agent_submission")).isEqualTo(1);
-        assertThat(jdbc.queryForList("SELECT client_reference FROM merchant_order_batch_item ORDER BY row_no",String.class))
+        assertThat(jdbc.queryForMap("SELECT COUNT(*) AS mismatched FROM merchant_order_batch_item bi "
+            + "JOIN grading_order o ON o.id=bi.order_id WHERE bi.client_reference<>o.order_no").get("mismatched"))
+            .isEqualTo(0L);
+        assertThat(jdbc.queryForList("SELECT intake_no FROM merchant_order_batch_item ORDER BY row_no",String.class))
             .containsExactly(a.intake().intakeNo(),b.intake().intakeNo());
         assertThat(jdbc.queryForList("SELECT order_item_id FROM agent_card",Long.class)).doesNotContainNull().doesNotHaveDuplicates();
         assertThatThrownBy(()->tx.execute(s->service.submit(1,new SubmissionRequest(List.of(a.intake().id()),10L,"agent_return","USD","Other","same-request"))))
@@ -598,6 +823,29 @@ class AgentWorkbenchServiceTest {
         assertThat(service.events(1,c.id(),null,null,1,100).items().stream().filter(e->e.eventCode().equals("card_return_checked"))).hasSize(2);
     }
 
+    @Test void legacyDeliveredOrderCanBeReceivedWithoutCardScansAndReturnedInParts() {
+        Client client=createClient(1,"LEGACY-RETURN"); IntakeDetail intake=ready(client.id(),2,"legacy-return");
+        Submission sub=submit(intake,"legacy-return-submit");
+        long id=intake.intake().id();
+        assertThatThrownBy(()->tx.execute(s->service.receiveReturnedOrder(1,id,new NoteRequest("Early",null)))).hasMessageContaining("No returned cards");
+        markNxrDelivered(sub);
+        List<Card> items=service.intakeDetail(1,id).cards();
+        jdbc.update("UPDATE grading_order_item SET status_code='grading' WHERE id=?",items.get(1).orderItemId());
+        jdbc.update("UPDATE grading_order_item SET status_code='delivered' WHERE id=?",items.get(0).orderItemId());
+        var partial=tx.execute(s->service.receiveReturnedOrder(1,id,new NoteRequest("First arrived",null)));
+        assertThat(partial.cards()).extracting(Card::statusCode).containsExactly("returned","submitted");
+        jdbc.update("UPDATE grading_order_item SET status_code='delivered' WHERE id=?",items.get(1).orderItemId());
+        var received=tx.execute(s->service.receiveReturnedOrder(1,id,new NoteRequest("Parcel arrived",null)));
+        assertThat(received.cards()).allSatisfy(card->assertThat(card.statusCode()).isEqualTo("returned"));
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM agent_event WHERE event_code='card_return_checked'",Integer.class)).isZero();
+        long events=count("agent_event");
+        tx.execute(s->service.receiveReturnedOrder(1,id,new NoteRequest("Parcel arrived",null)));
+        assertThat(count("agent_event")).isEqualTo(events);
+        var first=ship(client.id(),List.of(received.cards().get(0).id()),"part-one");
+        assertThat(first.shipment().cardCount()).isEqualTo(1);
+        assertThat(ship(client.id(),List.of(received.cards().get(1).id()),"part-two").shipment().cardCount()).isEqualTo(1);
+    }
+
     @Test void finalMileRejectsUnreturnedCrossClientCrossTenantAndDuplicateCardsAndKeepsAddressSnapshot() {
         Client a=createClient(1,"A"),b=createClient(1,"B"),other=createClient(2,"C");
         IntakeDetail ia=ready(a.id(),2,"a"),ib=ready(b.id(),1,"b"),ic=createIntake(2,other.id(),1,"c");
@@ -702,6 +950,7 @@ class AgentWorkbenchServiceTest {
     private void markNxrDelivered(Submission s) {
         jdbc.update("UPDATE merchant_order_batch SET status_code='delivered' WHERE id=?",s.batchId());
         jdbc.update("UPDATE grading_order SET status_code='delivered' WHERE id IN(SELECT order_id FROM merchant_order_batch_item WHERE batch_id=?)",s.batchId());
+        jdbc.update("UPDATE grading_order_item SET status_code='delivered' WHERE order_id IN(SELECT order_id FROM merchant_order_batch_item WHERE batch_id=?)",s.batchId());
     }
     private long count(String table) { return jdbc.queryForObject("SELECT COUNT(*) FROM "+table,Long.class); }
     private CustomerPortalService.OrderDetailResponse insertOrder(long owner,CustomerPortalService.CreateOrderRequest r,boolean omitLast) {

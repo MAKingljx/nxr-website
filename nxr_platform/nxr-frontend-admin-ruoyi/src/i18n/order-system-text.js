@@ -23,6 +23,18 @@ export function orderCodeSource(domain, value) {
 }
 
 export const orderSystemZhCN = {
+  'Received card count must match the order': '实收卡片数量必须与订单一致',
+  'This intake contains cards that cannot be received': '此来件包含无法收取的卡片',
+  'Confirm resolution of the intake exceptions before receipt': '请先确认收件异常已处理',
+  'Exception resolution is required': '请填写异常处理说明',
+  'This order has not been submitted to NXR': '该订单尚未提交给 NXR',
+  'This order has no cards': '该订单没有卡片',
+  'Receipt details are required': '请填写收件信息',
+  'No returned cards have been delivered to this partner': '该订单暂无已送达的回寄卡片',
+  'Review the complete partner submission together': '请对整个 Submit 进行审核',
+  'Partner submission not found': '未找到该 Submit',
+  'Partner submission has invalid order membership': 'Submit 的订单清单不正确',
+  'Submission changed; refresh before recording a decision': 'Submit 已发生变化，请刷新后重新审核',
   'Agent workbench': '送评工作台',
   'Order submitted for admission review': '订单已提交受理审核',
   'Order approved': '订单已批准',
@@ -55,6 +67,7 @@ export const orderSystemZhCN = {
   'Grading work linked': '评级记录已关联',
   'Agent return parcel shipped': '代理回寄包裹已寄出',
   'Agent return parcel delivered': '代理回寄包裹已送达',
+  'NXR received the agent parcel': 'NXR 已签收送评包裹',
   'Order exception recorded': '订单异常已登记',
   'One order exception was resolved': '一项订单异常已解决',
   'Final quality check passed': '最终质检已通过',
@@ -91,6 +104,7 @@ export const orderSystemZhCN = {
   'Our team is reviewing the order.': '工作人员正在核对订单。',
   'A grading work record has been linked to an order item.': '卡片已关联评级记录。',
   "Your order is included in the agent's inbound master parcel.": '本订单已加入代理寄往 NXR 的主包裹。',
+  "NXR has received the agent's master parcel.": 'NXR 已签收代理送评主包裹。',
   'Your graded card is included in the return master parcel to the agent.': '评级后的卡片已加入回寄代理的主包裹。',
   "The agent's return master parcel has been delivered.": '回寄代理的主包裹已送达。',
   'Carrier delivery was confirmed.': '已确认承运商送达。',
@@ -429,8 +443,8 @@ export function localizeDefaultOrderText(value, locale = 'en') {
 // These event details are supplied by a customer/operator, even when they resemble system copy.
 const freeTextEvents = new Set(['approved', 'rejected', 'information_requested', 'resubmitted', 'exception_resolved', 'quality_passed', 'quality_failed', 'shipping_change_approved', 'shipping_change_rejected', 'shipping_surcharge_paid', 'shipping_refund_recorded', 'ticket_created', 'finance_review', 'finance_review_completed'])
 const freeTextTitles = new Set(['Order approved', 'Order application rejected', 'Additional information requested', 'Additional information submitted', 'One order exception was resolved', 'Final quality check passed', 'Quality check needs rework', 'Return shipping change approved', 'Return shipping change rejected', 'Shipping surcharge paid', 'Shipping refund recorded', 'Support ticket created', 'Financial review recorded', 'Financial review completed'])
-const systemDetailCodes = new Set(['submitted', 'application_submitted', 'terms_accepted', 'payment_expired', 'order_created', 'payment_pending', 'payment_proof_submitted', 'packing_slip_ready', 'intake_exception', 'warehouse_received', 'grading_submission_linked', 'batch_inbound_shipped', 'batch_return_shipped', 'batch_delivered', 'late_payment_received', 'shipment_created'])
-const systemDetailTitles = new Set(['Application submitted', 'Order submitted for admission review', 'Quote and terms confirmed', 'Payment deadline expired', 'Order created', 'Awaiting payment', 'Payment proof submitted', 'Payment confirmed', 'Packing slip ready', 'Warehouse intake needs review', 'Cards received and counted', 'Grading work linked', 'Grading in progress', 'Agent parcel shipped to NXR', 'Agent return parcel shipped', 'Agent return parcel delivered', 'Payment received after admission window', 'Cards shipped to NXR', 'Cards received', 'Return shipment sent', 'Return shipment delivered', 'Delivery confirmed', 'Inbound shipment received', 'Shipment recorded', 'Order exception recorded'])
+const systemDetailCodes = new Set(['submitted', 'application_submitted', 'terms_accepted', 'payment_expired', 'order_created', 'payment_pending', 'payment_proof_submitted', 'packing_slip_ready', 'intake_exception', 'warehouse_received', 'grading_submission_linked', 'batch_inbound_shipped', 'batch_inbound_received', 'batch_return_shipped', 'batch_delivered', 'late_payment_received', 'shipment_created'])
+const systemDetailTitles = new Set(['Application submitted', 'Order submitted for admission review', 'Quote and terms confirmed', 'Payment deadline expired', 'Order created', 'Awaiting payment', 'Payment proof submitted', 'Payment confirmed', 'Packing slip ready', 'Warehouse intake needs review', 'Cards received and counted', 'Grading work linked', 'Grading in progress', 'Agent parcel shipped to NXR', 'NXR received the agent parcel', 'Agent return parcel shipped', 'Agent return parcel delivered', 'Payment received after admission window', 'Cards shipped to NXR', 'Cards received', 'Return shipment sent', 'Return shipment delivered', 'Delivery confirmed', 'Inbound shipment received', 'Shipment recorded', 'Order exception recorded'])
 
 export function localizeOrderEventDetail(event, locale = 'en') {
   if (!event?.detail) return event?.detail

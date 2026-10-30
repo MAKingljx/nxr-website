@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 import { tx } from '@/i18n'
+import { secureUuid } from '@/utils/secureUuid'
 import { CREDIT_CURRENCIES, getEnterpriseCreditSummary, quoteCompanyCredit, previewEnterpriseCreditConversion, convertEnterpriseCreditBalances, quoteEnterpriseCreditRecharge, getCreditApiError, type CreditQuote, type CreditConversionPreview, type EnterpriseCreditSummary } from '@/api/nxr/enterpriseCredit'
 import { getWalletRecharges, getWalletTransactions, reviewWalletRecharge } from '@/api/nxr/merchantWallet'
 import { requestPartnerRecharge, type PartnerRecharge } from '@/api/nxr/partners'
@@ -25,9 +26,8 @@ async function refresh() { const current=++generation,id=props.companyId;loading
 async function mutate(name:string,payload:object,action:(key:string)=>Promise<unknown>,done:()=>void,notice:string) {
   if(busy.value)return false
   const id=props.companyId,fingerprint=JSON.stringify(payload);let attempt=attempts.get(name)
-  if(!attempt||attempt.fingerprint!==fingerprint){attempt={fingerprint,key:crypto.randomUUID()};attempts.set(name,attempt)}
   busy.value=true;error.value='';success.value=''
-  try { await action(attempt.key);attempts.delete(name);if(active&&id===props.companyId){done();success.value=notice;await refresh();emit('changed')}return true }
+  try { if(!attempt||attempt.fingerprint!==fingerprint){attempt={fingerprint,key:secureUuid()};attempts.set(name,attempt)}await action(attempt.key);attempts.delete(name);if(active&&id===props.companyId){done();success.value=notice;await refresh();emit('changed')}return true }
   catch(e){if(active&&id===props.companyId)error.value=message(e);return false}
   finally{busy.value=false}
 }

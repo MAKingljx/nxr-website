@@ -15,6 +15,14 @@ export function decideOrderAdmission(orderId, data) {
   })
 }
 
+export function getPartnerSubmitAdmission(batchId) {
+  return request({ url: `/api/admin/order-admissions/partner-submits/${batchId}`, method: 'get', suppressErrorMessage: true })
+}
+
+export function decidePartnerSubmitAdmission(batchId, data) {
+  return request({ url: `/api/admin/order-admissions/partner-submits/${batchId}/decision`, method: 'post', data, suppressErrorMessage: true })
+}
+
 export function getOrderAdmissionConfig() {
   return request({
     url: '/api/admin/order-admissions/config',

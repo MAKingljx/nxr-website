@@ -12,3 +12,8 @@ export const listMerchantBatches = (params) => request({ url: '/api/admin/mercha
 export const getMerchantBatch = (batchId) => request({ url: `/api/admin/merchant-batches/${batchId}`, method: 'get' })
 export const createMerchantBatchOutbound = (batchId, data) => request({ url: `/api/admin/merchant-batches/${batchId}/outbound-shipment`, method: 'post', data })
 export const markMerchantBatchShipmentDelivered = (batchId, shipmentId) => request({ url: `/api/admin/merchant-batches/${batchId}/shipments/${shipmentId}/delivered`, method: 'post' })
+
+export const rotateMerchantBatchTrackingToken = (batchId, orderNo) => request({ url: `/api/admin/merchant-batches/${batchId}/orders/${encodeURIComponent(orderNo)}/tracking-token/rotate`, method: 'post' })
+export const revokeMerchantBatchTrackingToken = (batchId, orderNo) => request({ url: `/api/admin/merchant-batches/${batchId}/orders/${encodeURIComponent(orderNo)}/tracking-token`, method: 'delete' })
+
+export const getMerchantBatchTrackingToken = (batchId, orderNo) => request({ url: `/api/admin/merchant-batches/${batchId}/orders/${encodeURIComponent(orderNo)}/tracking-token`, method: 'get' })

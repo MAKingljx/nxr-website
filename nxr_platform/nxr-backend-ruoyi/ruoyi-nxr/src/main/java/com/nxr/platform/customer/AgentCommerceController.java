@@ -10,6 +10,7 @@ import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
@@ -22,6 +23,7 @@ public class AgentCommerceController {
     private static final String COMPANY="X-NXR-Agent-Id";
     private final AgentOperatorScopeService scope;
     private final MerchantBatchService batches;
+    @Autowired(required=false) private AgentOrderTrackingService tracking;
     private final CustomerPortalService portal;
     private final OrderFulfillmentService fulfillment;
     private final OrderAdmissionService admission;
@@ -43,7 +45,8 @@ public class AgentCommerceController {
     }
     @GetMapping("/merchant/batches/{batchNo}")
     public MerchantBatchService.BatchDetail batch(@RequestHeader(name=COMPANY,required=false) Long company,@PathVariable String batchNo) {
-        return batches.requireMerchantBatch(owner(company),batchNo);
+        long owner=owner(company);var detail=batches.requireMerchantBatch(owner,batchNo);
+        return tracking==null?detail:tracking.withWorkbenchOrderIds(owner,detail);
     }
     @PostMapping("/merchant/batches/{batchNo}/inbound-shipment")
     public MerchantBatchService.BatchDetail inbound(@RequestHeader(name=COMPANY,required=false) Long company,@PathVariable String batchNo,

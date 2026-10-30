@@ -2,6 +2,8 @@ package com.nxr.platform.commerce;
 
 import com.nxr.platform.admin.AdminSubmissionService;
 import com.nxr.platform.customer.CustomerPortalService;
+import com.nxr.platform.customer.PartnerReturnService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -15,6 +17,10 @@ public class ScopedOrderSubmissionService {
     private final OrderAccessScopeService accessScopeService;
     private final AdminSubmissionService submissionService;
     private final CustomerPortalService customerPortalService;
+    private PartnerReturnService partnerReturnService;
+
+    @Autowired(required=false)
+    public void setPartnerReturnService(PartnerReturnService service) { this.partnerReturnService=service; }
 
     public ScopedOrderSubmissionService(
         JdbcClient jdbcClient, OrderAccessScopeService accessScopeService, AdminSubmissionService submissionService,
@@ -45,7 +51,9 @@ public class ScopedOrderSubmissionService {
         if (!"customer_submission".equals(item.origin()) || item.businessLineId() == null || item.workCenterId() == null) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "Order routing must be configured before grading entry");
         }
-        requireOwnedIntakeSession(userId, orderId, itemId);
+        if (partnerReturnService == null || !partnerReturnService.supportsWholeOrder(orderId)) {
+            requireOwnedIntakeSession(userId, orderId, itemId);
+        }
         AdminSubmissionService.MutateSubmissionRequest request = withActor(supplied, userId);
         AdminSubmissionService.SubmissionDetailResponse created = submissionService.createSubmission(request);
         jdbcClient.sql("""

@@ -66,7 +66,7 @@ class OrderCardIdentityServiceTest {
         jdbc.update("INSERT INTO merchant_company_profile VALUES(1,'Sub-partner A')");
         jdbc.update("INSERT INTO agent_client VALUES(101,1,'CUSTOMER-A','Original owner')");
         jdbc.update("INSERT INTO agent_intake VALUES(111,1,101,10)");
-        jdbc.update("INSERT INTO agent_card VALUES(121,1,111,'AC-CARD-ONE',1001),(122,1,111,'AC-CARD-TWO',1002)");
+        jdbc.update("INSERT INTO agent_card(id,merchant_customer_id,intake_id,inventory_code,order_item_id) VALUES(121,1,111,'AC-CARD-ONE',1001),(122,1,111,'AC-CARD-TWO',1002)");
         jdbc.update("INSERT INTO merchant_order_batch(id,batch_no,merchant_customer_id,batch_name,status_code,total_rows) VALUES(131,'BATCH-131',1,'Batch','created',1)");
         jdbc.update("INSERT INTO merchant_order_batch_item(batch_id,order_id,row_no,client_reference,client_display_name) VALUES(131,10,1,'INTAKE-111','Old snapshot owner')");
     }

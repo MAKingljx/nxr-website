@@ -3,6 +3,7 @@ import { tx } from '@/i18n'
 import { computed,onBeforeUnmount,onMounted,reactive,ref } from 'vue'
 import { useRouter } from 'vue-router'
 import auth from '@/plugins/auth'
+import { secureUuid } from '@/utils/secureUuid'
 import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
 import EnterpriseCreditFinance from '@/components/EnterpriseCredit/FinancePanel.vue'
 import { getPartner,listPartners,provisionPartner,setPartnerOperatorState,updatePartner,type PartnerDetail,type PartnerOperator,type PartnerPage,type PartnerProfileInput,type PartnerSummary } from '@/api/nxr/partners'
@@ -40,9 +41,8 @@ async function refreshDetail(){const id=detail.value?.partner.id,current=detailG
 async function mutate<T>(name:string,payload:object,action:(key:string)=>Promise<T>,apply:(value:T)=>void,notice:string){
   if(busy.value||!active)return false
   const fingerprint=JSON.stringify(payload);let attempt=attempts.get(name)
-  if(!attempt||attempt.fingerprint!==fingerprint){attempt={fingerprint,key:crypto.randomUUID()};attempts.set(name,attempt)}
   busy.value=true;error.value='';success.value=''
-  try{const value=await action(attempt.key);if(!active)return false;attempts.delete(name);apply(value);success.value=notice;return true}catch(e){if(active)error.value=message(e);return false}finally{if(active)busy.value=false}
+  try{if(!attempt||attempt.fingerprint!==fingerprint){attempt={fingerprint,key:secureUuid()};attempts.set(name,attempt)}const value=await action(attempt.key);if(!active)return false;attempts.delete(name);apply(value);success.value=notice;return true}catch(e){if(active)error.value=message(e);return false}finally{if(active)busy.value=false}
 }
 function openAccount(row?:PartnerSummary){accountPartner.value=row||null;account.value=blankAccount();accountOpen.value=true;error.value='';success.value=''}
 function closeAccount(){account.value.password='';attempts.delete('partner:provision');accountOpen.value=false;accountPartner.value=null}

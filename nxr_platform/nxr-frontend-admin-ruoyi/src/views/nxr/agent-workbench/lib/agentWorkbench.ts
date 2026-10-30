@@ -1,6 +1,7 @@
 import { activeLocale, tx, localizeBackendMessage } from '@/i18n'
 import { inject, ref, type InjectionKey } from 'vue'
 import request from '@/utils/request'
+import { secureUuid } from '@/utils/secureUuid'
 import type { CreditQuote, EnterpriseCreditSummary } from '@/api/nxr/enterpriseCredit'
 const base = '/api/admin/agent'
 export type AgentPage<T> = { items: T[]; total: number; page: number; pageSize: number }
@@ -66,7 +67,7 @@ export type AgentWallet = { currencyCode: string; balance: number | string; upda
 export type AgentRecharge = { id: number; rechargeNo: string; currencyCode: string; amount: number | string; statusCode: string; payerReference: string; proofReference: string; reviewNote?: string; createdAt: string; creditQuote?: CreditQuote | null }
 export type AgentTransaction = { id: number; transactionTypeCode: string; directionCode: string; amount: number | string; balanceAfter: number | string; currencyCode: string; sourceCurrency?: string | null; sourceAmount?: number | string | null; points?: number | string | null; settingsVersion?: number | null; note?: string; createdAt: string }
 export type AgentOrderCreditQuote = { quote: CreditQuote; balance: number | string; sufficient: boolean }
-export type AgentBatch = { id?: number; batchId?: number; batchNo: string; batchName: string; sourceName?: string | null; statusCode: string; totalRows?: number; acceptedRows?: number; rejectedRows?: number; createdAt: string; updatedAt?: string; orders?: Array<{ orderNo: string; clientReference: string; clientDisplayName?: string; admissionStatus?: string; statusCode: string; totalCardCount?: number; cardCount?: number }>; shipments?: Array<{ id: number; directionCode: string; carrierName: string; trackingNumber: string; statusCode: string; deliveredAt?: string }> }
+export type AgentBatch = { id?: number; batchId?: number; batchNo: string; batchName: string; sourceName?: string | null; statusCode: string; totalRows?: number; acceptedRows?: number; rejectedRows?: number; createdAt: string; updatedAt?: string; orders?: Array<{ orderNo: string; clientReference: string; intakeNo?: string | null; clientDisplayName?: string; admissionStatus?: string; statusCode: string; totalCardCount?: number; cardCount?: number; trackingTokenHint?: string | null; workbenchOrderId?: number | null }>; shipments?: Array<{ id: number; directionCode: string; carrierName: string; trackingNumber: string; statusCode: string; deliveredAt?: string }> }
 export type AgentOrder = { id?: number; orderNo: string; statusCode: string; totalCardCount: number; totalAmount: number; currencyCode: string; items: Array<{ id: number; cardName: string; languageCode: string; gradingCertId?: string; frontPhotoId?: number; backPhotoId?: number; statusCode: string }>; timeline: Array<{ id: number; title: string; eventCode?: string; detail?: string; createdAt: string }> }
 export type AgentAdmission = { paymentRequired?: boolean; admissionStatus: string; termsVersion: string; termsText: string; turnaroundText?: string; quoteAmount: number; quoteCurrency: string; canAcceptTerms: boolean; canPay: boolean; canResubmit: boolean; decisionNote?: string; paymentDueAtIso?: string; supplementalPhotoIds?: number[]; events: Array<{ id: number; title: string; eventCode?: string; detail?: string; createdAt: string }> }
 type Query = Record<string, string | number | boolean | undefined>
@@ -99,11 +100,14 @@ export function formatMoney(amount: number | string, currency: string) {
 }
 
 export function privateTrackingUrl(value: string) {
-  if (/^\/track\/[A-Za-z0-9_-]+$/.test(value)) return value
   try {
     const url = new URL(value)
-    if (['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && /^\/track\/[A-Za-z0-9_-]+$/.test(url.pathname) && !url.search && !url.hash) return url.href
-  } catch { /* A relative link must already point at the customer tracking route. */ }
+    const loopback = (host: string) => ['localhost', '[::1]'].includes(host.toLowerCase()) || host.toLowerCase().endsWith('.localhost') || /^127(?:\.\d{1,3}){3}$/.test(host)
+    const adminHost = typeof window === 'undefined' ? '' : window.location.hostname
+    const adminPath = '/x7k9m2q4r8v6c3p1'
+    const validTrackingPath = (/\/track$/.test(url.pathname) && /^#[A-Za-z0-9_-]{43}$/.test(url.hash)) || (/\/track\/[A-Za-z0-9_-]+$/.test(url.pathname) && !url.hash)
+    if (['http:', 'https:'].includes(url.protocol) && !url.username && !url.password && validTrackingPath && !url.pathname.startsWith(adminPath + '/') && !url.search && (!loopback(url.hostname) || loopback(adminHost))) return url.href
+  } catch { /* A customer link must be an absolute URL from the configured public site. */ }
   throw new Error(tx('The customer tracking URL is not configured correctly. Please contact NXR.'))
 }
 export function normalizeAgentReturnScan(value: string) {
@@ -142,10 +146,16 @@ function post<T>(path: string, payload: object, requestKey: string) {
 }
 const fetchWorkbenchOrders = (query: Query = {}) => scopedRequest<AgentPage<WorkbenchOrder>>(`${base}/workbench-orders?${queryString(query)}`)
 const fetchWorkbenchOrder = (id: number) => scopedRequest<WorkbenchOrderDetail>(`${base}/workbench-orders/${id}`)
+const fetchOrderTrackingState = (id: number) => send<{active:boolean;version:number|null;legacyActive:boolean}>(`${base}/workbench-orders/${id}/tracking-token`)
+const createOrderTrackingLink = (id: number) => send<{trackingUrl:string}>(`${base}/workbench-orders/${id}/tracking-token`, { method: 'post', data: { clientOrigin: window.location.origin } })
+const replaceOrderTrackingLink = (id: number, expectedVersion: number) => send<{trackingUrl:string}>(`${base}/workbench-orders/${id}/tracking-token/replace`, { method: 'post', data: { expectedVersion, clientOrigin: window.location.origin } })
+const revokeOrderTrackingLink = (id: number, expectedVersion: number) => send(`${base}/workbench-orders/${id}/tracking-token`, { method: 'delete', data: { expectedVersion } })
+const revokeLegacyOrderTrackingLink = (id: number) => send(`${base}/workbench-orders/${id}/tracking-token/legacy`, { method: 'delete' })
 const createWorkbenchOrder = (payload: WorkbenchOrderInput, key: string) => post<WorkbenchOrderDetail>('/workbench-orders', payload, key)
 const fetchWorkbenchOrderOptions = () => scopedRequest<WorkbenchOrderOptions>(`${base}/workbench-order-options`)
 const fetchPartnerReturnParcels = (query: Query = {}) => scopedRequest<AgentPage<PartnerReturnParcel>>(`${base}/partner-return-parcels?${queryString(query)}`)
 const fetchPartnerReturnParcel = (id: number) => scopedRequest<PartnerReturnParcel>(`${base}/partner-return-parcels/${id}`)
+const deliverPartnerReturnParcel = (id: number, key: string) => post<PartnerReturnParcel>(`/partner-return-parcels/${id}/delivered`, {}, key)
 const fetchAgentClients = (query: Query = {}) => scopedRequest<AgentPage<AgentClient>>(`${base}/clients?${queryString(query)}`)
 const fetchAgentClient = (id: number) => scopedRequest<AgentClientDetail>(`${base}/clients/${id}`)
 const createAgentClient = (payload: AgentClientInput, key: string) => post<AgentClient>('/clients', payload, key)
@@ -154,6 +164,8 @@ const fetchAgentIntakes = (query: Query = {}) => scopedRequest<AgentPage<AgentIn
 const fetchAgentIntake = (id: number) => scopedRequest<AgentIntakeDetail>(`${base}/intakes/${id}`)
 const createAgentIntake = (payload: AgentIntakeInput, key: string) => post<AgentIntakeDetail>('/intakes', payload, key)
 const receiveAgentIntake = (id: number, payload: { note: string }, key: string) => post<AgentIntakeDetail>(`/intakes/${id}/receive`, payload, key)
+const receiveAgentOrder = (id: number, payload: { receivedCount: number; note: string; resolveExceptions: boolean }, key: string) => post<AgentIntakeDetail>(`/intakes/${id}/receive-order`, payload, key)
+const receiveLegacyReturnedOrder = (id: number, key: string) => post<AgentIntakeDetail>(`/intakes/${id}/return-received`, { note: '' }, key)
 const checkInAgentCard = (id: number, payload: { inventoryCode: string; conditionNote: string; hasException: boolean }, key: string) => post<AgentIntakeDetail>(`/intakes/${id}/check-in`, payload, key)
 const fetchAgentCards = (query: Query = {}) => scopedRequest<AgentPage<AgentCard>>(`${base}/cards?${queryString(query)}`)
 const fetchAgentEvents = (query: Query = {}) => scopedRequest<AgentPage<AgentEvent>>(`${base}/events?${queryString(query)}`)
@@ -207,7 +219,7 @@ const uploadAgentCardPhoto = (id: number, side: 'front' | 'back', file: File) =>
   const resubmitOrder = (orderNo: string, data: { note: string; supplementalPhotoIds: number[] }, key: string) => post<AgentAdmission>(`/orders/${encodeURIComponent(orderNo)}/admission/resubmit`,data,key)
   const uploadSupplementalPhoto = (file: File) => { const body = new FormData();body.set('file',file);return scopedRequest<{id:number}>(`${base}/order-photos`,{method:'POST',body}) }
 
-  return { fetchWorkbenchOrders, fetchWorkbenchOrder, createWorkbenchOrder, fetchWorkbenchOrderOptions, fetchPartnerReturnParcels, fetchPartnerReturnParcel, companyId, busy, addressVersion, isActive: () => active, dispose: () => { active = false; controller.abort(); busy.value = false }, fetchAgentClients, fetchAgentClient, createAgentClient, updateAgentClient, fetchAgentIntakes, fetchAgentIntake, createAgentIntake, receiveAgentIntake, checkInAgentCard, fetchAgentCards, fetchAgentEvents, createAgentSubmission, checkAgentReturn, fetchAgentShipments, fetchAgentShipment, createAgentShipment, deliverAgentShipment, uploadAgentCardPhoto, fetchContext, fetchCompanies, fetchOperators, fetchOperatorCandidates, updateOperator, fetchApplicationConfig, fetchCustomerAddresses, saveAddress, setDefaultAddress, deleteAddress, fetchServicePrices, fetchShippingOptions, fetchLogisticsOptions, fetchOrderQuote, fetchBatchQuote, fetchPhoto, fetchMerchantProfile, saveMerchantProfile, fetchWallets, fetchEnterpriseCredit, fetchCreditQuote, fetchOrderCreditQuote, fetchTransactions, fetchRecharges, requestRecharge, fetchBatches, fetchBatch, rotateTrackingLink, revokeTrackingLink, addBatchInbound, fetchOrder, fetchAdmission, acceptOrderTerms, payFromWallet, fetchPackingSlip, resubmitOrder, uploadSupplementalPhoto }
+  return { fetchWorkbenchOrders, fetchWorkbenchOrder, fetchOrderTrackingState, createOrderTrackingLink, replaceOrderTrackingLink, revokeOrderTrackingLink, revokeLegacyOrderTrackingLink, createWorkbenchOrder, fetchWorkbenchOrderOptions, fetchPartnerReturnParcels, fetchPartnerReturnParcel, deliverPartnerReturnParcel, companyId, busy, addressVersion, isActive: () => active, dispose: () => { active = false; controller.abort(); busy.value = false }, fetchAgentClients, fetchAgentClient, createAgentClient, updateAgentClient, fetchAgentIntakes, fetchAgentIntake, createAgentIntake, receiveAgentIntake, receiveAgentOrder, receiveLegacyReturnedOrder, checkInAgentCard, fetchAgentCards, fetchAgentEvents, createAgentSubmission, checkAgentReturn, fetchAgentShipments, fetchAgentShipment, createAgentShipment, deliverAgentShipment, uploadAgentCardPhoto, fetchContext, fetchCompanies, fetchOperators, fetchOperatorCandidates, updateOperator, fetchApplicationConfig, fetchCustomerAddresses, saveAddress, setDefaultAddress, deleteAddress, fetchServicePrices, fetchShippingOptions, fetchLogisticsOptions, fetchOrderQuote, fetchBatchQuote, fetchPhoto, fetchMerchantProfile, saveMerchantProfile, fetchWallets, fetchEnterpriseCredit, fetchCreditQuote, fetchOrderCreditQuote, fetchTransactions, fetchRecharges, requestRecharge, fetchBatches, fetchBatch, rotateTrackingLink, revokeTrackingLink, addBatchInbound, fetchOrder, fetchAdmission, acceptOrderTerms, payFromWallet, fetchPackingSlip, resubmitOrder, uploadSupplementalPhoto }
 }
 
 export type AgentApi = ReturnType<typeof createAgentApi>
@@ -221,13 +233,13 @@ export function useAgentActions() {
   async function run<T>(name: string, payload: object, request: (key: string) => Promise<T>, apply: (value: T) => void, message: string) {
     if (busy.value || !api.isActive()) return false
     const fingerprint = JSON.stringify(payload)
-    let attempt = attempts.get(name)
-    if (!attempt || attempt.fingerprint !== fingerprint) {
-      attempt = { fingerprint, key: crypto.randomUUID() }
-      attempts.set(name, attempt)
-    }
     busy.value = true; error.value = ''; success.value = ''
     try {
+      let attempt = attempts.get(name)
+      if (!attempt || attempt.fingerprint !== fingerprint) {
+        attempt = { fingerprint, key: secureUuid() }
+        attempts.set(name, attempt)
+      }
       const value = await request(attempt.key)
       if (!api.isActive()) return false
       attempts.delete(name)
@@ -263,7 +275,7 @@ export const agentBatchStatusLabel = (code: string) => tx(batchStatusLabels[code
 const eventLabels: Record<string, string> = {
   order_created: 'Order created',
   client_created: 'Customer record created', client_updated: 'Customer record updated', client_archived: 'Archive customer', client_reactivated: 'Restore customer',
-  intake_created: 'Intake registered', intake_received: 'Intake received', card_checked_in: 'Card checked into inventory', card_exception: 'Card exception recorded',
+  intake_created: 'Intake registered', intake_received: 'Intake received', intake_order_received: 'Intake received', card_checked_in: 'Card checked into inventory', card_exception: 'Card exception recorded',
   card_photo_uploaded: 'Upload card photo', submission_created: 'Create submission batch', card_return_checked: 'Check returned cards',
   return_shipment_created: 'Return to customer', return_shipment_delivered: 'Customer delivery confirmed',
   photo_added: 'Upload card photo', intake_submitted: 'Intake submitted for grading', card_return_shipped: 'Card shipped to customer',

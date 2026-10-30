@@ -112,6 +112,7 @@
 </template>
 
 <script setup>
+import { copyText as copyToClipboard } from '@/utils/copyText'
 const props = defineProps({
   visible: { type: Boolean, default: false },
   row: { type: Object, default: () => ({}) }
@@ -135,18 +136,9 @@ function formatJson(str) {
   try { return JSON.stringify(JSON.parse(str), null, 2) } catch { return str }
 }
 
-function copyText(str) {
+async function copyText(str) {
   const text = formatJson(str)
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(text).then(() => ElMessage({ message: tx('Copied'), type: 'success', duration: 1500 }))
-  } else {
-    const ta = document.createElement('textarea')
-    ta.value = text
-    document.body.appendChild(ta)
-    ta.select()
-    document.execCommand('copy')
-    document.body.removeChild(ta)
-    ElMessage({ message: tx('Copied'), type: 'success', duration: 1500 })
-  }
+  const copied = await copyToClipboard(text)
+  ElMessage({ message: tx(copied ? 'Copied' : 'Copy failed. Select the text and copy it manually.'), type: copied ? 'success' : 'warning', duration: 3000 })
 }
 </script>
