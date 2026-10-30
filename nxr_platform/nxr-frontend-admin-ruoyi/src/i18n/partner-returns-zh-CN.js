@@ -49,6 +49,7 @@ export default {
   "Ready to return": "可回寄",
   "Recheck required": "需要重新核对",
   "Not cleared": "未完成核对",
+  "Not available for return": "暂不可回寄",
   "Check card": "逐卡核对",
   "{p1} cards from {p2} orders and {p3} submits": "共 {p1} 张卡，来自 {p2} 个订单、{p3} 个送评批次",
   "Clear selection": "清空选择",

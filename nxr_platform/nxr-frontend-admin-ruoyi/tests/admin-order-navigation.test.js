@@ -2,10 +2,22 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import vm from 'node:vm'
 import { readFileSync } from 'node:fs'
-import { orderDetailSection, orderManualStatuses, isPartnerOrder, paymentOrderStatuses } from '../src/views/nxr/orders/orderPresentation.js'
+import { orderDetailSection, orderManualStatuses, isPartnerOrder, paymentOrderStatuses, orderChannelFromRoute, showIntakeLookup } from '../src/views/nxr/orders/orderPresentation.js'
 
 const source = readFileSync(new URL('../src/views/nxr/orders/index.vue', import.meta.url), 'utf8')
 const loadOrdersSource = source.slice(source.indexOf('function loadOrders('), source.indexOf('function resetQuery('))
+
+test('scan-based lookup remains in C and mixed views, and is hidden in B contexts', () => {
+  assert.equal(orderChannelFromRoute('partner', false), 'partner')
+  assert.equal(orderChannelFromRoute('individual', true), 'individual')
+  assert.equal(orderChannelFromRoute(undefined, true), 'partner')
+  assert.equal(orderChannelFromRoute(undefined, false), undefined)
+  assert.equal(showIntakeLookup('partner', false, null), false)
+  assert.equal(showIntakeLookup(undefined, true, { orderChannel: 'partner' }), false)
+  assert.equal(showIntakeLookup('individual', false, null), true)
+  assert.equal(showIntakeLookup(undefined, true, { orderChannel: 'individual' }), true)
+  assert.equal(showIntakeLookup(undefined, false, null), true)
+})
 
 function paginationContext(page = 2) {
   const calls = []

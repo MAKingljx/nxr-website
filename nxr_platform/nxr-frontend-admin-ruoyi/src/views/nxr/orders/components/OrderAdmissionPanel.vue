@@ -72,8 +72,9 @@
         </div>
       </div>
 
+      <el-button v-if="admission.partnerSubmitBatchId" type="primary" @click="openSubmit">{{ $tx('Review Submit') }}</el-button>
       <el-form
-        v-if="canDecide"
+        v-if="canDecide && !admission.partnerSubmitBatchId"
         v-hasPermi="['nxr:order:admission','nxr:order:manage']"
         label-position="top"
         class="decision-form"
@@ -165,6 +166,8 @@
 <script setup>
 import { localizeOrderTerms, localizeOrderEventDetail } from '@/i18n'
 import { computed, getCurrentInstance, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ADMIN_BATCHES_PATH, ADMIN_RETURNS_PATH } from '@/utils/adminOrderNavigation'
 import { decideOrderAdmission, getOrderAdmission, getOrderAdmissionConfig, updateOrderAdmissionConfig } from '@/api/nxr/orderAdmission'
 import OrderApplicationPhoto from './OrderApplicationPhoto.vue'
 
@@ -177,6 +180,8 @@ const props = defineProps({
 })
 const emit = defineEmits(['changed'])
 const { proxy } = getCurrentInstance()
+const router = useRouter(), route = useRoute()
+function openSubmit() { if (admission.value?.partnerSubmitBatchId) void router.push({ path: route.meta.adminUnified ? ADMIN_BATCHES_PATH : ADMIN_RETURNS_PATH, query: { batchId: String(admission.value.partnerSubmitBatchId), ...(route.meta.adminUnified ? {} : { tab: 'submissions' }) } }) }
 const loading = ref(false)
 const admission = ref(null)
 const decisionNote = ref('')

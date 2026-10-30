@@ -122,6 +122,7 @@ test('system timeline titles switch language without changing parcel delivery sc
   const cases = [
     ['application_submitted', 'Application submitted', '申请已提交'],
     ['batch_inbound_shipped', 'Agent parcel shipped to NXR', '代理包裹已寄往 NXR'],
+    ['batch_inbound_received', 'NXR received the agent parcel', 'NXR 已签收送评包裹'],
     ['batch_return_shipped', 'Agent return parcel shipped', '寄回代理的包裹已寄出'],
     ['batch_delivered', 'Agent return parcel delivered', '回寄包裹已送达代理'],
     ['partner_return_shipped', 'Cards shipped to partner', '卡片已寄回代理'],

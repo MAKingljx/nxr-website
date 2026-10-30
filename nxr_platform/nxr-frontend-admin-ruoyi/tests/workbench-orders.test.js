@@ -27,12 +27,14 @@ test('partial image uploads keep the retry key fingerprint while changed input s
   value.cards[0].front.file.lastModified++
   assert.notDeepEqual(draftFingerprint(value), before)
 })
-test('partial delivery is incomplete and missing counts do not become zero', () => {
+test('return progress stays hidden until at least one card starts returning', () => {
   assert.equal(orderReturnProgress({ cardCount: 3 }), null)
   assert.equal(orderReturnProgress({ cardCount: 3, deliveredCardCount: null, returnShippedCardCount: null }), null)
+  assert.equal(orderReturnProgress({ cardCount: 3, deliveredCardCount: 0, returnShippedCardCount: 0 }), null)
   assert.deepEqual(orderReturnProgress({ cardCount: 3, deliveredCardCount: 1, returnShippedCardCount: 1 }), { total: 3, delivered: 1, shipped: 1, complete: false })
+  assert.deepEqual(orderReturnProgress({ cardCount: 3, deliveredCardCount: 0, returnShippedCardCount: 1 }), { total: 3, delivered: 0, shipped: 1, complete: false })
   assert.equal(orderReturnProgress({ cardCount: 3, deliveredCardCount: 3, returnShippedCardCount: 0 }).complete, true)
-  assert.equal(orderReturnProgress({ cardCount: 0, deliveredCardCount: 0, returnShippedCardCount: 0 }).complete, false)
+  assert.equal(orderReturnProgress({ cardCount: 0, deliveredCardCount: 0, returnShippedCardCount: 0 }), null)
 })
 test('only complete unsubmitted orders can enter outbound Submit selection', () => {
   const ready = { id: 1, canSubmit: true }

@@ -3,6 +3,14 @@ export const orderDetailSections = ['admission', 'warehouse', 'cards', 'finance'
 export const paymentOrderStatuses = new Set(['awaiting_payment', 'payment_review', 'payment_expired', 'payment_exception'])
 export const isPartnerOrder = order => order?.orderChannel ? order.orderChannel === 'partner' : Boolean(order?.merchantBatch)
 
+export function orderChannelFromRoute(channel, adminUnified) {
+  return channel === 'individual' || channel === 'partner' ? channel : adminUnified ? 'partner' : undefined
+}
+
+export function showIntakeLookup(channel, detailOpen, detail) {
+  return channel !== 'partner' && !(detailOpen && detail && isPartnerOrder(detail))
+}
+
 export function orderDetailSection(order, requested) {
   if (orderDetailSections.includes(requested) && !(requested === 'finance' && isPartnerOrder(order))) return requested
   const status = order?.statusCode

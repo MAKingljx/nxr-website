@@ -5,6 +5,7 @@ import { customerSession, submitPaymentProof, type GradingOrder } from '../lib/c
 import { createCheckout, fetchPaymentOptions, capturePaypal, type Checkout, type PaymentOption } from '../lib/payments'
 import { fetchOrderCreditQuote, payFromWallet, sameCreditAmount, type OrderCreditQuote } from '../lib/merchant'
 import { formatMoney, formatPoints } from '../lib/orderProgress'
+import { secureUuid } from '../lib/secureUuid'
 import PortalQrCode from './PortalQrCode.vue'
 const props = defineProps<{ order: GradingOrder; refreshTick?: string }>()
 const emit = defineEmits<{ refresh: [] }>()
@@ -39,7 +40,7 @@ function attemptKey(provider: string) {
   const key = `nxr:payment:${props.order.orderNo}:${provider}`
   const stored = sessionStorage.getItem(key)
   if (stored) return stored
-  const value = crypto.randomUUID()
+  const value = secureUuid()
   sessionStorage.setItem(key, value)
   return value
 }

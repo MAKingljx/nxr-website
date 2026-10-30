@@ -61,9 +61,11 @@ type TimelineTextKey = keyof typeof privateTrackingMessages.en.timeline
 // event may carry a custom title; translating by status alone would erase it.
 const systemTimelineTitles: Record<string, readonly [string, TimelineTextKey]> = {
   order_created: ['Order created', 'orderCreated'],
+  intake_order_received: ['Intake received', 'intakeReceived'],
   payment_pending: ['Awaiting payment', 'awaitingPayment'],
   application_submitted: ['Application submitted', 'applicationSubmitted'],
   batch_inbound_shipped: ['Agent parcel shipped to NXR', 'agentParcelShipped'],
+  batch_inbound_received: ['NXR received the agent parcel', 'agentParcelReceived'],
   batch_return_shipped: ['Agent return parcel shipped', 'agentReturnShipped'],
   batch_delivered: ['Agent return parcel delivered', 'agentReturnDelivered'],
   partner_return_shipped: ['Cards shipped to partner', 'cardsReturnShipped'],

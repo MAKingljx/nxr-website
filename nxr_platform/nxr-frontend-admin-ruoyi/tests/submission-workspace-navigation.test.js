@@ -154,7 +154,7 @@ test('fulfillment requires an authorized order menu and existing staff permissio
   assert.equal(added.children[0].path, 'partner-fulfillment')
   assert.equal(`${added.path}/${added.children[0].path}`, '/nxr/submissions/partner-fulfillment')
   assert.equal(added.children[0].component, 'nxr/partner-fulfillment/index')
-  assert.deepEqual(added.permissions, ['nxr:order:manage', 'nxr:order:workbench', 'nxr:order:shipping', 'nxr:order:batch'])
+  assert.deepEqual(added.permissions, ['nxr:order:manage', 'nxr:order:workbench', 'nxr:order:shipping', 'nxr:order:batch', 'nxr:order:admission'])
   assert.deepEqual(added.children[0].permissions, added.permissions)
   assert.equal(addPartnerFulfillmentRoute(result).length, result.length)
   assert.equal(addPartnerFulfillmentRoute([{ ...source[0], hidden: true }]).at(-1).hidden, true)

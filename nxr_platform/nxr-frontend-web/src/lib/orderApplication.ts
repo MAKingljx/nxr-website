@@ -1,5 +1,6 @@
 import { customerRequest, customerSession } from './customer'
 import { apiBaseUrl } from './api'
+import { secureUuid } from './secureUuid'
 
 export type ApplicationCard = {
   localId: string
@@ -19,7 +20,7 @@ export type ApplicationCard = {
 }
 
 export const emptyApplicationCard = (): ApplicationCard => ({
-  localId: crypto.randomUUID(), cardName: '', year: '', rarity: '', productType: 'graded_card', category: 'trading_card',
+  localId: secureUuid(), cardName: '', year: '', rarity: '', productType: 'graded_card', category: 'trading_card',
   brandName: '', setName: '', cardNumber: '', languageCode: 'EN', declaredValue: null, itemNote: '',
   frontPhotoId: null, backPhotoId: null,
 })

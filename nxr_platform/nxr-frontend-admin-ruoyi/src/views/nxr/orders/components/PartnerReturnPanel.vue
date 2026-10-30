@@ -2,15 +2,16 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { activeLocale, tx, localizeBackendMessage } from '@/i18n'
 import auth from '@/plugins/auth'
+import { secureUuid } from '@/utils/secureUuid'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { listPartnerReturnCompanies, listPartnerReturnCards, checkPartnerReturnCard, listPartnerReturns, getPartnerReturn, createPartnerReturn, deliverPartnerReturn } from '@/api/nxr/partnerReturns'
+import { listPartnerReturnCompanies, listPartnerReturnCards, listPartnerReturns, getPartnerReturn, createPartnerReturn, deliverPartnerReturn } from '@/api/nxr/partnerReturns'
+import { partnerReturnReadinessLabel } from '../partnerReturnLabels'
 const emit = defineEmits(['open-order', 'changed'])
 const canView = auth.hasPermiOr(['nxr:order:manage','nxr:order:shipping','nxr:order:batch','nxr:order:workbench'])
 const canWrite = auth.hasPermiOr(['nxr:order:manage','nxr:order:shipping'])
 const activeTab = ref('cards'), companies = ref([]), companyId = ref(), query = ref(''), page = ref(1), pageSize = ref(20), total = ref(0)
 const rows = ref([]), loading = ref(false), loadError = ref(''), working = ref(false)
 const selected = ref(new Map()), tableRef = ref()
-const checkOpen = ref(false), checkCard = ref(null), checkForm = ref({ certId:'', qualityPassed:false, packingPassed:false, note:'' }), checkError = ref('')
 const createOpen = ref(false), createForm = ref({carrierName:'',trackingNumber:'',note:''}), createError = ref('')
 const detailOpen = ref(false), detail = ref(null)
 let generation = 0, detailGeneration = 0, disposed = false, attempt = null
@@ -51,31 +52,15 @@ async function loadCompanies() {
   try {const result=await listPartnerReturnCompanies({});if(!disposed)companies.value=Array.isArray(result.data)?result.data:result.data?.items||[]}
   catch(e) {if(!disposed)loadError.value=e.message||tx('Unable to load partner companies.')}
 }
-function openCheck(card) {
-  if (!canWrite || working.value) return
-  checkCard.value = card
-  checkForm.value = {certId:'',qualityPassed:false,packingPassed:false,note:''}
-  checkError.value='';checkOpen.value=true
-}
-async function saveCheck() {
-  if (!checkCard.value || !checkForm.value.certId.trim() || !checkForm.value.qualityPassed || !checkForm.value.packingPassed || working.value) return
-  working.value=true;checkError.value=''
-  try {
-    await checkPartnerReturnCard(checkCard.value.orderItemId,{...checkForm.value,certId:checkForm.value.certId.trim()})
-    if(disposed)return
-    checkOpen.value=false;clearSelection();await load();ElMessage.success(tx('Card return checks saved.'))
-  } catch(e){if(!disposed)checkError.value=e.message||tx('Card checks were not saved.')}
-  finally {if(!disposed)working.value=false}
-}
 function openCreate() {if(!selectedCards.value.length || !selectionCompatible.value)return; createForm.value={carrierName:'',trackingNumber:'',note:''};createError.value='';createOpen.value=true}
 async function submitParcel() {
   if(working.value || !selectionCompatible.value || !selectedCards.value.length)return
   if(!createForm.value.carrierName.trim() || !createForm.value.trackingNumber.trim()){createError.value=tx('Enter a carrier and tracking number.');return}
   const body={orderItemIds:selectedCards.value.map(c=>c.orderItemId).sort((a,b)=>a-b),carrierName:createForm.value.carrierName.trim(),trackingNumber:createForm.value.trackingNumber.trim(),note:createForm.value.note.trim()}
   const fingerprint=JSON.stringify(body)
-  if(!attempt || attempt.fingerprint!==fingerprint)attempt={fingerprint,key:crypto.randomUUID()}
   working.value=true;createError.value=''
   try {
+    if(!attempt || attempt.fingerprint!==fingerprint)attempt={fingerprint,key:secureUuid()}
     const result=await createPartnerReturn({...body,requestKey:attempt.key})
     if(disposed)return
     attempt=null;createOpen.value=false;clearSelection();detail.value=result.data;detailOpen.value=true
@@ -100,7 +85,7 @@ if(canView){loadCompanies();load()}
 
 <template>
   <section class="partner-returns" v-if="canView" data-testid="partner-return-panel">
-    <div class="return-title"><div><h2>{{ $tx('Return to B') }}</h2></div><el-button v-if="canWrite" type="primary" icon="Plus" :disabled="!selectedCards.length || !selectionCompatible || working" @click="openCreate">{{ $tx('Create return parcel') }}</el-button></div>
+    <div class="return-title"><div><h2>{{ $tx('Return to B') }}</h2></div><el-button v-if="canWrite" type="primary" icon="Plus" :disabled="!selectedCards.length || !selectionCompatible || working" data-testid="partner-create-parcel" @click="openCreate">{{ $tx('Create return parcel') }}</el-button></div>
     <el-tabs v-model="activeTab" @tab-change="changeTab"><el-tab-pane :label="$tx('Return card list')" name="cards" /><el-tab-pane :label="$tx('Return parcels')" name="parcels" /></el-tabs>
     <el-form inline class="return-filters" @submit.prevent="load(true)">
       <el-form-item :label="$tx('Partner company')"><el-select v-model="companyId" filterable clearable :placeholder="$tx('All partner companies')" @change="changeFilter"><el-option v-for="company in companies" :key="company.id" :value="company.id" :label="company.displayName || company.companyName" /></el-select></el-form-item>
@@ -109,14 +94,14 @@ if(canView){loadCompanies();load()}
     </el-form>
     <el-alert v-if="loadError" :title="localizeBackendMessage(loadError)" type="error" :closable="false" class="mb12" />
     <template v-if="activeTab==='cards'">
-      <el-table ref="tableRef" :data="rows" row-key="orderItemId" v-loading="loading" @selection-change="selectionChanged">
+      <el-table ref="tableRef" :data="rows" row-key="orderItemId" v-loading="loading" data-testid="partner-return-cards" @selection-change="selectionChanged">
         <el-table-column v-if="canWrite" type="selection" width="48" reserve-selection :selectable="row=>Boolean(row.eligible) && !working" />
         <el-table-column :label="$tx('Order')" min-width="155"><template #default="{row}"><el-button type="primary" link @click="emit('open-order',row.orderId)">{{row.orderReference || row.orderNo}}</el-button><small>{{row.batchNo}}</small></template></el-table-column>
         <el-table-column :label="$tx('Partner company')" prop="companyName" min-width="145" show-overflow-tooltip />
         <el-table-column :label="$tx('Card Name')" prop="cardName" min-width="170" />
         <el-table-column :label="$tx('Certificate ID')" prop="certId" min-width="125" />
-        <el-table-column :label="$tx('Return readiness')" min-width="235"><template #default="{row}"><el-tag :type="row.eligible?'success':row.checked?'warning':'info'">{{['return_shipped','delivered'].includes(row.itemStatus)?$tx(row.itemStatus==='delivered'?'Delivered to B':'Returning to B'):row.eligible?$tx('Ready to return'):$tx('Not cleared')}}</el-tag><small v-if="row.blockedReason && !['return_shipped','delivered'].includes(row.itemStatus)">{{localizeBackendMessage(row.blockedReason)}}</small></template></el-table-column>
-        <el-table-column :label="$tx('Actions')" width="150"><template #default="{row}"><el-button v-if="canWrite && !['return_shipped','delivered','cancelled'].includes(row.itemStatus)" type="primary" link :disabled="working || !row.certId" @click="openCheck(row)">{{$tx('Check card')}}</el-button><el-button link :disabled="working" @click="emit('open-order',row.orderId)">{{$tx('Grading')}}</el-button></template></el-table-column>
+        <el-table-column :label="$tx('Return readiness')" min-width="235"><template #default="{row}"><el-tag :type="row.eligible?'success':'info'">{{$tx(partnerReturnReadinessLabel(row))}}</el-tag><small v-if="row.blockedReason && !['return_shipped','delivered'].includes(row.itemStatus)">{{localizeBackendMessage(row.blockedReason)}}</small></template></el-table-column>
+        <el-table-column :label="$tx('Actions')" width="150"><template #default="{row}"><el-button link :disabled="working" @click="emit('open-order',row.orderId)">{{$tx('Grading')}}</el-button></template></el-table-column>
       </el-table>
       <div v-if="selectedCards.length" class="selection-bar"><strong>{{$tx('{p1} cards from {p2} orders and {p3} submits',{p1:selectedCards.length,p2:selectedOrders,p3:selectedSubmits})}}</strong><el-button link @click="clearSelection">{{$tx('Clear selection')}}</el-button><el-alert v-if="!selectionCompatible" :title="$tx('Select cards for the same B partner and return address.')" type="warning" :closable="false" /></div>
     </template>
@@ -132,14 +117,6 @@ if(canView){loadCompanies();load()}
     </el-table>
     <pagination v-show="total>0" :total="total" v-model:page="page" v-model:limit="pageSize" @pagination="load()" />
 
-    <el-drawer v-model="checkOpen" :title="$tx('Card return checks')" size="min(650px,100vw)" append-to-body :close-on-click-modal="!working" :close-on-press-escape="!working" :show-close="!working">
-      <template v-if="checkCard"><h3>{{checkCard.cardName}}</h3><p>{{checkCard.orderReference || checkCard.orderNo}} · {{checkCard.batchNo}}</p>
-        <el-alert v-if="checkCard.blockedReason" :title="localizeBackendMessage(checkCard.blockedReason)" type="info" :closable="false" class="mb12" />
-        <div class="return-images"><figure v-if="checkCard.frontImageUrl"><el-image :src="checkCard.frontImageUrl" :preview-src-list="[checkCard.frontImageUrl]" fit="contain" preview-teleported /><figcaption>{{$tx('Front')}}</figcaption></figure><figure v-if="checkCard.backImageUrl"><el-image :src="checkCard.backImageUrl" :preview-src-list="[checkCard.backImageUrl]" fit="contain" preview-teleported /><figcaption>{{$tx('Back')}}</figcaption></figure></div>
-        <el-form label-position="top" :disabled="working" @submit.prevent="saveCheck"><el-form-item :label="$tx('Scan or enter the physical certificate number')" required><el-input v-model="checkForm.certId" maxlength="128" /></el-form-item><el-form-item><el-checkbox v-model="checkForm.qualityPassed">{{$tx('Final quality check passed for this card')}}</el-checkbox></el-form-item><el-form-item><el-checkbox v-model="checkForm.packingPassed">{{$tx('Card, label and protective packing match')}}</el-checkbox></el-form-item><el-form-item :label="$tx('Note')"><el-input v-model="checkForm.note" type="textarea" maxlength="2000" /></el-form-item><el-alert v-if="checkError" :title="localizeBackendMessage(checkError)" type="error" :closable="false" /></el-form>
-      </template>
-      <template #footer><el-button type="primary" :loading="working" :disabled="!checkForm.certId.trim() || !checkForm.qualityPassed || !checkForm.packingPassed" @click="saveCheck">{{$tx('Save card checks')}}</el-button></template>
-    </el-drawer>
     <el-drawer v-model="createOpen" :title="$tx('Create return parcel')" size="min(950px,100vw)" append-to-body :close-on-click-modal="!working" :close-on-press-escape="!working" :show-close="!working">
       <div class="selection-summary"><strong>{{$tx('{p1} cards from {p2} orders and {p3} submits',{p1:selectedCards.length,p2:selectedOrders,p3:selectedSubmits})}}</strong><p>{{addressText(selectedCards[0]?.returnAddress)}}</p></div>
       <el-table :data="selectedCards" size="small"><el-table-column :label="$tx('Order')"><template #default="{row}">{{row.orderReference || row.orderNo}}</template></el-table-column><el-table-column :label="$tx('Submit')" prop="batchNo" /><el-table-column :label="$tx('Card Name')" prop="cardName" /><el-table-column :label="$tx('Certificate ID')" prop="certId" /></el-table>

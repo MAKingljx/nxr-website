@@ -8,6 +8,13 @@ import { transformSync } from 'esbuild'
 import * as grading from '../src/views/nxr/orders/gradingForm.js'
 
 function deferred() { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
+
+test('B grading follows the existing receipt and shipped-card states', () => {
+  for (const status of ['received', 'grading', 'review', 'quality_check', 'quality_hold']) assert.equal(grading.partnerGradingBlock(status, 'received'), '')
+  for (const status of ['awaiting_inbound', 'inbound_shipped', 'intake_exception', 'completed', 'cancelled']) assert.notEqual(grading.partnerGradingBlock(status, 'received'), '')
+  assert.notEqual(grading.partnerGradingBlock('grading', 'return_shipped'), '')
+  assert.notEqual(grading.partnerGradingBlock('grading', 'delivered'), '')
+})
 function setupPanel(api = {}) {
   const descriptor = parse(readFileSync(new URL('../src/views/nxr/orders/components/OrderWorkbenchPanel.vue', import.meta.url), 'utf8')).descriptor
   const compiled = transformSync(compileScript(descriptor, { id: 'grading' }).content, { format: 'cjs' }).code

@@ -1,3 +1,10 @@
+export function partnerGradingBlock(orderStatus, itemStatus) {
+  if (['return_shipped', 'delivered'].includes(itemStatus)) return 'This card has already been shipped.'
+  if (orderStatus === 'intake_exception') return 'Resolve the receipt exception before grading.'
+  if (['awaiting_inbound', 'inbound_shipped'].includes(orderStatus)) return 'Confirm receipt before grading.'
+  return ['received', 'grading', 'review', 'quality_check', 'quality_hold'].includes(orderStatus) ? '' : 'Grading is unavailable at this stage.'
+}
+
 export const scoreFields = ['centering', 'edges', 'corners', 'surface'].map(name => ({
   key: `${name}Score`, label: `entries.${name}`
 }))

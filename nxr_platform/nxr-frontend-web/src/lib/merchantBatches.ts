@@ -1,5 +1,5 @@
 import { customerRequest } from './customer'
-export type BatchOrder = { orderId: number; orderNo: string; clientReference: string; admissionStatus?: string | null; clientDisplayName?: string; statusCode: string; cardCount?: number; totalCardCount?: number }
+export type BatchOrder = { orderId: number; orderNo: string; clientReference: string; intakeNo?: string | null; admissionStatus?: string | null; clientDisplayName?: string; statusCode: string; cardCount?: number; totalCardCount?: number }
 export type MerchantBatch = { id?: number; batchId?: number; batchNo: string; batchName: string; statusCode: string; createdAt: string; orders?: BatchOrder[]; shipments?: Array<{ directionCode: string; carrierName: string; trackingNumber: string }> }
 export type BatchImportResult = {
   batchId: number; batchNo: string; statusCode: string; acceptedRows: number; rejectedRows: number;
@@ -15,6 +15,11 @@ export type PrivateReturnParcel = {
   parcelNo: string; carrierName: string; trackingNumber: string; statusCode: string;
   shippedAt: string | null; deliveredAt: string | null; cards: PrivateReturnCard[];
 }
+export type PrivateOrderCard = {
+  id: number; cardName: string; brandName: string | null; setName: string | null; cardNumber: string | null;
+  languageCode: string | null; productType: string | null; category: string | null; statusCode: string;
+  certificateId: string | null; hasFrontPhoto: boolean; hasBackPhoto: boolean
+}
 export type PrivateOrderTracking = {
   orderNo: string; clientReference: string; admissionStatus?: string | null; statusCode: string;
   cardCount?: number; totalCardCount?: number;
@@ -23,8 +28,10 @@ export type PrivateOrderTracking = {
   // The public endpoint scopes each parcel's cards to this order, including a
   // parcel that physically carries cards belonging to other orders.
   returnParcels?: PrivateReturnParcel[];
+  cards?: PrivateOrderCard[];
 }
-export const fetchPrivateOrderTracking = (token: string) => customerRequest<PrivateOrderTracking>(`/api/public/merchant-order-tracking/${encodeURIComponent(token)}`, {}, false)
-export const localTrackingUrl = (token: string) => `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}/track/${encodeURIComponent(token)}`
+export const verifyPrivateOrderTracking = (token: string, contact: string) => customerRequest<{ accessToken: string; expiresInSeconds: number }>('/api/public/merchant-order-tracking/verify', { method: 'POST', body: JSON.stringify({ token, contact }), cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer' }, false)
+export const fetchPrivateOrderTracking = (token: string, accessToken: string) => customerRequest<PrivateOrderTracking>('/api/public/merchant-order-tracking/order', { headers: { 'X-NXR-Tracking-Token': token, 'X-NXR-Tracking-Access': accessToken }, cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer' }, false)
+export const localTrackingUrl = (token: string) => `${window.location.origin}${import.meta.env.BASE_URL.replace(/\/$/, '')}/track#${encodeURIComponent(token)}`
 
 export const revokeTrackingLink = (batchNo: string, orderNo: string) => customerRequest(`/api/customer/merchant/batches/${encodeURIComponent(batchNo)}/orders/${encodeURIComponent(orderNo)}/tracking-token`, { method: 'DELETE' })

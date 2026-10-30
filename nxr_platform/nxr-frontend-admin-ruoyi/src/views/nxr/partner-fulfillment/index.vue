@@ -6,7 +6,10 @@ import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
 import MerchantBatchPanel from '../orders/components/MerchantBatchPanel.vue'
 import PartnerReturnPanel from '../orders/components/PartnerReturnPanel.vue'
 import { ADMIN_RETURNS_PATH } from '@/utils/adminOrderNavigation'
+import auth from '@/plugins/auth'
 const router=useRouter(),route=useRoute(),tab=ref(route.query.tab==='returns'?'returns':'submissions')
+const canViewReturns = auth.hasPermiOr(['nxr:order:manage','nxr:order:shipping','nxr:order:batch','nxr:order:workbench'])
+if (!canViewReturns) tab.value = 'submissions'
 const { t } = useI18n()
 function openOrder(orderId){router.push({path:'/nxr/submissions/orders',query:{orderId:String(orderId),section:'cards'}})}
 </script>
@@ -21,7 +24,7 @@ function openOrder(orderId){router.push({path:'/nxr/submissions/orders',query:{o
       <el-tab-pane :label="$tx('Submission batches')" name="submissions">
         <merchant-batch-panel v-if="tab==='submissions'" @open-order="openOrder" @open-returns="tab='returns'" />
       </el-tab-pane>
-      <el-tab-pane :label="$tx('Return to B')" name="returns">
+      <el-tab-pane v-if="canViewReturns" :label="$tx('Return to B')" name="returns">
         <partner-return-panel v-if="tab==='returns'" @open-order="openOrder" />
       </el-tab-pane>
     </el-tabs>
