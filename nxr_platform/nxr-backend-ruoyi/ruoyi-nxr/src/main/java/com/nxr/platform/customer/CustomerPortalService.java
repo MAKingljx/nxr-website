@@ -74,6 +74,7 @@ public class CustomerPortalService {
     private CommercePolicyService commercePolicyService;
     private OrderAccessScopeService orderAccessScopeService;
     private AgentOrderCancellationService agentOrderCancellationService;
+    private PartnerReturnService partnerReturnService;
 
     public CustomerPortalService(JdbcClient jdbcClient, JdbcTemplate jdbcTemplate) {
         this(jdbcClient, jdbcTemplate, null, null, null);
@@ -158,6 +159,11 @@ public class CustomerPortalService {
     @Autowired(required = false)
     public void setAgentOrderCancellationService(AgentOrderCancellationService agentOrderCancellationService) {
         this.agentOrderCancellationService = agentOrderCancellationService;
+    }
+
+    @Autowired(required = false)
+    public void setPartnerReturnService(PartnerReturnService partnerReturnService) {
+        this.partnerReturnService = partnerReturnService;
     }
 
     public CardCommunityResponse loadCardCommunity(String certificateId) {
@@ -515,7 +521,7 @@ public class CustomerPortalService {
             order.contactName(), order.contactPhone(), order.returnAddressLine1(), order.returnAddressLine2(),
             order.returnCity(), order.returnRegion(), order.returnPostalCode(), order.returnCountry(),
             order.customerNote(), null, order.intakeCode(), order.packingSlipCode(), order.shippingLabelCreatedAt(),
-            order.customer(), order.createdAt(), order.updatedAt(), order.items(), order.payments(), order.shipments(), order.timeline(), order.merchantBatch(), order.orderChannel()
+            order.customer(), order.createdAt(), order.updatedAt(), order.items(), order.payments(), order.shipments(), order.timeline(), order.merchantBatch(), order.orderChannel(), order.partnerCardReturnEligible()
         );
     }
 
@@ -1346,7 +1352,7 @@ public class CustomerPortalService {
                 new CustomerReference(rs.getLong("customer_id"), rs.getString("customer_email"), rs.getString("customer_display_name")),
                 rs.getObject("created_at", LocalDateTime.class),
                 rs.getObject("updated_at", LocalDateTime.class),
-                List.of(), List.of(), List.of(), List.of(), null, rs.getString("order_channel")
+                List.of(), List.of(), List.of(), List.of(), null, rs.getString("order_channel"), false
             ))
             .optional()
             .map(this::withOrderRelations);
@@ -1361,7 +1367,8 @@ public class CustomerPortalService {
             base.returnCity(), base.returnRegion(), base.returnPostalCode(), base.returnCountry(),
             base.customerNote(), base.internalNote(), base.intakeCode(), base.packingSlipCode(), base.shippingLabelCreatedAt(),
             base.customer(), base.createdAt(), base.updatedAt(),
-            listOrderItems(base.id()), listPayments(base.id()), listShipments(base.id()), listTimeline(base.id()), merchantBatchLink(base.id()), base.orderChannel()
+            listOrderItems(base.id()), listPayments(base.id()), listShipments(base.id()), listTimeline(base.id()), merchantBatchLink(base.id()), base.orderChannel(),
+            "partner".equals(base.orderChannel()) && partnerReturnService != null && partnerReturnService.supportsWholeOrder(base.id())
         );
     }
 
@@ -2277,7 +2284,8 @@ public class CustomerPortalService {
         List<ShipmentRecord> shipments,
         List<OrderTimelineEvent> timeline,
         MerchantBatchLink merchantBatch,
-        String orderChannel
+        String orderChannel,
+        boolean partnerCardReturnEligible
     ) {
         public OrderDetailResponse(long id, String orderNo, String statusCode, String admissionStatus,
             String serviceLevelCode, String returnShippingOptionCode, String returnShippingOptionName,
@@ -2293,7 +2301,7 @@ public class CustomerPortalService {
                 totalCardCount,serviceFee,returnShippingFee,totalAmount,currencyCode,contactName,contactPhone,
                 returnAddressLine1,returnAddressLine2,returnCity,returnRegion,returnPostalCode,returnCountry,
                 customerNote,internalNote,intakeCode,packingSlipCode,shippingLabelCreatedAt,customer,createdAt,
-                updatedAt,items,payments,shipments,timeline,merchantBatch,merchantBatch==null?"individual":"partner");
+                updatedAt,items,payments,shipments,timeline,merchantBatch,merchantBatch==null?"individual":"partner",false);
         }
     }
 

@@ -45,6 +45,11 @@ nxr:
     storage-root: ${NXR_EXPORTS_STORAGE_ROOT:./.local-data/exports}
   public-site:
     base-url: ${NXR_PUBLIC_SITE_BASE_URL:http://127.0.0.1:3000}
+  tracking:
+    # Exact proxy IPs only; configure after verifying proxies append or sanitize X-Forwarded-For.
+    trusted-proxies: ${NXR_TRACKING_TRUSTED_PROXIES:}
+    # Optional additional customer-site origins, comma-separated; wildcard patterns are rejected.
+    allowed-origins: ${NXR_TRACKING_ALLOWED_ORIGINS:}
   customer:
     session-days: ${NXR_CUSTOMER_SESSION_DAYS:30}
   payments:

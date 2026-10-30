@@ -499,15 +499,27 @@ public class OrderFulfillmentService {
     public AdminOperationsResponse receiveOrder(long orderId, long adminUserId, ReceiveOrderRequest request) {
         OrderRow order = lockOrder(orderId);
         assertPaymentNotOnHold(order);
+        boolean orderBasedPartner = partnerReturnService != null && partnerReturnService.supportsWholeOrder(order.id());
+        if (orderBasedPartner && "received".equals(order.statusCode()) && request.receivedCount()!=null
+            && (request.exceptionTypes()==null || request.exceptionTypes().isEmpty())) {
+            int matches=jdbcClient.sql("""
+                SELECT COUNT(*) FROM order_intake_receipt r WHERE r.id=(
+                  SELECT id FROM order_intake_receipt WHERE order_id=:id ORDER BY received_at DESC,id DESC LIMIT 1
+                ) AND r.received_count=:count AND COALESCE(r.package_no,'')=:package AND COALESCE(r.condition_note,'')=:note
+                """).param("id",order.id()).param("count",request.receivedCount())
+                .param("package",clean(request.packageNo(),128)).param("note",clean(request.conditionNote(),1000))
+                .query(Integer.class).single();
+            if(matches==1)return loadAdminOperations(order.id());
+        }
         if (!Set.of("awaiting_inbound", "inbound_shipped", "intake_exception").contains(order.statusCode())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "This order is not ready for warehouse intake");
         }
-        String suppliedCode = requireText(request.intakeCode(), "Intake code", 64).toUpperCase(Locale.ROOT);
-        if (order.intakeCode() == null || !order.intakeCode().equalsIgnoreCase(suppliedCode)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Intake code does not match this order");
-        }
-        if (orderWorkbenchService != null) {
-            orderWorkbenchService.assertIntakeReady(order.id());
+        if (!orderBasedPartner) {
+            String suppliedCode = requireText(request.intakeCode(), "Intake code", 64).toUpperCase(Locale.ROOT);
+            if (order.intakeCode() == null || !order.intakeCode().equalsIgnoreCase(suppliedCode)) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Intake code does not match this order");
+            }
+            if (orderWorkbenchService != null) orderWorkbenchService.assertIntakeReady(order.id());
         }
         int receivedCount = request.receivedCount() == null ? -1 : request.receivedCount();
         if (receivedCount < 0 || receivedCount > 1000) {

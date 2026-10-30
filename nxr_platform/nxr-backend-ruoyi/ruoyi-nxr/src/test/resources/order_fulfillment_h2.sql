@@ -94,6 +94,7 @@ CREATE TABLE merchant_order_batch_item (
     order_id BIGINT NOT NULL UNIQUE,
     row_no INT NOT NULL,
     client_reference VARCHAR(128) NOT NULL,
+    intake_no VARCHAR(64),
     client_display_name VARCHAR(128),
     client_contact_hint VARCHAR(191),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,

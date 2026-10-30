@@ -96,11 +96,14 @@ class MerchantBatchServiceTest {
         assertThat(first.trackingUrl()).isEqualTo("https://cards.example.test/portal/track/" + first.trackingToken());
         MerchantBatchService.PublicTrackingResponse publicView = service.publicTracking(first.trackingToken());
         assertThat(publicView.orderNo()).isEqualTo(first.orderNo());
-        assertThat(publicView.clientReference()).isEqualTo("CLIENT-A");
+        assertThat(publicView.clientReference()).isEqualTo(first.orderNo());
         assertThat(publicView.timeline()).isEmpty();
         assertThat(publicView.shipments()).isEmpty();
+        var controller=new MerchantBatchPublicController(service);
+        assertThatThrownBy(()->controller.tracking(first.trackingToken(),null)).hasMessageContaining("401");
+        org.springframework.test.util.ReflectionTestUtils.setField(controller,"trackingAccess",mock(TrackingAccessService.class));
         org.springframework.http.ResponseEntity<MerchantBatchService.PublicTrackingResponse> http =
-            new MerchantBatchPublicController(service).tracking(first.trackingToken());
+            controller.tracking(first.trackingToken(),"verified");
         assertThat(http.getHeaders().getCacheControl()).contains("no-store");
         assertThat(http.getHeaders().getFirst("Referrer-Policy")).isEqualTo("no-referrer");
         assertThatThrownBy(() -> service.requireMerchantBatch(2, result.batchNo()))
@@ -199,6 +202,21 @@ class MerchantBatchServiceTest {
         assertThat(inbound.statusCode()).isEqualTo("inbound_shipped");
         assertThat(inbound.orders()).extracting(MerchantBatchService.BatchOrderItem::statusCode)
             .containsOnly("inbound_shipped");
+        MerchantBatchService.BatchShipment inboundShipment = inbound.shipments().stream()
+            .filter(shipment -> shipment.directionCode().equals("inbound"))
+            .findFirst()
+            .orElseThrow();
+        MerchantBatchService.BatchDetail inboundDelivered = service.markShipmentDelivered(
+            created.batchId(), inboundShipment.id(), 901
+        );
+        assertThat(inboundDelivered.statusCode()).isEqualTo("received");
+        assertThat(inboundDelivered.orders()).extracting(MerchantBatchService.BatchOrderItem::statusCode)
+            .containsOnly("received");
+        assertThat(service.publicTracking(created.rows().get(0).trackingToken()).statusCode()).isEqualTo("received");
+        assertThat(jdbc.queryForList("SELECT status_code FROM grading_order", String.class)).containsOnly("inbound_shipped");
+        assertThat(jdbc.queryForObject(
+            "SELECT COUNT(*) FROM order_timeline_event WHERE event_code='batch_inbound_received'", Integer.class
+        )).isEqualTo(2);
 
         jdbc.update(
             "UPDATE grading_order SET status_code = 'completed' WHERE id IN (SELECT order_id FROM merchant_order_batch_item WHERE batch_id = ?)",

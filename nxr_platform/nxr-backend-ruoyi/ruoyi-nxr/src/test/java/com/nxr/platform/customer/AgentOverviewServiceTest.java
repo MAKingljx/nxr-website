@@ -153,7 +153,7 @@ class AgentOverviewServiceTest {
 
     @Test void relatedRowsAlwaysMatchTheirOwnerEvenWithDamagedHistoricalLinks() {
         jdbc.update("INSERT INTO agent_card VALUES(100,202,11,21)");
-        jdbc.update("INSERT INTO merchant_order_batch_item VALUES(100,41,52)");
+        jdbc.update("INSERT INTO merchant_order_batch_item(id,batch_id,order_id) VALUES(100,41,52)");
         assertThat(first("clients").cardCount()).isEqualTo(2);
         assertThat(first("returns").cardCount()).isEqualTo(2);
         assertThat(first("batches").cardCount()).isEqualTo(2);

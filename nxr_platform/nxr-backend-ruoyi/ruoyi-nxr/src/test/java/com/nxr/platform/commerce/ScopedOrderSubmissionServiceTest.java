@@ -9,6 +9,7 @@ import static org.mockito.Mockito.when;
 
 import com.nxr.platform.admin.AdminSubmissionService;
 import com.nxr.platform.customer.CustomerPortalService;
+import com.nxr.platform.customer.PartnerReturnService;
 import org.h2.jdbcx.JdbcDataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -76,6 +77,16 @@ class ScopedOrderSubmissionServiceTest {
     void requiresTheCurrentWorkbenchOwnerAndAnIntakeScan() {
         assertThrows(ResponseStatusException.class, () -> service.create(8, 10, 11, requestWithActor(999)));
         assertThrows(ResponseStatusException.class, () -> service.create(7, 10, 13, requestWithActor(999)));
+    }
+
+    @Test
+    void verifiedPartnerOrderDoesNotNeedAScanOrWorkbenchSession() {
+        PartnerReturnService returns=mock(PartnerReturnService.class);
+        when(returns.supportsWholeOrder(10)).thenReturn(true);
+        service.setPartnerReturnService(returns);
+        service.create(8,10,13,requestWithActor(999));
+        verify(scope).requireAccessibleOrder(8,10);
+        verify(portal).linkNewOrderItemSubmission(10,13,500,8);
     }
 
     private static AdminSubmissionService.MutateSubmissionRequest requestWithActor(long actor) {

@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS merchant_order_batch_item (
     order_id BIGINT NOT NULL UNIQUE,
     row_no INT NOT NULL,
     client_reference VARCHAR(128) NOT NULL,
+    intake_no VARCHAR(64),
     client_display_name VARCHAR(128),
     client_contact_hint VARCHAR(191),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -30,6 +31,7 @@ CREATE TABLE merchant_batch_tracking_token (
     batch_item_id BIGINT NOT NULL,
     token_hash CHAR(64) NOT NULL UNIQUE,
     token_hint VARCHAR(12) NOT NULL,
+    token_value VARCHAR(64),
     status_code VARCHAR(16) NOT NULL DEFAULT 'active',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     revoked_at TIMESTAMP

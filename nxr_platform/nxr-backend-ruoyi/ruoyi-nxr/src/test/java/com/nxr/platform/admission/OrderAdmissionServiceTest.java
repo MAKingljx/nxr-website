@@ -79,7 +79,8 @@ class OrderAdmissionServiceTest {
               declared_value DECIMAL(12,2),item_note VARCHAR(2000));
             CREATE TABLE customer_account(id BIGINT PRIMARY KEY,account_type_code VARCHAR(32));
             CREATE TABLE merchant_order_batch(id BIGINT PRIMARY KEY,merchant_customer_id BIGINT);
-            CREATE TABLE merchant_order_batch_item(id BIGINT AUTO_INCREMENT PRIMARY KEY,batch_id BIGINT,order_id BIGINT)
+            CREATE TABLE merchant_order_batch_item(id BIGINT AUTO_INCREMENT PRIMARY KEY,batch_id BIGINT,order_id BIGINT);
+            CREATE TABLE agent_submission(id BIGINT PRIMARY KEY,batch_id BIGINT,merchant_customer_id BIGINT)
             """
         );
         template.update(
@@ -261,6 +262,78 @@ class OrderAdmissionServiceTest {
         jdbc.sql("UPDATE customer_account SET account_type_code='merchant' WHERE id=7").update();
         jdbc.sql("INSERT INTO merchant_order_batch(id,merchant_customer_id) VALUES(1,7)").update();
         jdbc.sql("INSERT INTO merchant_order_batch_item(batch_id,order_id) VALUES(1,10)").update();
+    }
+
+    @Test
+    void partnerSubmitReviewIsAtomicScopedAndRequiresEveryCurrentRevision() {
+        merchantOrder();
+        jdbc.sql("INSERT INTO agent_submission(id,batch_id,merchant_customer_id) VALUES(1,1,7)").update();
+        jdbc.sql("INSERT INTO grading_order(id,order_no,customer_id,status_code,admission_status_code,admission_revision,total_amount,currency_code) VALUES(20,'NXR-200',7,'admission_review','pending_review',1,100,'USD')").update();
+        jdbc.sql("INSERT INTO merchant_order_batch_item(batch_id,order_id) VALUES(1,20)").update();
+        var revisions = java.util.List.of(new OrderAdmissionService.PartnerSubmitOrderRevision(10L,1), new OrderAdmissionService.PartnerSubmitOrderRevision(20L,1));
+        var request = new OrderAdmissionService.PartnerSubmitDecision("approve", "Approved", revisions);
+        assertThat(service.requireAdminAdmission(10).partnerSubmitBatchId()).isEqualTo(1L);
+        assertThatThrownBy(() -> tx(() -> service.decide(10,9,new OrderAdmissionService.DecisionRequest("approve","No bypass",1)))).hasMessageContaining("complete partner submission");
+        assertThatThrownBy(() -> tx(() -> service.decidePartnerSubmit(1,9,request,id -> { if(id==20) throw new ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND); }))).isInstanceOf(ResponseStatusException.class);
+        jdbc.sql("UPDATE grading_order SET admission_revision=2 WHERE id=20").update();
+        assertThatThrownBy(() -> tx(() -> service.decidePartnerSubmit(1,9,request,id -> {}))).hasMessageContaining("Submission changed");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM order_admission_event").query(Integer.class).single()).isZero();
+        assertThat(jdbc.sql("SELECT admission_status_code FROM grading_order WHERE id=10").query(String.class).single()).isEqualTo("pending_review");
+        jdbc.sql("UPDATE grading_order SET admission_revision=1 WHERE id=20").update();
+        var result=tx(() -> service.decidePartnerSubmit(1,9,request,id -> {}));
+        assertThat(result.eligible()).isTrue();
+        assertThat(result.orders()).hasSize(2).allSatisfy(order -> assertThat(order.admissionStatus()).isEqualTo("approved"));
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM order_admission_event WHERE event_code='approved'").query(Integer.class).single()).isEqualTo(2);
+    }
+
+    @Test
+    void partnerSubmitRequiresEveryRequestedSupplementBeforeAnotherDecision() {
+        merchantOrder();
+        jdbc.sql("INSERT INTO agent_submission(id,batch_id,merchant_customer_id) VALUES(1,1,7)").update();
+        jdbc.sql("INSERT INTO grading_order(id,order_no,customer_id,status_code,admission_status_code,admission_revision,total_amount,currency_code) VALUES(20,'NXR-200',7,'admission_review','pending_review',1,100,'USD')").update();
+        jdbc.sql("INSERT INTO merchant_order_batch_item(batch_id,order_id) VALUES(1,20)").update();
+        var ids=java.util.List.of(new OrderAdmissionService.PartnerSubmitOrderRevision(10L,1),new OrderAdmissionService.PartnerSubmitOrderRevision(20L,1));
+        tx(() -> service.decidePartnerSubmit(1,9,new OrderAdmissionService.PartnerSubmitDecision("request_information","Add details",ids),id -> {}));
+        var first=tx(() -> service.resubmit(7,"NXR-100",new OrderAdmissionService.ResubmitRequest("Details")));
+        var partial=java.util.List.of(new OrderAdmissionService.PartnerSubmitOrderRevision(10L,first.admissionRevision()),new OrderAdmissionService.PartnerSubmitOrderRevision(20L,2));
+        assertThatThrownBy(() -> tx(() -> service.decidePartnerSubmit(1,9,new OrderAdmissionService.PartnerSubmitDecision("approve","Approved",partial),id -> {}))).hasMessageContaining("Submission changed");
+        assertThat(jdbc.sql("SELECT admission_status_code FROM grading_order WHERE id=20").query(String.class).single()).isEqualTo("needs_information");
+        var second=tx(() -> service.resubmit(7,"NXR-200",new OrderAdmissionService.ResubmitRequest("Details")));
+        var complete=java.util.List.of(new OrderAdmissionService.PartnerSubmitOrderRevision(10L,first.admissionRevision()),new OrderAdmissionService.PartnerSubmitOrderRevision(20L,second.admissionRevision()));
+        assertThat(tx(() -> service.decidePartnerSubmit(1,9,new OrderAdmissionService.PartnerSubmitDecision("approve","Approved",complete),id -> {})).orders()).hasSize(2);
+    }
+
+    @Test
+    void regularMerchantBatchKeepsSingleOrderAdmission() {
+        merchantOrder();
+        assertThat(service.requirePartnerSubmitAdmission(1,id -> {}).eligible()).isFalse();
+        assertThat(service.requireAdminAdmission(10).partnerSubmitBatchId()).isNull();
+        assertThat(tx(() -> service.decide(10,9,new OrderAdmissionService.DecisionRequest("reject","Declined",1))).admissionStatus()).isEqualTo("rejected");
+    }
+
+    @Test
+    void submitApprovalAllowsEmptyNoteButOtherDecisionsAndSingleOrdersRequireIt() {
+        merchantOrder();
+        jdbc.sql("INSERT INTO agent_submission(id,batch_id,merchant_customer_id) VALUES(1,1,7)").update();
+        jdbc.sql("INSERT INTO grading_order(id,order_no,customer_id,status_code,admission_status_code,admission_revision,total_amount,currency_code) VALUES(20,'NXR-200',7,'admission_review','pending_review',1,100,'USD')").update();
+        jdbc.sql("INSERT INTO merchant_order_batch_item(batch_id,order_id) VALUES(1,20)").update();
+        var orders=java.util.List.of(new OrderAdmissionService.PartnerSubmitOrderRevision(10L,1),new OrderAdmissionService.PartnerSubmitOrderRevision(20L,1));
+        for (String decision : java.util.List.of("reject","request_information")) {
+            assertThatThrownBy(() -> tx(() -> service.decidePartnerSubmit(1,9,new OrderAdmissionService.PartnerSubmitDecision(decision,"  ",orders),id -> {}))).hasMessageContaining("Decision note is required");
+        }
+        assertThatThrownBy(() -> tx(() -> service.decidePartnerSubmit(1,9,new OrderAdmissionService.PartnerSubmitDecision("approve","a".repeat(2001),orders),id -> {}))).hasMessageContaining("too long");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM order_admission_event").query(Integer.class).single()).isZero();
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM grading_order WHERE admission_status_code='pending_review'").query(Integer.class).single()).isEqualTo(2);
+        var result=tx(() -> service.decidePartnerSubmit(1,9,new OrderAdmissionService.PartnerSubmitDecision("approve",null,orders),id -> {}));
+        assertThat(result.orders()).hasSize(2).allSatisfy(order -> { assertThat(order.admissionStatus()).isEqualTo("approved"); assertThat(order.decisionNote()).isEmpty(); });
+        assertThatThrownBy(() -> tx(() -> service.decidePartnerSubmit(1,9,new OrderAdmissionService.PartnerSubmitDecision("approve",null,orders),id -> {}))).hasMessageContaining("Submission changed");
+    }
+
+    @Test
+    void regularOrderApprovalStillRequiresNote() {
+        assertThatThrownBy(() -> tx(() -> service.decide(10,9,new OrderAdmissionService.DecisionRequest("approve",null,1)))).hasMessageContaining("Decision note is required");
+        assertThat(jdbc.sql("SELECT admission_status_code FROM grading_order WHERE id=10").query(String.class).single()).isEqualTo("pending_review");
+        assertThat(jdbc.sql("SELECT COUNT(*) FROM order_admission_event").query(Integer.class).single()).isZero();
     }
 
     @Test

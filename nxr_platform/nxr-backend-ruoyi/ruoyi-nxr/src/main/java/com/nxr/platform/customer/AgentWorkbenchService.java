@@ -16,6 +16,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import org.springframework.http.HttpStatus;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,6 +32,9 @@ public class AgentWorkbenchService {
     private final CustomerOrderPhotoService photos;
     private final ObjectMapper json;
     private final com.nxr.platform.admission.OrderAdmissionService admission;
+    private PartnerReturnService partnerReturnService;
+    @Autowired(required=false)
+    public void setPartnerReturnService(PartnerReturnService service) { this.partnerReturnService=service; }
 
     public AgentWorkbenchService(JdbcClient jdbc, OrderFulfillmentService fulfillment,
         MerchantBatchService batches, CustomerOrderPhotoService photos, ObjectMapper json,
@@ -67,6 +71,7 @@ public class AgentWorkbenchService {
         LocalDateTime checkedInAt, LocalDateTime returnedAt,
         String brandName, String setName, String productType, String category, String fulfillmentStatusCode) { }
     public record NoteRequest(String note, String requestKey) { }
+    public record ReceiveOrderRequest(Integer receivedCount, String note, Boolean resolveExceptions) { }
     public record CheckInRequest(String inventoryCode, String conditionNote, Boolean hasException, String requestKey) { }
     public record ReturnCheckRequest(String inventoryCode, String note, String requestKey) { }
     public record SubmissionRequest(List<Long> intakeIds, Long returnAddressId, String returnShippingOptionCode,
@@ -97,7 +102,7 @@ public class AgentWorkbenchService {
     private static final String INTAKE_SELECT = """
         SELECT i.id, i.intake_no, i.client_id, COALESCE(i.client_name_snapshot,cl.display_name) AS client_name, i.carrier_name, i.tracking_number,
                i.expected_card_count,
-               (SELECT COUNT(*) FROM agent_card c WHERE c.intake_id = i.id AND c.merchant_customer_id = i.merchant_customer_id AND c.checked_in_at IS NOT NULL) AS checked_in_card_count,
+               (SELECT COUNT(*) FROM agent_card c WHERE c.intake_id = i.id AND c.merchant_customer_id = i.merchant_customer_id AND (c.checked_in_at IS NOT NULL OR c.status_code IN ('in_stock','submitted','returned','return_shipped','delivered'))) AS checked_in_card_count,
                (SELECT COUNT(*) FROM agent_card c WHERE c.intake_id = i.id AND c.merchant_customer_id = i.merchant_customer_id AND c.status_code = 'exception') AS exception_card_count,
                i.status_code, i.batch_id, b.batch_no, i.order_id, o.order_no, i.notes, i.received_at, i.created_at
         FROM agent_intake i JOIN agent_client cl ON cl.id = i.client_id AND cl.merchant_customer_id = i.merchant_customer_id
@@ -238,6 +243,28 @@ public class AgentWorkbenchService {
     }
 
     @Transactional(isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
+    public IntakeDetail receiveOrder(long owner,long id,ReceiveOrderRequest request) {
+        lockOwner(owner);require(request,"Receipt details");
+        Intake intake=intake(owner,id);
+        if(intake.orderId()!=null)throw conflict("Submitted intake cards cannot be changed");
+        if(!java.util.Set.of("expected","received","ready","exception").contains(intake.statusCode()))throw conflict("This intake cannot be received");
+        List<Card> cards=cardsForIntake(owner,id);
+        if(request.receivedCount()==null || request.receivedCount()!=intake.expectedCardCount() || cards.size()!=intake.expectedCardCount())throw conflict("Received card count must match the order");
+        if(cards.stream().anyMatch(card -> !java.util.Set.of("expected","in_stock","exception").contains(card.statusCode())))throw conflict("This intake contains cards that cannot be received");
+        boolean hasException="exception".equals(intake.statusCode()) || cards.stream().anyMatch(card -> "exception".equals(card.statusCode()));
+        if(hasException && !Boolean.TRUE.equals(request.resolveExceptions()))throw conflict("Confirm resolution of the intake exceptions before receipt");
+        String resolution=hasException?required(request.note(),"Exception resolution",2000):optional(request.note(),2000);
+        if("ready".equals(intake.statusCode()))return intakeDetail(owner,id);
+        jdbc.sql("UPDATE agent_card SET status_code='in_stock',updated_at=CURRENT_TIMESTAMP WHERE intake_id=:id AND merchant_customer_id=:owner AND status_code IN ('expected','exception')")
+            .params(params("id",id,"owner",owner)).update();
+        jdbc.sql("UPDATE agent_intake SET status_code='ready',received_at=COALESCE(received_at,CURRENT_TIMESTAMP),updated_at=CURRENT_TIMESTAMP WHERE id=:id AND merchant_customer_id=:owner")
+            .params(params("id",id,"owner",owner)).update();
+        if(hasException)event(owner,intake.clientId(),id,null,null,"intake_exception_resolved",resolution,null);
+        event(owner,intake.clientId(),id,null,null,"intake_order_received",resolution,null);
+        return intakeDetail(owner,id);
+    }
+
+    @Transactional(isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
     public IntakeDetail checkIn(long owner, long id, CheckInRequest r) {
         lockOwner(owner); require(r,"Card check-in");
         String key=required(r.requestKey(),"Request key",128),hash=hash(r);
@@ -316,8 +343,12 @@ public class AgentWorkbenchService {
         for(long id:ids) {
             Intake intake=intake(owner,id); Client client=client(owner,intake.clientId());
             List<Card> cards=cardsForIntake(owner,id);
+            // The first release of order-level receipt used intake_received; the ready state,
+            // exact count and all in-stock cards below are also required for that legacy evidence.
+            boolean orderReceipt = jdbc.sql("SELECT COUNT(*) FROM agent_event WHERE merchant_customer_id=:owner AND intake_id=:id AND event_code IN ('intake_order_received','intake_received')")
+                .params(params("owner",owner,"id",id)).query(Integer.class).single()>0;
             if(!"ready".equals(intake.statusCode()) || intake.receivedAt()==null || intake.orderId()!=null
-                || cards.size()!=intake.expectedCardCount() || cards.stream().anyMatch(c -> !"in_stock".equals(c.statusCode()) || c.checkedInAt()==null || c.orderItemId()!=null))
+                || cards.size()!=intake.expectedCardCount() || cards.stream().anyMatch(c -> !"in_stock".equals(c.statusCode()) || (c.checkedInAt()==null && !orderReceipt) || c.orderItemId()!=null))
                 throw conflict("Every selected intake must be fully received, counted and free of exceptions");
             int orderVersion=jdbc.sql("SELECT partner_order_version FROM agent_intake WHERE id=:id AND merchant_customer_id=:owner")
                 .params(params("id",id,"owner",owner)).query(Integer.class).single();
@@ -332,7 +363,7 @@ public class AgentWorkbenchService {
                 null,null,null,null,null,null,null,null,intake.intakeNo(),List.of(),items,currency);
             // Intake number makes two parcels from the same client distinct within a master batch.
             // NXR communicates with the agent; end-client contact details stay in the agent directory.
-            orders.add(new MerchantBatchService.BatchOrderRequest(intake.intakeNo(),intake.clientName(),null,order));
+            orders.add(new MerchantBatchService.BatchOrderRequest(intake.intakeNo(),intake.clientName(),null,order,intake.intakeNo()));
             intakes.add(intake); inventory.add(cards);
         }
         var batch=batches.createBatchInCurrentTransaction(owner,new MerchantBatchService.BatchCreateRequest("Agent workbench",optional(r.batchName(),191),orders,
@@ -340,7 +371,7 @@ public class AgentWorkbenchService {
         if(batch.rows().size()!=intakes.size()) throw new IllegalStateException("Batch row count does not match agent intakes");
         for(int index=0;index<intakes.size();index++) {
             Intake intake=intakes.get(index); var row=batch.rows().get(index);
-            if(row.orderId()==null || !intake.intakeNo().equals(row.clientReference())) throw new IllegalStateException("Batch intake mapping is inconsistent");
+            if(row.orderId()==null || row.orderNo()==null || !row.orderNo().equals(row.clientReference())) throw new IllegalStateException("Batch intake mapping is inconsistent");
             List<Long> orderItems=jdbc.sql("""
                 SELECT oi.id FROM grading_order_item oi JOIN grading_order o ON o.id=oi.order_id
                 WHERE oi.order_id=:orderId AND o.customer_id=:owner ORDER BY oi.item_no,oi.id
@@ -394,6 +425,31 @@ public class AgentWorkbenchService {
             .params(params("id",id,"owner",owner)).update();
         event(owner,c.clientId(),c.intakeId(),id,null,"card_return_checked",optional(r.note(),2000),c.inventoryCode());
         return card(owner,id);
+    }
+
+    /** Confirm receipt at order level for legacy returned master parcels without recording card scans. */
+    @Transactional(isolation = org.springframework.transaction.annotation.Isolation.READ_COMMITTED)
+    public IntakeDetail receiveReturnedOrder(long owner,long id,NoteRequest request) {
+        lockOwner(owner);Intake intake=intake(owner,id);
+        if(intake.orderId()==null || intake.batchId()==null)throw conflict("This order has not been submitted to NXR");
+        List<Card> cards=cardsForIntake(owner,id);
+        if(cards.isEmpty())throw conflict("This order has no cards");
+        int changed=0;
+        for(Card card:cards){
+            if(!"submitted".equals(card.statusCode()))continue;
+            boolean delivered=partnerReturnService!=null && card.orderItemId()!=null && partnerReturnService.hasDeliveredCard(owner,card.orderItemId());
+            if(!delivered){
+                String batchState=jdbc.sql("SELECT status_code FROM merchant_order_batch WHERE id=:id AND merchant_customer_id=:owner FOR UPDATE")
+                    .params(params("id",intake.batchId(),"owner",owner)).query(String.class).optional().orElseThrow(AgentWorkbenchService::missing);
+                delivered="delivered".equals(batchState) && "delivered".equals(card.fulfillmentStatusCode());
+            }
+            if(delivered)changed+=jdbc.sql("UPDATE agent_card SET status_code='returned',returned_at=COALESCE(returned_at,CURRENT_TIMESTAMP),updated_at=CURRENT_TIMESTAMP WHERE id=:id AND merchant_customer_id=:owner AND status_code='submitted' AND return_shipment_id IS NULL")
+                .params(params("id",card.id(),"owner",owner)).update();
+        }
+        if(changed==0 && cards.stream().noneMatch(card -> java.util.Set.of("returned","return_shipped","delivered").contains(card.statusCode())))
+            throw conflict("No returned cards have been delivered to this partner");
+        if(changed>0)event(owner,intake.clientId(),id,null,null,"order_return_received",note(request),null);
+        return intakeDetail(owner,id);
     }
 
     public Page<Shipment> shipments(long owner,int page,int size,Long clientId,String status,String query) {
@@ -510,22 +566,24 @@ public class AgentWorkbenchService {
         var row=jdbc.sql("SELECT s.id,s.batch_id,b.batch_no,s.created_at FROM agent_submission s JOIN merchant_order_batch b ON b.id=s.batch_id AND b.merchant_customer_id=s.merchant_customer_id WHERE s.id=:id AND s.merchant_customer_id=:owner")
             .params(params("id",id,"owner",owner)).query((rs,n)->new Submission(rs.getLong("id"),rs.getLong("batch_id"),rs.getString("batch_no"),List.of(),rs.getObject("created_at",LocalDateTime.class)))
             .optional().orElseThrow(AgentWorkbenchService::missing);
-        // Batch references snapshot the globally unique intake number; current links can change after cancellation.
+        // The stored reference is the platform order number; intake_no keeps the agent intake link stable.
         // CHAR casts use one connection collation for these columns in existing MySQL schemas.
         return new Submission(row.id(),row.batchId(),row.batchNo(),jdbc.sql("""
             SELECT i.id FROM merchant_order_batch b
             JOIN merchant_order_batch_item bi ON bi.batch_id = b.id
             JOIN agent_intake i ON i.merchant_customer_id = b.merchant_customer_id
-                AND CAST(bi.client_reference AS CHAR(128)) = CAST(i.intake_no AS CHAR(128))
+                AND (CAST(bi.intake_no AS CHAR(128)) = CAST(i.intake_no AS CHAR(128)) OR (bi.intake_no IS NULL
+                     AND CAST(bi.client_reference AS CHAR(128)) = CAST(i.intake_no AS CHAR(128))))
             WHERE b.id=:batch AND b.merchant_customer_id=:owner ORDER BY i.id
             """)
             .params(params("batch",row.batchId(),"owner",owner)).query(Long.class).list(),row.createdAt());
     }
     private void requireBatchReturned(long owner,Card card) {
         if(card.batchId()==null) throw conflict("The NXR return parcel has not arrived at the agent");
+        if(card.orderItemId()!=null && partnerReturnService!=null && partnerReturnService.hasDeliveredCard(owner,card.orderItemId()))return;
         String state=jdbc.sql("SELECT status_code FROM merchant_order_batch WHERE id=:id AND merchant_customer_id=:owner FOR UPDATE")
             .params(params("id",card.batchId(),"owner",owner)).query(String.class).optional().orElseThrow(AgentWorkbenchService::missing);
-        if(!"delivered".equals(state)) throw conflict("The NXR return parcel must be delivered to the agent before cards can be released");
+        if(!"delivered".equals(state) || !"delivered".equals(card.fulfillmentStatusCode())) throw conflict("The NXR return parcel must be delivered to the agent before cards can be released");
     }
     static String normalizeReturnScan(String value) {
         String scan=required(value,"Inventory code or certificate number",256);

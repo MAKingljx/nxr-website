@@ -42,6 +42,20 @@ public class PartnerReturnService {
         o.contact_name,o.contact_phone,o.return_address_line1,o.return_address_line2,o.return_city,o.return_region,o.return_postal_code,o.return_country,
         o.currency_code,o.return_shipping_option_code,ca.display_name AS company_name
         """;
+    /** True only when every card has exactly one path through the same joins used for partner returns. */
+    public boolean supportsWholeOrder(long orderId) {
+        if(!MerchantOrderPolicy.isBatchOrder(jdbc,orderId))return false;
+        int total=jdbc.sql("SELECT COUNT(*) FROM grading_order_item WHERE order_id=:id")
+            .param("id",orderId).query(Integer.class).single();
+        if(total==0)return false;
+        List<Integer> matches=jdbc.sql("SELECT COUNT(*) "+JOINS+" WHERE i.order_id=:id GROUP BY i.id")
+            .param("id",orderId).query(Integer.class).list();
+        return matches.size()==total && matches.stream().allMatch(count -> count==1);
+    }
+    public boolean hasDeliveredCard(long owner,long orderItemId) {
+        return jdbc.sql("SELECT COUNT(*) FROM partner_return_item ri JOIN partner_return_parcel rp ON rp.id=ri.parcel_id WHERE ri.order_item_id=:item AND rp.merchant_customer_id=:owner AND rp.status_code='delivered'")
+            .param("item",orderItemId).param("owner",owner).query(Integer.class).single()>0;
+    }
     private static String scopeSql(AccessScope s) {
         return s.unrestricted()?"":" AND o.business_line_id IN (:lines) AND o.work_center_id IN (:centers)";
     }
@@ -90,14 +104,17 @@ public class PartnerReturnService {
         List<Existing> existing=jdbc.sql("SELECT id,request_hash FROM partner_return_parcel WHERE merchant_customer_id=:company AND request_key=:key FOR UPDATE")
             .param("company",first.companyId()).param("key",key).query((rs,n)->new Existing(rs.getLong(1),rs.getString(2))).list();
         if(!existing.isEmpty()) {if(!existing.get(0).hash().equals(requestHash))throw conflict("This request was already used for a different parcel");return adminDetail(userId,existing.get(0).id());}
-        for(Row row:rows){
+        for(int index=0;index<rows.size();index++){
+            Row row=rows.get(index);
             if(row.companyId()!=first.companyId() || !addressKey(row).equals(addressKey(first))) throw conflict("Combine only cards for the same partner and return address");
             if(!Objects.equals(row.currency(),first.currency()) || !Objects.equals(row.shippingOption(),first.shippingOption())) throw conflict("Cards use different return services or currencies; confirm a shipping change before combining them");
-            Card state=card(row);if(!state.eligible())throw conflict(row.orderNo()+": "+state.blockedReason());
+            boolean scanFree=supportsWholeOrder(row.orderId());
+            String reason=scanFree?baseBlocked(row):card(row).blockedReason();if(reason!=null)throw conflict(row.orderNo()+": "+reason);
             lockGrading(row);
             // Re-read after locking the mutable grading rows, then revalidate every release gate.
-            row=requireRow(row.itemId());state=card(row);if(!state.eligible())throw conflict(row.orderNo()+": "+state.blockedReason());
-            workbench.assertCardPackingReady(row.orderId(),row.itemId());
+            row=requireRow(row.itemId());reason=scanFree?baseBlocked(row):card(row).blockedReason();if(reason!=null)throw conflict(row.orderNo()+": "+reason);
+            if(!scanFree)workbench.assertCardPackingReady(row.orderId(),row.itemId());
+            rows.set(index,row);
         }
         if(jdbc.sql("SELECT COUNT(*) FROM partner_return_parcel WHERE carrier_name=:carrier AND tracking_number=:tracking").param("carrier",carrier).param("tracking",tracking).query(Integer.class).single()>0)
             throw conflict("This tracking number already belongs to a return parcel");
@@ -109,9 +126,9 @@ public class PartnerReturnService {
             .param("address",address(first)).param("addressKey",addressKey(first)).param("key",key).param("hash",requestHash).param("note",text(request.note(),2000)).param("user",userId).update(holder,"id"); }
         catch(org.springframework.dao.DuplicateKeyException duplicate){throw conflict("A return parcel was created concurrently; refresh before trying again");}
         long parcelId=Objects.requireNonNull(holder.getKey()).longValue();
-        for(Row row:rows){Check check=latestCheck(row.itemId());
+        for(Row row:rows){Check check=supportsWholeOrder(row.orderId())?null:latestCheck(row.itemId());
             jdbc.sql("INSERT INTO partner_return_item(parcel_id,order_item_id,check_id,cert_id,content_fingerprint) VALUES(:parcel,:item,:check,:cert,:fp)")
-                .param("parcel",parcelId).param("item",row.itemId()).param("check",check.id()).param("cert",row.certId()).param("fp",check.fingerprint()).update();
+                .param("parcel",parcelId).param("item",row.itemId()).param("check",check==null?null:check.id()).param("cert",row.certId()).param("fp",check==null?fingerprint(row,media(row.submissionId())):check.fingerprint()).update();
             jdbc.sql("UPDATE grading_order_item SET status_code='return_shipped',updated_at=CURRENT_TIMESTAMP WHERE id=:id").param("id",row.itemId()).update();
             jdbc.sql("UPDATE grading_order SET shipping_label_created_at=COALESCE(shipping_label_created_at,CURRENT_TIMESTAMP),updated_at=CURRENT_TIMESTAMP WHERE id=:id").param("id",row.orderId()).update();
         }
@@ -121,16 +138,27 @@ public class PartnerReturnService {
     @Transactional(isolation=Isolation.READ_COMMITTED)
     public ParcelDetail delivered(long userId,long parcelId) {
         ParcelDetail before=adminDetail(userId,parcelId);
+        return deliverParcel(before,userId,null);
+    }
+    @Transactional(isolation=Isolation.READ_COMMITTED)
+    public ParcelDetail partnerDelivered(long owner,long parcelId) {
+        ParcelDetail before=partnerDetail(owner,parcelId);
+        return deliverParcel(before,null,owner);
+    }
+    private ParcelDetail deliverParcel(ParcelDetail before,Long adminUserId,Long owner) {
+        long parcelId=before.id();
         List<Long> orderIds=before.items().stream().map(ParcelItem::orderId).distinct().sorted().toList();
         lockBatches(orderIds);
         for(long orderId:orderIds)lockOrder(orderId);
         String status=jdbc.sql("SELECT status_code FROM partner_return_parcel WHERE id=:id FOR UPDATE").param("id",parcelId).query(String.class).single();
-        if("delivered".equals(status))return adminDetail(userId,parcelId);
+        if("delivered".equals(status))return owner==null?adminDetail(adminUserId,parcelId):partnerDetail(owner,parcelId);
         if(!"shipped".equals(status))throw conflict("This parcel has not been shipped");
-        jdbc.sql("UPDATE partner_return_parcel SET status_code='delivered',delivered_at=CURRENT_TIMESTAMP,delivered_by_user_id=:user WHERE id=:id").param("id",parcelId).param("user",userId).update();
+        jdbc.sql("UPDATE partner_return_parcel SET status_code='delivered',delivered_at=CURRENT_TIMESTAMP,delivered_by_user_id=:user WHERE id=:id").param("id",parcelId).param("user",adminUserId).update();
         jdbc.sql("UPDATE grading_order_item SET status_code='delivered',updated_at=CURRENT_TIMESTAMP WHERE id IN (SELECT order_item_id FROM partner_return_item WHERE parcel_id=:id)").param("id",parcelId).update();
-        for(long orderId:orderIds){refreshStatus(orderId);timeline(orderId,userId,"partner_return_delivered","Cards delivered to partner",before.parcelNo());}
-        return adminDetail(userId,parcelId);
+        jdbc.sql("UPDATE agent_card SET status_code='returned',returned_at=COALESCE(returned_at,CURRENT_TIMESTAMP),updated_at=CURRENT_TIMESTAMP WHERE merchant_customer_id=:owner AND status_code='submitted' AND return_shipment_id IS NULL AND order_item_id IN (SELECT order_item_id FROM partner_return_item WHERE parcel_id=:id)")
+            .param("owner",before.companyId()).param("id",parcelId).update();
+        for(long orderId:orderIds){refreshStatus(orderId);if(owner==null)timeline(orderId,adminUserId,"partner_return_delivered","Cards delivered to partner",before.parcelNo());else partnerTimeline(orderId,owner,before.parcelNo());}
+        return owner==null?adminDetail(adminUserId,parcelId):partnerDetail(owner,parcelId);
     }
     public Page<Parcel> adminParcels(long userId,int page,int pageSize,Long companyId,Long orderId,Long batchId,String status) {
         return adminParcels(userId,page,pageSize,companyId,orderId,batchId,status,null);
@@ -230,13 +258,15 @@ public class PartnerReturnService {
         if((row.productType()==null || "graded_card".equals(row.productType())) && row.grade()==null)return "Card needs its final grade";
         if("vintage_product".equals(row.productType()) && clean(row.vintage()).isEmpty())return "Card needs its vintage classification";
         if(jdbc.sql("SELECT COUNT(*) FROM grading_order_item WHERE grading_submission_id=:id").param("id",row.submissionId()).query(Integer.class).single()!=1)return "Grading entry is linked to multiple cards";
-        if(jdbc.sql("SELECT COUNT(*) FROM order_work_task WHERE order_id=:orderId AND (order_item_id IS NULL OR order_item_id=:itemId) AND task_type_code IN ('preprocess','vision','manual_review','encapsulation') AND status_code<>'completed'").param("orderId",row.orderId()).param("itemId",row.itemId()).query(Integer.class).single()>0)return "Complete this card's grading and encapsulation tasks";
+        // Partner cards are released by their own grading, scan and physical checks; legacy tasks remain as history.
         List<Media> images=media(row.submissionId());if(images.stream().noneMatch(i->"front".equals(i.side())) || images.stream().noneMatch(i->"back".equals(i.side())))return "Front and back card images are required";
         return null;
     }
     private Card card(Row row){String reason=baseBlocked(row);List<Media> images=media(row.submissionId());Check check=latestCheck(row.itemId());boolean checked=check!=null && check.fingerprint().equals(fingerprint(row,images));
-        if(reason==null){try{workbench.assertCardPackingReady(row.orderId(),row.itemId());}catch(ResponseStatusException e){reason=e.getReason();}}
-        if(reason==null && !checked)reason="Complete the card quality and packing check";
+        if(!supportsWholeOrder(row.orderId())) {
+            if(reason==null){try{workbench.assertCardPackingReady(row.orderId(),row.itemId());}catch(ResponseStatusException e){reason=e.getReason();}}
+            if(reason==null && !checked)reason="Complete the card quality and packing check";
+        }
         return new Card(row.itemId(),row.agentCardId(),row.orderId(),row.orderNo(),row.orderReference(),row.batchId(),row.batchNo(),row.companyId(),row.companyName(),row.cardName(),row.certId(),row.itemStatus(),reason==null,reason,checked,address(row),imageUrl(images,"front"),imageUrl(images,"back"));}
     private List<Media> media(Long id){if(id==null)return List.of();return jdbc.sql("SELECT id,media_side_code,storage_key,COALESCE(checksum_sha256,'') AS checksum,COALESCE(public_url,'') AS url FROM submission_media WHERE submission_id=:id AND is_active=1 AND media_stage_code IN ('staged','published') ORDER BY media_side_code,id")
         .param("id",id).query((rs,n)->new Media(rs.getLong(1),rs.getString(2),rs.getString(3),rs.getString(4),rs.getString(5))).list();}
@@ -254,6 +284,8 @@ public class PartnerReturnService {
     }
     private void timeline(long orderId,long userId,String event,String title,String detail){jdbc.sql("INSERT INTO order_timeline_event(order_id,event_code,title,detail,status_code,visible_to_customer,actor_type_code,actor_admin_user_id) SELECT id,:event,:title,:detail,status_code,1,'admin',:user FROM grading_order WHERE id=:id")
         .param("id",orderId).param("event",event).param("title",title).param("detail",detail).param("user",userId).update();}
+    private void partnerTimeline(long orderId,long owner,String detail){jdbc.sql("INSERT INTO order_timeline_event(order_id,event_code,title,detail,status_code,visible_to_customer,actor_type_code,actor_customer_id) SELECT id,'partner_return_delivered','Cards delivered to partner',:detail,status_code,1,'customer',:owner FROM grading_order WHERE id=:id AND customer_id=:owner")
+        .param("id",orderId).param("owner",owner).param("detail",detail).update();}
     private Row mapRow(java.sql.ResultSet rs,int n)throws java.sql.SQLException{return new Row(rs.getLong("order_item_id"),rs.getLong("agent_card_id"),rs.getLong("order_id"),rs.getString("order_no"),rs.getString("order_reference"),rs.getLong("batch_id"),rs.getString("batch_no"),rs.getLong("company_id"),rs.getString("company_name"),rs.getString("card_name"),rs.getString("item_status"),rs.getString("order_status"),rs.getString("admission_status_code"),rs.getObject("grading_submission_id",Long.class),rs.getString("cert_id"),rs.getString("grading_status"),rs.getString("product_type_code"),rs.getString("vintage_classification_code"),rs.getBigDecimal("final_grade_value"),rs.getString("final_grade_label"),List.of(clean(rs.getString("contact_name")),clean(rs.getString("contact_phone")),clean(rs.getString("return_address_line1")),clean(rs.getString("return_address_line2")),clean(rs.getString("return_city")),clean(rs.getString("return_region")),clean(rs.getString("return_postal_code")),clean(rs.getString("return_country"))),rs.getString("currency_code"),rs.getString("return_shipping_option_code"));}
     private Parcel mapParcel(java.sql.ResultSet rs,int n)throws java.sql.SQLException{return new Parcel(rs.getLong("id"),rs.getString("parcel_no"),rs.getLong("merchant_customer_id"),rs.getString("company_name"),rs.getString("carrier_name"),rs.getString("tracking_number"),rs.getString("status_code"),rs.getInt("card_count"),rs.getObject("shipped_at",LocalDateTime.class),rs.getObject("delivered_at",LocalDateTime.class),rs.getString("return_address"));}
     private static String address(Row row){return String.join(", ",row.address().stream().filter(s->!s.isBlank()).toList());}

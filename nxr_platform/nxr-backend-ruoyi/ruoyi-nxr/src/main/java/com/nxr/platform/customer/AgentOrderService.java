@@ -89,7 +89,7 @@ public class AgentOrderService {
         LEFT JOIN grading_order o ON o.id=i.order_id AND o.customer_id=i.merchant_customer_id
         LEFT JOIN merchant_order_batch b ON b.id=i.batch_id AND b.merchant_customer_id=i.merchant_customer_id
         """;
-    private static final String ORDER_STATUS="COALESCE("+MerchantOrderPolicy.visibleStatusSql("o")+",i.status_code)";
+    private static final String ORDER_STATUS="COALESCE("+MerchantOrderPolicy.visibleBatchStatusSql("o", "b")+",i.status_code)";
     private static final String SELECT = """
         SELECT i.id, i.intake_no AS order_no,
             COALESCE(i.client_name_snapshot,c.display_name) AS client_name,
