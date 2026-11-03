@@ -152,6 +152,7 @@ export default {
   "All Data": "全部数据权限",
   "All statuses": "全部状态",
   "All Statuses": "全部状态",
+  "Period (approved date)": "期间（审批日期）",
   "Allowed": "允许",
   "Amount": "金额",
   "An unexpected system error occurred. Contact an administrator.": "系统未知错误，请反馈给管理员",

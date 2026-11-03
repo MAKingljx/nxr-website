@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.time.LocalDate;
 import java.nio.file.Path;
 import java.io.ByteArrayInputStream;
 import java.util.ArrayList;
@@ -74,6 +75,133 @@ class AdminExportServiceFilterTest {
     void unsupportedExportSelectionIsRejected() {
         assertThatThrownBy(() -> service.preview(
             new AdminExportService.ExportRequest("vintage_product:Unknown", null, "")
+        ))
+            .isInstanceOf(ResponseStatusException.class)
+            .satisfies(exception -> assertThat(((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.BAD_REQUEST));
+    }
+
+    @Test
+    void statusAndPeriodFiltersNarrowTheExportSelection() {
+        AdminExportService.ExportPreviewResponse published = service.preview(
+            new AdminExportService.ExportRequest("all", null, "", "published", null, null)
+        );
+        assertThat(published.totalCount()).isEqualTo(1);
+        assertThat(published.rows()).allSatisfy(row ->
+            assertThat(row.statusCode()).isEqualTo("published")
+        );
+
+        AdminExportService.ExportPreviewResponse approved = service.preview(
+            new AdminExportService.ExportRequest("all", null, "", "approved", null, null)
+        );
+        assertThat(approved.totalCount()).isEqualTo(5);
+
+        LocalDate today = LocalDate.now();
+        AdminExportService.ExportPreviewResponse inPeriod = service.preview(
+            new AdminExportService.ExportRequest("all", null, "", null, today.toString(), today.toString())
+        );
+        assertThat(inPeriod.totalCount()).isEqualTo(6);
+
+        AdminExportService.ExportPreviewResponse outsidePeriod = service.preview(
+            new AdminExportService.ExportRequest(
+                "all", null, "", null, today.minusDays(10).toString(), today.minusDays(5).toString()
+            )
+        );
+        assertThat(outsidePeriod.totalCount()).isZero();
+
+        AdminExportService.ExportPreviewResponse combined = service.preview(
+            new AdminExportService.ExportRequest("grade:9.5", null, "", "approved", today.toString(), today.toString())
+        );
+        assertThat(combined.totalCount()).isEqualTo(1);
+    }
+
+    @Test
+    void previewSupportsSelectablePageSize() {
+        AdminExportService.ExportPreviewResponse firstPage = service.preview(
+            new AdminExportService.ExportRequest("all", null, "", null, null, null, 1, 2)
+        );
+        assertThat(firstPage.totalCount()).isEqualTo(6);
+        assertThat(firstPage.previewLimit()).isEqualTo(2);
+        assertThat(firstPage.rows()).hasSize(2);
+
+        AdminExportService.ExportPreviewResponse secondPage = service.preview(
+            new AdminExportService.ExportRequest("all", null, "", null, null, null, 2, 2)
+        );
+        assertThat(secondPage.rows()).hasSize(2);
+        assertThat(secondPage.rows()).extracting(AdminExportService.ExportRow::submissionId)
+            .doesNotContainAnyElementsOf(
+                firstPage.rows().stream().map(AdminExportService.ExportRow::submissionId).toList()
+            );
+
+        AdminExportService.ExportPreviewResponse oversized = service.preview(
+            new AdminExportService.ExportRequest("all", null, "", null, null, null, 1, 5000)
+        );
+        assertThat(oversized.previewLimit()).isEqualTo(100);
+
+        AdminExportService.ExportPreviewResponse defaulted = service.preview(
+            new AdminExportService.ExportRequest("all", null, "", null, null, null, null, null)
+        );
+        assertThat(defaulted.previewLimit()).isEqualTo(20);
+        assertThat(defaulted.rows()).hasSize(6);
+    }
+
+    @Test
+    void exportHistorySupportsKeywordAndPeriodFilters() {
+        jdbcTemplate.update(
+            """
+            INSERT INTO export_job (filename, filter_label, grade_filter, cert_ids, record_count,
+                                    file_size_bytes, storage_path, created_by_user_id, created_at)
+            VALUES ('approved_cards_all_20260105.xlsx', 'All Approved Products', 'all', '', 3, 120,
+                    '/tmp/a.xlsx', 1, '2026-01-05 10:00:00')
+            """
+        );
+        jdbcTemplate.update(
+            """
+            INSERT INTO export_job (filename, filter_label, grade_filter, cert_ids, record_count,
+                                    file_size_bytes, storage_path, created_by_user_id, created_at)
+            VALUES ('approved_cards_9.5_20260620.xlsx', 'Graded Card - 9.5', 'grade:9.5', '', 5, 240,
+                    '/tmp/b.xlsx', 1, '2026-06-20 10:00:00')
+            """
+        );
+
+        assertThat(service.listExports(1, 20, null, null, null).total()).isEqualTo(2);
+        assertThat(service.listExports(1, 20, "9.5", null, null).total()).isEqualTo(1);
+        assertThat(service.listExports(1, 20, "20260105", null, null).total()).isEqualTo(1);
+        assertThat(service.listExports(1, 20, null, "2026-06-01", "2026-06-30").total()).isEqualTo(1);
+        assertThat(service.listExports(1, 20, null, "2026-01-01", "2026-06-30").total()).isEqualTo(2);
+        assertThat(service.listExports(1, 20, null, "2026-07-01", "2026-07-31").total()).isZero();
+
+        assertThatThrownBy(() -> service.listExports(1, 20, null, "2026-07-01", "2026-06-01"))
+            .isInstanceOf(ResponseStatusException.class)
+            .satisfies(exception -> assertThat(((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.BAD_REQUEST));
+    }
+
+    @Test
+    void exportHistoryPaginationAlwaysResolvesAUsablePage() {
+        AdminExportService.ExportListResponse oversized = service.listExports(1, 500);
+        assertThat(oversized.pageSize()).isEqualTo(200);
+        assertThat(oversized.page()).isEqualTo(1);
+
+        AdminExportService.ExportListResponse normalized = service.listExports(0, 0);
+        assertThat(normalized.page()).isEqualTo(1);
+        assertThat(normalized.pageSize()).isEqualTo(1);
+    }
+
+    @Test
+    void unsupportedStatusAndReversedPeriodAreRejected() {
+        assertThatThrownBy(() -> service.preview(
+            new AdminExportService.ExportRequest("all", null, "", "draft", null, null)
+        ))
+            .isInstanceOf(ResponseStatusException.class)
+            .satisfies(exception -> assertThat(((ResponseStatusException) exception).getStatusCode())
+                .isEqualTo(HttpStatus.BAD_REQUEST));
+
+        LocalDate today = LocalDate.now();
+        assertThatThrownBy(() -> service.preview(
+            new AdminExportService.ExportRequest(
+                "all", null, "", null, today.toString(), today.minusDays(1).toString()
+            )
         ))
             .isInstanceOf(ResponseStatusException.class)
             .satisfies(exception -> assertThat(((ResponseStatusException) exception).getStatusCode())
