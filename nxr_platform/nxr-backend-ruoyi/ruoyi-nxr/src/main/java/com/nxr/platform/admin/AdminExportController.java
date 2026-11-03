@@ -55,10 +55,13 @@ public class AdminExportController {
     @GetMapping
     public AjaxResult list(
         @RequestParam(defaultValue = "1") int page,
-        @RequestParam(defaultValue = "20") int pageSize
+        @RequestParam(defaultValue = "20") int pageSize,
+        @RequestParam(required = false) String keyword,
+        @RequestParam(required = false) String dateFrom,
+        @RequestParam(required = false) String dateTo
     ) {
         accessScopeService.requireUnrestrictedCardAccess(SecurityUtils.getUserId(), "Export history");
-        return AjaxResult.success(adminExportService.listExports(page, pageSize));
+        return AjaxResult.success(adminExportService.listExports(page, pageSize, keyword, dateFrom, dateTo));
     }
 
     @PreAuthorize("@ss.hasPermi('nxr:export:list')")

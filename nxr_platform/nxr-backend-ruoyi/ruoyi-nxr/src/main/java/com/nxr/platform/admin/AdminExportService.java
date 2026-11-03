@@ -7,8 +7,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -51,6 +53,10 @@ public class AdminExportService {
     private static final String EXPORT_FILTER_GRADE_PREFIX = "grade:";
     private static final String EXPORT_FILTER_MERCH = ProductTypePolicy.MERCH_PRODUCT;
     private static final String EXPORT_FILTER_VINTAGE_PREFIX = ProductTypePolicy.VINTAGE_PRODUCT + ":";
+    private static final Set<String> SUPPORTED_EXPORT_STATUSES = Set.of("approved", "published");
+    private static final int PREVIEW_DEFAULT_PAGE_SIZE = 20;
+    private static final int PREVIEW_MAX_PAGE_SIZE = 100;
+    private static final int EXPORT_HISTORY_MAX_PAGE_SIZE = 200;
     private static final String PRODUCT_TYPE_SQL = ProductTypePolicy.canonicalSql("s.product_type_code");
     private static final Map<String, String> VINTAGE_CLASSIFICATIONS = Map.of(
         "pristine", "Pristine",
@@ -72,14 +78,16 @@ public class AdminExportService {
 
     public ExportPreviewResponse preview(ExportRequest request) {
         ExportFilter filter = normalizeFilter(request);
-        List<ExportRow> rows = loadRows(filter, 20);
+        int page = normalizePage(request == null ? null : request.page());
+        int pageSize = normalizePageSize(request == null ? null : request.pageSize());
+        List<ExportRow> rows = loadRows(filter, pageSize, (page - 1) * pageSize);
         int total = countRows(filter);
         List<String> missingCertIds = missingCertIds(filter);
 
         return new ExportPreviewResponse(
             total > 0 && filter.invalidCertIds().isEmpty() && missingCertIds.isEmpty(),
             total,
-            20,
+            pageSize,
             filter.selection(),
             filter.certIds(),
             filter.invalidCertIds(),
@@ -98,7 +106,7 @@ public class AdminExportService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Missing approved cert IDs: " + String.join(", ", missingCertIds));
         }
 
-        List<ExportRow> rows = loadRows(filter, Integer.MAX_VALUE);
+        List<ExportRow> rows = loadRows(filter, Integer.MAX_VALUE, 0);
         if (rows.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "No approved cards matched the export filters");
         }
@@ -155,22 +163,61 @@ public class AdminExportService {
     }
 
     public ExportListResponse listExports(int page, int pageSize) {
+        return listExports(page, pageSize, null, null, null);
+    }
+
+    public ExportListResponse listExports(
+        int page,
+        int pageSize,
+        String keyword,
+        String rawDateFrom,
+        String rawDateTo
+    ) {
         int resolvedPage = Math.max(1, page);
-        int resolvedPageSize = Math.min(Math.max(1, pageSize), 100);
+        int resolvedPageSize = Math.min(Math.max(1, pageSize), EXPORT_HISTORY_MAX_PAGE_SIZE);
         int offset = (resolvedPage - 1) * resolvedPageSize;
-        Integer total = jdbcClient.sql("SELECT COUNT(*) FROM export_job")
+
+        Map<String, Object> params = new LinkedHashMap<>();
+        StringBuilder where = new StringBuilder();
+        if (keyword != null && !keyword.isBlank()) {
+            where.append(where.isEmpty() ? " WHERE " : " AND ").append("filename LIKE :keyword");
+            params.put("keyword", "%" + keyword.trim() + "%");
+        }
+        LocalDate dateFrom = parseFilterDate(rawDateFrom, "dateFrom");
+        LocalDate dateTo = parseFilterDate(rawDateTo, "dateTo");
+        if (dateFrom != null && dateTo != null && dateFrom.isAfter(dateTo)) {
+            throw new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "Invalid export history period: dateFrom is after dateTo"
+            );
+        }
+        if (dateFrom != null) {
+            where.append(where.isEmpty() ? " WHERE " : " AND ").append("created_at >= :dateFrom");
+            params.put("dateFrom", dateFrom.atStartOfDay());
+        }
+        if (dateTo != null) {
+            where.append(where.isEmpty() ? " WHERE " : " AND ").append("created_at < :dateTo");
+            params.put("dateTo", dateTo.plusDays(1).atStartOfDay());
+        }
+
+        where.append('\n');
+
+        Integer total = jdbcClient.sql("SELECT COUNT(*) FROM export_job" + where)
+            .params(params)
             .query(Integer.class)
             .single();
+        params.put("limit", resolvedPageSize);
+        params.put("offset", offset);
         List<ExportJobResponse> items = jdbcClient.sql(
                 """
                 SELECT id, filename, filter_label, grade_filter, cert_ids, record_count, file_size_bytes, created_at
                 FROM export_job
+                """ + where + """
                 ORDER BY created_at DESC, id DESC
                 LIMIT :limit OFFSET :offset
                 """
             )
-            .param("limit", resolvedPageSize)
-            .param("offset", offset)
+            .params(params)
             .query((rs, rowNum) -> new ExportJobResponse(
                 rs.getLong("id"),
                 rs.getString("filename"),
@@ -307,10 +354,11 @@ public class AdminExportService {
             .single();
     }
 
-    private List<ExportRow> loadRows(ExportFilter filter, int limit) {
+    private List<ExportRow> loadRows(ExportFilter filter, int limit, int offset) {
         QueryParts queryParts = buildWhereClause(filter);
         Map<String, Object> params = new LinkedHashMap<>(queryParts.params());
         params.put("limit", limit);
+        params.put("offset", Math.max(0, offset));
         return jdbcClient.sql(
                 """
                 SELECT
@@ -377,6 +425,7 @@ public class AdminExportService {
                 ORDER BY COALESCE(s.approved_at, s.updated_at, s.created_at) DESC,
                          COALESCE(s.approval_sequence, 9223372036854775807) ASC, s.id ASC
                 LIMIT :limit
+                OFFSET :offset
                 """
             )
             .params(params)
@@ -479,6 +528,18 @@ public class AdminExportService {
             where.append(" AND UPPER(s.cert_id) IN (:certIds)");
             params.put("certIds", normalizedCertIds);
         }
+        if (filter.statusCode() != null) {
+            where.append(" AND s.status_code = :statusCode");
+            params.put("statusCode", filter.statusCode());
+        }
+        if (filter.dateFrom() != null) {
+            where.append(" AND COALESCE(s.approved_at, s.created_at) >= :dateFrom");
+            params.put("dateFrom", filter.dateFrom().atStartOfDay());
+        }
+        if (filter.dateTo() != null) {
+            where.append(" AND COALESCE(s.approved_at, s.created_at) < :dateTo");
+            params.put("dateTo", filter.dateTo().plusDays(1).atStartOfDay());
+        }
         return new QueryParts(where.append('\n').toString(), params);
     }
 
@@ -502,14 +563,58 @@ public class AdminExportService {
                 certIds.add(normalized);
             }
         }
+        String statusCode = normalizeStatusCode(request == null ? null : request.statusCode());
+        LocalDate dateFrom = parseFilterDate(request == null ? null : request.dateFrom(), "dateFrom");
+        LocalDate dateTo = parseFilterDate(request == null ? null : request.dateTo(), "dateTo");
+        if (dateFrom != null && dateTo != null && dateFrom.isAfter(dateTo)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid export period: dateFrom is after dateTo");
+        }
         return new ExportFilter(
             selection.value(),
             selection.kind(),
             selection.gradeFilter(),
             selection.vintageClassification(),
             certIds,
-            invalidCertIds
+            invalidCertIds,
+            statusCode,
+            dateFrom,
+            dateTo
         );
+    }
+
+    private int normalizePage(Integer page) {
+        return page == null || page < 1 ? 1 : page;
+    }
+
+    private int normalizePageSize(Integer pageSize) {
+        if (pageSize == null) {
+            return PREVIEW_DEFAULT_PAGE_SIZE;
+        }
+        return Math.min(Math.max(pageSize, 1), PREVIEW_MAX_PAGE_SIZE);
+    }
+
+    private String normalizeStatusCode(String rawStatusCode) {
+        if (rawStatusCode == null || rawStatusCode.isBlank() || EXPORT_FILTER_ALL.equalsIgnoreCase(rawStatusCode.trim())) {
+            return null;
+        }
+        String normalized = rawStatusCode.trim().toLowerCase(Locale.ROOT);
+        if (!SUPPORTED_EXPORT_STATUSES.contains(normalized)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported export status");
+        }
+        return normalized;
+    }
+
+    private LocalDate parseFilterDate(String value, String field) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String trimmed = value.trim();
+        String datePart = trimmed.length() > 10 ? trimmed.substring(0, 10) : trimmed;
+        try {
+            return LocalDate.parse(datePart);
+        } catch (DateTimeParseException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Invalid " + field + ": " + trimmed);
+        }
     }
 
     private ExportSelection parseSelection(ExportRequest request) {
@@ -645,12 +750,45 @@ public class AdminExportService {
         if (!filter.certIds().isEmpty()) {
             label += "; Cert IDs = " + String.join(", ", filter.certIds());
         }
+        if (filter.statusCode() != null) {
+            label += "; Status = " + filter.statusCode();
+        }
+        if (filter.dateFrom() != null || filter.dateTo() != null) {
+            label += "; Period = "
+                + (filter.dateFrom() == null ? "" : filter.dateFrom().toString())
+                + ".."
+                + (filter.dateTo() == null ? "" : filter.dateTo().toString());
+        }
         return label;
     }
 
-    public record ExportRequest(String exportFilter, String gradeFilter, String certIds) {
+    public record ExportRequest(
+        String exportFilter,
+        String gradeFilter,
+        String certIds,
+        String statusCode,
+        String dateFrom,
+        String dateTo,
+        Integer page,
+        Integer pageSize
+    ) {
+        public ExportRequest(
+            String exportFilter,
+            String gradeFilter,
+            String certIds,
+            String statusCode,
+            String dateFrom,
+            String dateTo
+        ) {
+            this(exportFilter, gradeFilter, certIds, statusCode, dateFrom, dateTo, null, null);
+        }
+
+        public ExportRequest(String exportFilter, String gradeFilter, String certIds) {
+            this(exportFilter, gradeFilter, certIds, null, null, null, null, null);
+        }
+
         public ExportRequest(String gradeFilter, String certIds) {
-            this(null, gradeFilter, certIds);
+            this(null, gradeFilter, certIds, null, null, null, null, null);
         }
     }
 
@@ -767,7 +905,10 @@ public class AdminExportService {
         String gradeFilter,
         String vintageClassification,
         List<String> certIds,
-        List<String> invalidCertIds
+        List<String> invalidCertIds,
+        String statusCode,
+        LocalDate dateFrom,
+        LocalDate dateTo
     ) {
     }
 
