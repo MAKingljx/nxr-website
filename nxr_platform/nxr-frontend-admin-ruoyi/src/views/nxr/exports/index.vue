@@ -4,11 +4,17 @@
       :kicker="$tx('DATA EXPORTS')"
       :title="$tx('Data Export')"
       :summary="$tx('Preview, generate, and manage data files for approved or published records')"
-    />
+    >
+      <template #actions>
+        <el-button icon="Tickets" @click="openHistoryDrawer">
+          {{ $tx('Export History') }}<span v-if="total"> ({{ total }})</span>
+        </el-button>
+      </template>
+    </nxr-page-header>
 
     <el-card shadow="never" class="mb8">
       <template #header><span>{{ $tx('Export Criteria (approved/published records only)') }}</span></template>
-      <el-form :inline="true" :model="exportForm" @submit.prevent>
+      <el-form :model="exportForm" label-position="top" class="export-criteria-form" @submit.prevent>
         <el-form-item :label="$tx('Export Filter')">
           <el-select v-model="exportForm.exportFilter" style="width: 260px">
             <el-option :label="$tx('All Approved Products')" value="all" />
@@ -33,6 +39,24 @@
             </el-option-group>
           </el-select>
         </el-form-item>
+        <el-form-item :label="$tx('Status')">
+          <el-select v-model="exportForm.statusCode" style="width: 150px">
+            <el-option :label="$tx('All Statuses')" value="all" />
+            <el-option :label="$tx('Approved')" value="approved" />
+            <el-option :label="$tx('Published')" value="published" />
+          </el-select>
+        </el-form-item>
+        <el-form-item :label="$tx('Period (approved date)')">
+          <el-date-picker
+            v-model="exportForm.dateRange"
+            type="daterange"
+            value-format="YYYY-MM-DD"
+            range-separator="-"
+            :start-placeholder="$tx('Start date')"
+            :end-placeholder="$tx('End date')"
+            style="width: 240px"
+          />
+        </el-form-item>
         <el-form-item :label="$tx('Cert IDs')">
           <el-input
             v-model="exportForm.certIds"
@@ -41,13 +65,12 @@
             style="width: 320px"
           />
         </el-form-item>
-        <el-form-item>
-          <el-button :loading="previewing" icon="View" @click="handlePreview">{{ $tx('Preview') }}</el-button>
+        <el-form-item class="export-form-actions">
+          <el-button type="primary" :loading="previewing" icon="Search" @click="handleSearch">{{ $tx('Search') }}</el-button>
           <el-button
-            type="primary"
             icon="Download"
             :loading="generating"
-            :disabled="preview && !preview.canExport"
+            :disabled="!preview || !preview.canExport"
             v-hasPermi="['nxr:export:generate']"
             @click="handleGenerate"
           >{{ $tx('Generate Excel') }}</el-button>
@@ -56,11 +79,11 @@
 
       <template v-if="preview">
         <el-alert
-          :type="preview.canExport ? 'success' : 'warning'"
+          v-if="preview.invalidCertIds.length || preview.missingCertIds.length"
+          type="warning"
           :closable="false"
           class="mb8"
         >
-          <div>{{ preview.totalCount }} {{ $tx('matching records (showing the first') }} {{ preview.previewLimit }}).</div>
           <div v-if="preview.invalidCertIds.length">{{ $tx('Invalid Cert IDs:') }} {{ preview.invalidCertIds.join(', ') }}</div>
           <div v-if="preview.missingCertIds.length">{{ $tx('Cert IDs not found:') }} {{ preview.missingCertIds.join(', ') }}</div>
         </el-alert>
@@ -81,16 +104,32 @@
             <template #default="scope">{{ exportResult(scope.row) }}</template>
           </el-table-column>
         </el-table>
+        <export-pagination
+          :total="preview.totalCount"
+          :page="searchParams.page"
+          :page-size="searchParams.pageSize"
+          @change="handleSearchPageChange"
+        />
       </template>
     </el-card>
 
-    <el-card shadow="never">
-      <template #header>
-        <div class="card-header">
-          <span>{{ $tx('Export History') }}</span>
-          <el-button icon="Refresh" circle @click="loadExports" />
-        </div>
-      </template>
+    <el-drawer
+      v-model="historyDrawerVisible"
+      :title="$tx('Export History')"
+      direction="rtl"
+      size="80%"
+    >
+      <div class="history-toolbar">
+        <el-input
+          v-model="historyForm.keyword"
+          clearable
+          :placeholder="$tx('Keyword')"
+          style="width: 200px"
+        />
+        <el-button type="primary" icon="Search" @click="applyHistorySearch">{{ $tx('Search') }}</el-button>
+        <el-button icon="Refresh" @click="resetHistorySearch">{{ $tx('Reset') }}</el-button>
+        <el-button icon="Refresh" circle :aria-label="$tx('Refresh')" @click="loadExports" />
+      </div>
       <el-table v-loading="loading" :data="exports">
         <el-table-column :label="$tx('Filename')" prop="filename" min-width="240" show-overflow-tooltip />
         <el-table-column :label="$tx('Filter')" prop="filterLabel" min-width="160" show-overflow-tooltip />
@@ -106,34 +145,38 @@
           </template>
         </el-table-column>
       </el-table>
-      <pagination
-        v-show="total > 0"
+      <export-pagination
         :total="total"
-        v-model:page="pageParams.page"
-        v-model:limit="pageParams.pageSize"
-        @pagination="loadExports"
+        :page="pageParams.page"
+        :page-size="pageParams.pageSize"
+        @change="handleHistoryPageChange"
       />
-    </el-card>
+    </el-drawer>
   </main>
 </template>
 
 <script setup name="NxrExports">
 import { saveAs } from 'file-saver'
 import NxrPageHeader from '@/components/NxrWorkspace/PageHeader.vue'
+import ExportPagination from '@/components/ExportPagination/index.vue'
 import { previewExport, generateExport, fetchExports, downloadExportBlob, deleteExport } from '@/api/nxr/exports'
 
 const { proxy } = getCurrentInstance()
 
 const gradeExportOptions = ['8', '8.5', '9', '9.5', '10', 'Pristine 10']
 const vintageExportOptions = ['Pristine', 'Nova', 'Legacy', 'Helix']
-const exportForm = reactive({ exportFilter: 'all', certIds: '' })
+const exportForm = reactive({ exportFilter: 'all', certIds: '', statusCode: 'all', dateRange: [] })
 const preview = ref(null)
 const previewing = ref(false)
 const generating = ref(false)
 const exports = ref([])
 const total = ref(0)
 const loading = ref(false)
-const pageParams = reactive({ page: 1, pageSize: 10 })
+const pageParams = reactive({ page: 1, pageSize: 20 })
+const searchParams = reactive({ page: 1, pageSize: 20 })
+const historyDrawerVisible = ref(false)
+const historyForm = reactive({ keyword: '' })
+const historyFilters = reactive({ keyword: '' })
 
 function productTypeLabel(value) {
   if (value === 'merch_product' || value === 'label_product') return tx('Merch Product')
@@ -150,9 +193,26 @@ function exportResult(row) {
   return values.length ? values.join(' · ') : '-'
 }
 
-function handlePreview() {
+function exportRequestBody(extra = {}) {
+  const dateRange = Array.isArray(exportForm.dateRange) ? exportForm.dateRange : []
+  return {
+    exportFilter: exportForm.exportFilter,
+    certIds: exportForm.certIds,
+    statusCode: exportForm.statusCode === 'all' ? '' : exportForm.statusCode,
+    dateFrom: dateRange[0] || '',
+    dateTo: dateRange[1] || '',
+    ...extra
+  }
+}
+
+function handleSearch() {
+  searchParams.page = 1
+  loadSearchResults()
+}
+
+function loadSearchResults() {
   previewing.value = true
-  previewExport({ ...exportForm })
+  previewExport(exportRequestBody({ page: searchParams.page, pageSize: searchParams.pageSize }))
     .then((res) => {
       preview.value = res.data
     })
@@ -161,9 +221,15 @@ function handlePreview() {
     })
 }
 
+function handleSearchPageChange({ page, pageSize }) {
+  searchParams.page = page
+  searchParams.pageSize = pageSize
+  loadSearchResults()
+}
+
 function handleGenerate() {
   generating.value = true
-  generateExport({ ...exportForm })
+  generateExport(exportRequestBody())
     .then((res) => {
       proxy.$modal.msgSuccess(tx('Generated ') + res.data.filename + ' (' + res.data.recordCount + tx(' records)'))
       loadExports()
@@ -173,9 +239,34 @@ function handleGenerate() {
     })
 }
 
+function openHistoryDrawer() {
+  historyForm.keyword = historyFilters.keyword
+  historyDrawerVisible.value = true
+  loadExports()
+}
+
+function applyHistorySearch() {
+  historyFilters.keyword = (historyForm.keyword || '').trim()
+  pageParams.page = 1
+  loadExports()
+}
+
+function resetHistorySearch() {
+  historyForm.keyword = ''
+  historyFilters.keyword = ''
+  pageParams.page = 1
+  loadExports()
+}
+
+function handleHistoryPageChange({ page, pageSize }) {
+  pageParams.page = page
+  pageParams.pageSize = pageSize
+  loadExports()
+}
+
 function loadExports() {
   loading.value = true
-  fetchExports({ ...pageParams })
+  fetchExports({ ...pageParams, ...historyFilters })
     .then((res) => {
       exports.value = res.data.items
       total.value = res.data.total
@@ -202,13 +293,33 @@ function handleDelete(row) {
     .catch(() => {})
 }
 
+// Load history count and the first page of export data on entry, so the page opens with records.
 loadExports()
+handleSearch()
 </script>
 
 <style scoped>
-.card-header {
+.export-criteria-form {
   display: flex;
-  justify-content: space-between;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0 16px;
+}
+
+.export-criteria-form :deep(.el-form-item) {
+  margin-right: 0;
+  margin-bottom: 12px;
+}
+
+.export-criteria-form :deep(.el-form-item.export-form-actions) {
+  margin-left: auto;
+}
+
+.history-toolbar {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 </style>
