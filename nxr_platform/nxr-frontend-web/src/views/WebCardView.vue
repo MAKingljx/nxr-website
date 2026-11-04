@@ -1,20 +1,17 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import LegacySiteFooter from '../components/LegacySiteFooter.vue'
 import LegacySiteNav from '../components/LegacySiteNav.vue'
 import { fetchPublicCard, streamAiCharacterInfo, type ProductType, type PublicCardDetail } from '../lib/api'
 import {
-  claimCustomerCard,
-  customerSession,
-  fetchCardCommunity,
-  isCustomerSignedIn,
-  transferCustomerCard,
-  type CardCommunity,
-} from '../lib/customer'
+  aiProviderNotice,
+  pythonAiCopy,
+  pythonGradeText,
+  pythonLanguageLabel,
+  pythonVideoAction,
+} from '../lib/cardDisplayParity'
 
 const props = defineProps<{ certId: string }>()
-const router = useRouter()
 
 const card = ref<PublicCardDetail | null>(null)
 const isLoading = ref(false)
@@ -25,14 +22,9 @@ const aiHtml = ref('')
 const aiStreamingText = ref('')
 const aiError = ref('')
 const aiLanguage = ref('en')
+const aiProvider = ref('')
+const aiCached = ref(false)
 const placeholderImage = `${import.meta.env.BASE_URL}static/placeholder.png`
-const community = ref<CardCommunity | null>(null)
-const communityError = ref('')
-const claimForm = ref({ visibility: 'public', note: '' })
-const transferForm = ref({ recipientEmail: '', visibility: 'public', message: '' })
-const savingCommunity = ref(false)
-
-const isCurrentOwner = computed(() => community.value?.ownership?.customerId === customerSession.value?.customer.id)
 
 const productType = computed<ProductType>(() => {
   const value = card.value?.productType
@@ -71,13 +63,12 @@ const productProfile = computed(() => {
 })
 
 const gradeText = computed(() => {
-  if (!card.value || card.value.finalGradeValue === null) {
-    return 'N/A'
-  }
-
-  const value = Number(card.value.finalGradeValue).toFixed(1)
-  return card.value.finalGradeLabel ? `${value} (${card.value.finalGradeLabel})` : value
+  return card.value ? pythonGradeText(card.value) : ''
 })
+
+const aiCopy = computed(() => pythonAiCopy(card.value?.cardCategory))
+const aiNotice = computed(() => aiProviderNotice(aiProvider.value, aiCached.value))
+const videoAction = computed(() => (card.value ? pythonVideoAction(card.value) : null))
 
 const displayTitle = computed(() => {
   if (!card.value) {
@@ -112,7 +103,7 @@ const detailRows = computed(() => {
       { key: 'Brand', value: detail.brandName },
       { key: 'Set', value: detail.setName },
       { key: 'Card number', value: detail.cardNumber },
-      { key: 'Language', value: detail.languageCode },
+      { key: 'Language', value: pythonLanguageLabel(detail.languageCode) },
     )
 
     if (detail.cardCategory === 'sports_card') {
@@ -122,10 +113,6 @@ const detailRows = computed(() => {
     if (detail.cardCategory === 'celebrity_card') {
       rows.push({ key: 'Group name', value: detail.groupName })
     }
-  }
-
-  if (productType.value === 'merch_product') {
-    rows.push({ key: 'Description', value: detail.merchDescription })
   }
 
   rows.push({ key: 'Population', value: detail.populationValue })
@@ -215,48 +202,11 @@ async function loadCard(nextCertId: string) {
 
   try {
     card.value = await fetchPublicCard(nextCertId)
-    community.value = await fetchCardCommunity(card.value.certId)
   } catch {
     card.value = null
-    community.value = null
   } finally {
     isLoading.value = false
     hasLoaded.value = true
-  }
-}
-
-async function signInForCommunity() {
-  await router.push(`/account/login?next=/card/${encodeURIComponent(props.certId)}`)
-}
-
-async function claimCard() {
-  if (!card.value) return
-  if (!isCustomerSignedIn.value) {
-    await signInForCommunity()
-    return
-  }
-  savingCommunity.value = true
-  communityError.value = ''
-  try {
-    community.value = await claimCustomerCard(card.value.certId, claimForm.value)
-  } catch (error) {
-    communityError.value = error instanceof Error ? error.message : 'Unable to bind this card.'
-  } finally {
-    savingCommunity.value = false
-  }
-}
-
-async function transferCard() {
-  if (!card.value) return
-  savingCommunity.value = true
-  communityError.value = ''
-  try {
-    community.value = await transferCustomerCard(card.value.certId, transferForm.value)
-    transferForm.value = { recipientEmail: '', visibility: 'public', message: '' }
-  } catch (error) {
-    communityError.value = error instanceof Error ? error.message : 'Unable to transfer this card.'
-  } finally {
-    savingCommunity.value = false
   }
 }
 
@@ -270,6 +220,8 @@ async function openAiInfo() {
   aiError.value = ''
   aiHtml.value = ''
   aiStreamingText.value = ''
+  aiProvider.value = ''
+  aiCached.value = false
 
   try {
     const response = await streamAiCharacterInfo(
@@ -284,6 +236,8 @@ async function openAiInfo() {
       },
     )
     aiHtml.value = response.html
+    aiProvider.value = response.provider
+    aiCached.value = response.cached
     aiStreamingText.value = ''
   } catch {
     aiError.value = 'Unable to load character information at this time.'
@@ -328,8 +282,16 @@ watch(
 
         <div class="ai-character-section">
           <button class="ai-character-btn" type="button" @click="openAiInfo">
-            <span class="ai-text">AI Character Info</span>
+            <span class="ai-icon">🤖</span>
+            <span class="ai-text">{{ aiCopy.button }}</span>
+            <span class="ai-subtext">{{ aiCopy.subtitle }}</span>
           </button>
+          <p class="ai-note">Powered by DeepSeek AI · Available in 9 languages</p>
+          <a v-if="videoAction" :href="videoAction.href" target="_blank" rel="noopener" class="ai-character-btn yt-btn">
+            <span class="ai-icon">▶</span>
+            <span class="ai-text">{{ videoAction.label }}</span>
+            <span class="ai-subtext">{{ videoAction.subtitle }}</span>
+          </a>
         </div>
 
         <div class="verification-info">
@@ -373,8 +335,16 @@ watch(
           </div>
         </div>
 
+        <section v-if="productType === 'merch_product' && card.merchDescription" class="merch-description-section">
+          <h2>About This Merch</h2>
+          <p>{{ card.merchDescription }}</p>
+        </section>
+
         <section v-if="productProfile.showSubgrades" class="subgrades-section">
-          <h2 class="subgrades-title">Sub-Grades</h2>
+          <div class="subgrades-header">
+            <h2 class="subgrades-title">Sub-Grades Breakdown</h2>
+            <p>Four critical components of the grade</p>
+          </div>
           <div class="subgrades-grid">
             <div v-for="item in subgrades" :key="item.name" class="subgrade-card">
               <div class="subgrade-copy">
@@ -388,18 +358,6 @@ watch(
           </div>
         </section>
 
-        <section class="community-section">
-          <div class="community-heading"><div><p>Collector ledger</p><h2>Ownership History</h2></div><span v-if="community?.ownership" class="community-owner">{{ community.ownership.ownerLabel }}</span></div>
-          <p v-if="communityError" class="community-error">{{ communityError }}</p>
-          <template v-if="!community?.ownership">
-            <p class="community-copy">This verified card is not yet bound to a collector account.</p>
-            <form v-if="isCustomerSignedIn" class="community-form" @submit.prevent="claimCard"><label>Visibility<select v-model="claimForm.visibility"><option value="public">Show my collector name</option><option value="anonymous">Show as private collector</option><option value="private">Do not show ownership</option></select></label><label>Binding note<textarea v-model="claimForm.note" maxlength="1000" /></label><button class="community-button" :disabled="savingCommunity">Bind card</button></form>
-            <button v-else class="community-button" type="button" @click="signInForCommunity">Sign in to bind this card</button>
-          </template>
-          <form v-else-if="isCurrentOwner" class="community-form transfer-form" @submit.prevent="transferCard"><h3>Transfer this certificate</h3><label>Recipient account email<input v-model="transferForm.recipientEmail" type="email" required /></label><label>New owner visibility<select v-model="transferForm.visibility"><option value="public">Show collector name</option><option value="anonymous">Show as private collector</option><option value="private">Do not show ownership</option></select></label><label>Transfer note<textarea v-model="transferForm.message" maxlength="1000" /></label><button class="community-button" :disabled="savingCommunity">Record transfer</button></form>
-
-          <div v-if="community?.timeline.length" class="community-list"><h3>Transfer history</h3><div v-for="event in community.timeline" :key="event.id" class="community-item"><strong>{{ event.eventTypeCode === 'transferred' ? `${event.fromLabel} transferred to ${event.toLabel}` : `${event.toLabel} bound this card` }}</strong><p v-if="event.message">{{ event.message }}</p><span>{{ new Date(event.createdAt).toLocaleString() }}</span></div></div>
-        </section>
       </div>
     </div>
 
@@ -421,7 +379,7 @@ watch(
     <section class="ai-modal">
       <div class="ai-modal-head">
         <div>
-          <p>AI Character Info</p>
+          <p>{{ aiCopy.modal }}</p>
           <h2>{{ displayTitle }}</h2>
         </div>
         <button type="button" @click="closeAiInfo">Close</button>
@@ -446,6 +404,7 @@ watch(
       <div v-if="aiStreamingText" class="ai-character-info ai-character-info--streaming">{{ aiStreamingText }}</div>
       <div v-else-if="aiError" class="ai-error">{{ aiError }}</div>
       <div v-else-if="!isAiLoading" class="ai-character-info" v-html="aiHtml" />
+      <p v-if="!isAiLoading && aiNotice" class="ai-provider-note">{{ aiNotice }}</p>
     </section>
   </div>
 
@@ -540,128 +499,53 @@ watch(
   white-space: pre-wrap;
 }
 
-.community-section {
-  margin-top: 28px;
-  border-top: 1px solid #2a2a2a;
-  padding-top: 24px;
+.ai-icon,
+.ai-subtext,
+.ai-note {
+  display: block;
 }
 
-.community-heading,
-.community-item,
-.community-form label {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
+.ai-icon {
+  margin-bottom: 8px;
+  font-size: 24px;
 }
 
-.community-heading {
-  align-items: flex-start;
+.ai-subtext,
+.ai-note,
+.ai-provider-note,
+.subgrades-header p {
+  color: #94a3b8;
+  font-size: 13px;
 }
 
-.community-heading p,
-.community-item p,
-.community-item span,
-.community-copy {
-  color: #999;
+.ai-note {
+  margin: 8px 0 12px;
+  text-align: center;
 }
 
-.community-heading p {
-  margin: 0 0 4px;
-  font-size: 12px;
-  text-transform: uppercase;
+.yt-btn {
+  margin-top: 12px;
+  background: #b91c1c;
 }
 
-.community-heading h2,
-.community-list h3,
-.transfer-form h3 {
-  margin: 0;
-  font-size: 17px;
+.subgrades-header {
+  margin-bottom: 14px;
 }
 
-.community-owner {
-  border: 1px solid #333;
-  color: #ddd;
-  padding: 6px 9px;
-  font-size: 12px;
+.subgrades-header p {
+  margin: 4px 0 0;
 }
 
-.community-form {
-  display: grid;
-  gap: 10px;
+.merch-description-section {
+  margin-top: 24px;
+}
+
+.merch-description-section h2 {
+  margin-bottom: 8px;
+}
+
+.ai-provider-note {
   margin-top: 14px;
-}
-
-.community-form label {
-  flex-direction: column;
-  color: #bbb;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.community-form input,
-.community-form textarea,
-.community-form select {
-  width: 100%;
-  border: 1px solid #333;
-  background: #181818;
-  color: #fff;
-  padding: 10px;
-  font: inherit;
-}
-
-.community-form textarea {
-  min-height: 70px;
-  resize: vertical;
-}
-
-.community-button {
-  justify-self: start;
-  border: 1px solid #e94560;
-  background: #e94560;
-  color: #fff;
-  padding: 10px 14px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.community-button.secondary {
-  border-color: #444;
-  background: transparent;
-}
-
-.community-error {
-  color: #ff8ea0;
-  margin: 12px 0;
-}
-
-.community-list {
-  margin-top: 22px;
-}
-
-.community-list {
-  display: grid;
-  gap: 9px;
-}
-
-.community-item {
-  display: block;
-  border: 1px solid #292929;
-  padding: 12px;
-}
-
-.community-item strong,
-.community-item p,
-.community-item span {
-  display: block;
-}
-
-.community-item p {
-  margin: 6px 0;
-  line-height: 1.5;
-}
-
-.community-item span {
-  font-size: 12px;
 }
 
 @media (max-width: 720px) {
