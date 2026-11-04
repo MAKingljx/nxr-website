@@ -179,6 +179,21 @@ const previewPageSizes = [10, 20, 50, 100]
 const historyDrawerVisible = ref(false)
 const historyForm = reactive({ keyword: '' })
 const historyFilters = reactive({ keyword: '' })
+let previewRequestVersion = 0
+let historyRequestVersion = 0
+
+watch(
+  () => [
+    exportForm.exportFilter,
+    exportForm.certIds,
+    exportForm.statusCode,
+    ...(Array.isArray(exportForm.dateRange) ? exportForm.dateRange : [])
+  ],
+  () => {
+    previewRequestVersion += 1
+    preview.value = null
+  }
+)
 
 function productTypeLabel(value) {
   if (value === 'merch_product' || value === 'label_product') return tx('Merch Product')
@@ -213,13 +228,15 @@ function handleSearch() {
 }
 
 function loadSearchResults() {
+  const requestVersion = ++previewRequestVersion
+  preview.value = null
   previewing.value = true
   previewExport(exportRequestBody({ page: searchParams.page, pageSize: searchParams.pageSize }))
     .then((res) => {
-      preview.value = res.data
+      if (requestVersion === previewRequestVersion) preview.value = res.data
     })
     .finally(() => {
-      previewing.value = false
+      if (requestVersion === previewRequestVersion) previewing.value = false
     })
 }
 
@@ -267,14 +284,17 @@ function handleHistoryPageChange({ page, pageSize }) {
 }
 
 function loadExports() {
+  const requestVersion = ++historyRequestVersion
   loading.value = true
   fetchExports({ ...pageParams, ...historyFilters })
     .then((res) => {
-      exports.value = res.data.items
-      total.value = res.data.total
+      if (requestVersion === historyRequestVersion) {
+        exports.value = res.data.items
+        total.value = res.data.total
+      }
     })
     .finally(() => {
-      loading.value = false
+      if (requestVersion === historyRequestVersion) loading.value = false
     })
 }
 
