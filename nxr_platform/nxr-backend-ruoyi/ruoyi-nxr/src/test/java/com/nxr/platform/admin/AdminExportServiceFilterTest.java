@@ -146,6 +146,31 @@ class AdminExportServiceFilterTest {
     }
 
     @Test
+    void previewPagingUsesTheServerBoundWithoutSkippingRecordsOrOverflowingOffsets() {
+        for (long id = 8; id < 209; id++) {
+            insertSubmission(id, String.format("%010d", 9_000_000_000L + id), "merch_product", null, "Bulk export", "approved");
+        }
+
+        var first = service.preview(new AdminExportService.ExportRequest("all", null, "", null, null, null, 1, 100));
+        var second = service.preview(new AdminExportService.ExportRequest("all", null, "", null, null, null, 2, 100));
+        var third = service.preview(new AdminExportService.ExportRequest("all", null, "", null, null, null, 3, 100));
+
+        List<Long> ids = new ArrayList<>();
+        first.rows().forEach(row -> ids.add(row.submissionId()));
+        second.rows().forEach(row -> ids.add(row.submissionId()));
+        third.rows().forEach(row -> ids.add(row.submissionId()));
+
+        assertThat(first.totalCount()).isEqualTo(207);
+        assertThat(first.rows()).hasSize(100);
+        assertThat(second.rows()).hasSize(100);
+        assertThat(third.rows()).hasSize(7);
+        assertThat(ids).hasSize(207).doesNotHaveDuplicates();
+        assertThat(service.preview(
+            new AdminExportService.ExportRequest("all", null, "", null, null, null, Integer.MAX_VALUE, 100)
+        ).rows()).isEmpty();
+    }
+
+    @Test
     void exportHistorySupportsKeywordAndPeriodFilters() {
         jdbcTemplate.update(
             """
@@ -186,6 +211,9 @@ class AdminExportServiceFilterTest {
         AdminExportService.ExportListResponse normalized = service.listExports(0, 0);
         assertThat(normalized.page()).isEqualTo(1);
         assertThat(normalized.pageSize()).isEqualTo(1);
+
+        AdminExportService.ExportListResponse farPage = service.listExports(Integer.MAX_VALUE, 200);
+        assertThat(farPage.items()).isEmpty();
     }
 
     @Test
