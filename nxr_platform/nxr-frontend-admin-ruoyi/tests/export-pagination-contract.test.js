@@ -22,3 +22,15 @@ test('export preview never advertises a page size above its backend contract', (
     /default:\s*\(\)\s*=>\s*\[10, 20, 50, 100, 200\]/
   )
 })
+
+test('export lists invalidate stale previews and responses before applying them', () => {
+  const script = exportsPage.scriptSetup.content
+
+  assert.match(script, /let previewRequestVersion = 0/)
+  assert.match(script, /previewRequestVersion \+= 1\s*\n\s*preview\.value = null/)
+  assert.match(script, /const requestVersion = \+\+previewRequestVersion/)
+  assert.match(script, /if \(requestVersion === previewRequestVersion\) preview\.value = res\.data/)
+  assert.match(script, /let historyRequestVersion = 0/)
+  assert.match(script, /const requestVersion = \+\+historyRequestVersion/)
+  assert.match(script, /if \(requestVersion === historyRequestVersion\) \{\s*\n\s*exports\.value = res\.data\.items/)
+})
