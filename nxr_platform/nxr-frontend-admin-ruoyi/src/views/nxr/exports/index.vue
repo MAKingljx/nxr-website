@@ -108,6 +108,7 @@
           :total="preview.totalCount"
           :page="searchParams.page"
           :page-size="searchParams.pageSize"
+          :page-sizes="previewPageSizes"
           @change="handleSearchPageChange"
         />
       </template>
@@ -174,6 +175,7 @@ const total = ref(0)
 const loading = ref(false)
 const pageParams = reactive({ page: 1, pageSize: 20 })
 const searchParams = reactive({ page: 1, pageSize: 20 })
+const previewPageSizes = [10, 20, 50, 100]
 const historyDrawerVisible = ref(false)
 const historyForm = reactive({ keyword: '' })
 const historyFilters = reactive({ keyword: '' })

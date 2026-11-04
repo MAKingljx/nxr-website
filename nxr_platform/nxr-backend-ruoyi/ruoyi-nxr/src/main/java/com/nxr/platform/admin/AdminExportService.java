@@ -80,7 +80,7 @@ public class AdminExportService {
         ExportFilter filter = normalizeFilter(request);
         int page = normalizePage(request == null ? null : request.page());
         int pageSize = normalizePageSize(request == null ? null : request.pageSize());
-        List<ExportRow> rows = loadRows(filter, pageSize, (page - 1) * pageSize);
+        List<ExportRow> rows = loadRows(filter, pageSize, ((long) page - 1) * pageSize);
         int total = countRows(filter);
         List<String> missingCertIds = missingCertIds(filter);
 
@@ -175,7 +175,7 @@ public class AdminExportService {
     ) {
         int resolvedPage = Math.max(1, page);
         int resolvedPageSize = Math.min(Math.max(1, pageSize), EXPORT_HISTORY_MAX_PAGE_SIZE);
-        int offset = (resolvedPage - 1) * resolvedPageSize;
+        long offset = ((long) resolvedPage - 1) * resolvedPageSize;
 
         Map<String, Object> params = new LinkedHashMap<>();
         StringBuilder where = new StringBuilder();
@@ -354,11 +354,11 @@ public class AdminExportService {
             .single();
     }
 
-    private List<ExportRow> loadRows(ExportFilter filter, int limit, int offset) {
+    private List<ExportRow> loadRows(ExportFilter filter, int limit, long offset) {
         QueryParts queryParts = buildWhereClause(filter);
         Map<String, Object> params = new LinkedHashMap<>(queryParts.params());
         params.put("limit", limit);
-        params.put("offset", Math.max(0, offset));
+        params.put("offset", Math.max(0L, offset));
         return jdbcClient.sql(
                 """
                 SELECT
