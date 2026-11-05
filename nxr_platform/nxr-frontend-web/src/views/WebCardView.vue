@@ -1,20 +1,17 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import LegacySiteFooter from '../components/LegacySiteFooter.vue'
 import LegacySiteNav from '../components/LegacySiteNav.vue'
 import { fetchPublicCard, streamAiCharacterInfo, type ProductType, type PublicCardDetail } from '../lib/api'
 import {
-  claimCustomerCard,
-  customerSession,
-  fetchCardCommunity,
-  isCustomerSignedIn,
-  transferCustomerCard,
-  type CardCommunity,
-} from '../lib/customer'
+  aiProviderNotice,
+  pythonAiCopy,
+  pythonGradeText,
+  pythonLanguageLabel,
+  pythonVideoAction,
+} from '../lib/cardDisplayParity'
 
 const props = defineProps<{ certId: string }>()
-const router = useRouter()
 
 const card = ref<PublicCardDetail | null>(null)
 const isLoading = ref(false)
@@ -25,14 +22,9 @@ const aiHtml = ref('')
 const aiStreamingText = ref('')
 const aiError = ref('')
 const aiLanguage = ref('en')
+const aiProvider = ref('')
+const aiCached = ref(false)
 const placeholderImage = `${import.meta.env.BASE_URL}static/placeholder.png`
-const community = ref<CardCommunity | null>(null)
-const communityError = ref('')
-const claimForm = ref({ visibility: 'public', note: '' })
-const transferForm = ref({ recipientEmail: '', visibility: 'public', message: '' })
-const savingCommunity = ref(false)
-
-const isCurrentOwner = computed(() => community.value?.ownership?.customerId === customerSession.value?.customer.id)
 
 const productType = computed<ProductType>(() => {
   const value = card.value?.productType
@@ -71,13 +63,17 @@ const productProfile = computed(() => {
 })
 
 const gradeText = computed(() => {
-  if (!card.value || card.value.finalGradeValue === null) {
-    return 'N/A'
-  }
-
-  const value = Number(card.value.finalGradeValue).toFixed(1)
-  return card.value.finalGradeLabel ? `${value} (${card.value.finalGradeLabel})` : value
+  return card.value ? pythonGradeText(card.value) : ''
 })
+
+const isPerfectGrade = computed(() => {
+  const normalized = gradeText.value.toLowerCase()
+  return normalized.includes('10 perfect') || normalized.includes('pristine 10')
+})
+
+const aiCopy = computed(() => pythonAiCopy(card.value?.cardCategory))
+const aiNotice = computed(() => aiProviderNotice(aiProvider.value, aiCached.value))
+const videoAction = computed(() => (card.value ? pythonVideoAction(card.value) : null))
 
 const displayTitle = computed(() => {
   if (!card.value) {
@@ -112,7 +108,7 @@ const detailRows = computed(() => {
       { key: 'Brand', value: detail.brandName },
       { key: 'Set', value: detail.setName },
       { key: 'Card number', value: detail.cardNumber },
-      { key: 'Language', value: detail.languageCode },
+      { key: 'Language', value: pythonLanguageLabel(detail.languageCode) },
     )
 
     if (detail.cardCategory === 'sports_card') {
@@ -122,10 +118,6 @@ const detailRows = computed(() => {
     if (detail.cardCategory === 'celebrity_card') {
       rows.push({ key: 'Group name', value: detail.groupName })
     }
-  }
-
-  if (productType.value === 'merch_product') {
-    rows.push({ key: 'Description', value: detail.merchDescription })
   }
 
   rows.push({ key: 'Population', value: detail.populationValue })
@@ -161,29 +153,6 @@ const subgrades = computed(() => {
   ].filter((item): item is { name: string; score: number; description: string } => item.score !== null)
 })
 
-const vintageClassifications = [
-  {
-    code: 'I',
-    name: 'Pristine',
-    description: 'Near-pristine vintage survivor. Almost no age-related patina. Sharp corners, crisp edges and clean surface. Free of creases, scuffs, stains and paper loss.',
-  },
-  {
-    code: 'II',
-    name: 'Nova',
-    description: 'Displays natural age patina matching its era. Minor soft corner rounding and trivial edge wear. No creases or tears. Card surface stays fully intact.',
-  },
-  {
-    code: 'III',
-    name: 'Legacy',
-    description: 'Noticeable corner rounding and edge wear with moderate age patina. Faint soft indentations may appear. No hard creases and no paper loss.',
-  },
-  {
-    code: 'IV',
-    name: 'Helix',
-    description: 'Carries honest traces of past collector enjoyment. Heavy corner and edge wear, together with rich age patina. Visible creases, surface scuffs and minor spots are acceptable. The card remains structurally complete, without major tears or missing pieces.',
-  },
-]
-
 function subgradeClass(score: number) {
   if (score >= 9.5) {
     return 'subgrade-perfect'
@@ -215,48 +184,11 @@ async function loadCard(nextCertId: string) {
 
   try {
     card.value = await fetchPublicCard(nextCertId)
-    community.value = await fetchCardCommunity(card.value.certId)
   } catch {
     card.value = null
-    community.value = null
   } finally {
     isLoading.value = false
     hasLoaded.value = true
-  }
-}
-
-async function signInForCommunity() {
-  await router.push(`/account/login?next=/card/${encodeURIComponent(props.certId)}`)
-}
-
-async function claimCard() {
-  if (!card.value) return
-  if (!isCustomerSignedIn.value) {
-    await signInForCommunity()
-    return
-  }
-  savingCommunity.value = true
-  communityError.value = ''
-  try {
-    community.value = await claimCustomerCard(card.value.certId, claimForm.value)
-  } catch (error) {
-    communityError.value = error instanceof Error ? error.message : 'Unable to bind this card.'
-  } finally {
-    savingCommunity.value = false
-  }
-}
-
-async function transferCard() {
-  if (!card.value) return
-  savingCommunity.value = true
-  communityError.value = ''
-  try {
-    community.value = await transferCustomerCard(card.value.certId, transferForm.value)
-    transferForm.value = { recipientEmail: '', visibility: 'public', message: '' }
-  } catch (error) {
-    communityError.value = error instanceof Error ? error.message : 'Unable to transfer this card.'
-  } finally {
-    savingCommunity.value = false
   }
 }
 
@@ -270,6 +202,8 @@ async function openAiInfo() {
   aiError.value = ''
   aiHtml.value = ''
   aiStreamingText.value = ''
+  aiProvider.value = ''
+  aiCached.value = false
 
   try {
     const response = await streamAiCharacterInfo(
@@ -284,6 +218,8 @@ async function openAiInfo() {
       },
     )
     aiHtml.value = response.html
+    aiProvider.value = response.provider
+    aiCached.value = response.cached
     aiStreamingText.value = ''
   } catch {
     aiError.value = 'Unable to load character information at this time.'
@@ -328,8 +264,16 @@ watch(
 
         <div class="ai-character-section">
           <button class="ai-character-btn" type="button" @click="openAiInfo">
-            <span class="ai-text">AI Character Info</span>
+            <span class="ai-icon">🤖</span>
+            <span class="ai-text">{{ aiCopy.button }}</span>
+            <span class="ai-subtext">{{ aiCopy.subtitle }}</span>
           </button>
+          <p class="ai-note">Powered by DeepSeek AI · Available in 9 languages</p>
+          <a v-if="videoAction" :href="videoAction.href" target="_blank" rel="noopener" class="ai-character-btn yt-btn">
+            <span class="ai-icon">▶</span>
+            <span class="ai-text">{{ videoAction.label }}</span>
+            <span class="ai-subtext">{{ videoAction.subtitle }}</span>
+          </a>
         </div>
 
         <div class="verification-info">
@@ -343,28 +287,11 @@ watch(
         <div class="product-type-label">{{ productProfile.label }}</div>
         <h1 class="card-title">{{ displayTitle }}</h1>
         <div class="card-cert">Certificate ID: {{ card.certId }}</div>
-        <div
-          v-if="productProfile.showClassification && (card.yearLabel || card.vintageClassification)"
-          class="vintage-classification"
-        >
-          <span v-if="card.yearLabel">{{ card.yearLabel }}</span>
-          <strong v-if="card.vintageClassification">{{ card.vintageClassification }}</strong>
+        <div v-if="productProfile.showClassification && card.vintageClassification" class="vintage-badge vintage-classification">
+          <span class="vintage-badge-label">Condition Grade</span>
+          <strong class="vintage-badge-value">{{ card.vintageClassification }}</strong>
         </div>
-        <div v-if="productProfile.showFinalGrade" class="grade-badge">Final Grade: {{ gradeText }}</div>
-
-        <section v-if="productProfile.showClassification" class="vintage-condition-guide">
-          <h2>NXR Vintage Card Classifications</h2>
-          <p class="vintage-condition-intro">Four archival classifications for vintage cards. Age-related patina is regarded as authentic character, not damage.</p>
-          <div class="vintage-condition-list">
-            <article v-for="classification in vintageClassifications" :key="classification.code" class="vintage-condition-item">
-              <div class="vintage-condition-code">{{ classification.code }}</div>
-              <div>
-                <div class="vintage-condition-name">{{ classification.name }}</div>
-                <p>{{ classification.description }}</p>
-              </div>
-            </article>
-          </div>
-        </section>
+        <div v-if="productProfile.showFinalGrade && gradeText" class="grade-badge" :class="{ 'perfect-10': isPerfectGrade }">Final Grade: {{ gradeText }}</div>
 
         <div class="detail-grid">
           <div v-for="row in detailRows" :key="row.key" class="detail-row">
@@ -373,33 +300,29 @@ watch(
           </div>
         </div>
 
+        <section v-if="productType === 'merch_product' && card.merchDescription" class="merch-description-section">
+          <h2>About This Merch</h2>
+          <p>{{ card.merchDescription }}</p>
+        </section>
+
         <section v-if="productProfile.showSubgrades" class="subgrades-section">
-          <h2 class="subgrades-title">Sub-Grades</h2>
+          <div class="subgrades-header">
+            <h2 class="subgrades-title">Sub-Grades Breakdown</h2>
+            <p>Four critical components of the grade</p>
+          </div>
           <div class="subgrades-grid">
-            <div v-for="item in subgrades" :key="item.name" class="subgrade-card">
-              <div class="subgrade-copy">
+            <div v-for="item in subgrades" :key="item.name" class="subgrade-card" :class="{ 'perfect-subgrade': isPerfectGrade && subgradeClass(item.score) === 'subgrade-perfect' }">
+              <div class="subgrade-header">
                 <div class="subgrade-name">{{ item.name }}</div>
-                <p class="subgrade-description">{{ item.description }}</p>
+                <div class="subgrade-score" :class="subgradeClass(item.score)">
+                  {{ Number(item.score).toFixed(1) }}
+                </div>
               </div>
-              <div class="subgrade-score" :class="subgradeClass(item.score)">
-                {{ Number(item.score).toFixed(1) }}
-              </div>
+              <p class="subgrade-description">{{ item.description }}</p>
             </div>
           </div>
         </section>
 
-        <section class="community-section">
-          <div class="community-heading"><div><p>Collector ledger</p><h2>Ownership History</h2></div><span v-if="community?.ownership" class="community-owner">{{ community.ownership.ownerLabel }}</span></div>
-          <p v-if="communityError" class="community-error">{{ communityError }}</p>
-          <template v-if="!community?.ownership">
-            <p class="community-copy">This verified card is not yet bound to a collector account.</p>
-            <form v-if="isCustomerSignedIn" class="community-form" @submit.prevent="claimCard"><label>Visibility<select v-model="claimForm.visibility"><option value="public">Show my collector name</option><option value="anonymous">Show as private collector</option><option value="private">Do not show ownership</option></select></label><label>Binding note<textarea v-model="claimForm.note" maxlength="1000" /></label><button class="community-button" :disabled="savingCommunity">Bind card</button></form>
-            <button v-else class="community-button" type="button" @click="signInForCommunity">Sign in to bind this card</button>
-          </template>
-          <form v-else-if="isCurrentOwner" class="community-form transfer-form" @submit.prevent="transferCard"><h3>Transfer this certificate</h3><label>Recipient account email<input v-model="transferForm.recipientEmail" type="email" required /></label><label>New owner visibility<select v-model="transferForm.visibility"><option value="public">Show collector name</option><option value="anonymous">Show as private collector</option><option value="private">Do not show ownership</option></select></label><label>Transfer note<textarea v-model="transferForm.message" maxlength="1000" /></label><button class="community-button" :disabled="savingCommunity">Record transfer</button></form>
-
-          <div v-if="community?.timeline.length" class="community-list"><h3>Transfer history</h3><div v-for="event in community.timeline" :key="event.id" class="community-item"><strong>{{ event.eventTypeCode === 'transferred' ? `${event.fromLabel} transferred to ${event.toLabel}` : `${event.toLabel} bound this card` }}</strong><p v-if="event.message">{{ event.message }}</p><span>{{ new Date(event.createdAt).toLocaleString() }}</span></div></div>
-        </section>
       </div>
     </div>
 
@@ -419,33 +342,39 @@ watch(
 
   <div v-if="isAiOpen" class="ai-modal-backdrop" @click.self="closeAiInfo">
     <section class="ai-modal">
-      <div class="ai-modal-head">
-        <div>
-          <p>AI Character Info</p>
-          <h2>{{ displayTitle }}</h2>
+      <div class="ai-modal-header">
+        <div class="ai-modal-title">
+          <span class="icon">🤖</span>
+          <span>{{ aiCopy.modal }}</span>
         </div>
-        <button type="button" @click="closeAiInfo">Close</button>
+        <button class="ai-modal-close" type="button" aria-label="Close AI information" @click="closeAiInfo">×</button>
       </div>
 
-      <label class="ai-language">
-        <span>Language</span>
-        <select v-model="aiLanguage" @change="openAiInfo">
-          <option value="en">English</option>
-          <option value="zh-CN">中文</option>
-          <option value="ja">Japanese</option>
-          <option value="ko">Korean</option>
-          <option value="fr">French</option>
-          <option value="de">German</option>
-          <option value="es">Spanish</option>
-          <option value="it">Italian</option>
-          <option value="pt">Portuguese</option>
-        </select>
-      </label>
+      <div class="ai-modal-body">
+        <div v-if="isAiLoading && !aiStreamingText" class="ai-loading">Loading AI context...</div>
+        <div v-if="aiStreamingText" class="ai-character-info ai-character-info--streaming">{{ aiStreamingText }}</div>
+        <div v-else-if="aiError" class="ai-error">{{ aiError }}</div>
+        <div v-else-if="!isAiLoading" class="ai-character-info" v-html="aiHtml" />
+        <p v-if="!isAiLoading && aiNotice" class="ai-provider-note">{{ aiNotice }}</p>
+      </div>
 
-      <div v-if="isAiLoading && !aiStreamingText" class="ai-loading">Loading AI context...</div>
-      <div v-if="aiStreamingText" class="ai-character-info ai-character-info--streaming">{{ aiStreamingText }}</div>
-      <div v-else-if="aiError" class="ai-error">{{ aiError }}</div>
-      <div v-else-if="!isAiLoading" class="ai-character-info" v-html="aiHtml" />
+      <div class="ai-modal-footer">
+        <label class="ai-language-select">
+          <span class="ai-language-label">Language:</span>
+          <select v-model="aiLanguage" @change="openAiInfo">
+            <option value="en">English</option>
+            <option value="zh-CN">中文 (Chinese)</option>
+            <option value="ja">日本語 (Japanese)</option>
+            <option value="ko">한국어 (Korean)</option>
+            <option value="fr">Français (French)</option>
+            <option value="de">Deutsch (German)</option>
+            <option value="es">Español (Spanish)</option>
+            <option value="it">Italiano (Italian)</option>
+            <option value="pt">Português (Portuguese)</option>
+          </select>
+        </label>
+        <div class="ai-powered-by"><span class="icon">⚡</span><span>Powered by DeepSeek AI</span></div>
+      </div>
     </section>
   </div>
 
@@ -456,73 +385,104 @@ watch(
 .ai-modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 50;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(5, 10, 22, 0.58);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(10, 10, 10, 0.95);
+  backdrop-filter: blur(8px);
 }
 
 .ai-modal {
-  width: min(720px, 100%);
-  max-height: calc(100vh - 48px);
-  overflow: auto;
+  width: min(600px, 100%);
+  max-height: 80vh;
+  overflow: hidden;
   border-radius: 8px;
-  background: #fff;
-  padding: 24px;
-  color: #111827;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.26);
+  border: 1px solid var(--border2);
+  background: var(--bg2);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  animation: modalSlideIn .3s ease;
 }
 
-.ai-modal-head {
+@keyframes modalSlideIn {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.ai-modal-header {
   display: flex;
   justify-content: space-between;
-  gap: 16px;
-  align-items: flex-start;
+  align-items: center;
+  padding: 24px;
+  border-bottom: 1px solid var(--border);
 }
 
-.ai-modal-head p,
-.ai-modal-head h2 {
-  margin: 0;
-}
-
-.ai-modal-head p {
-  margin-bottom: 6px;
-  color: #55647f;
-  font-size: 12px;
-  letter-spacing: 0;
-  text-transform: uppercase;
+.ai-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 18px;
   font-weight: 700;
 }
 
-.ai-modal-head button,
-.ai-language select {
-  height: 42px;
-  border-radius: 8px;
-  border: 1px solid rgba(20, 32, 51, 0.12);
-  background: #fff;
-  font: inherit;
+.ai-modal-title .icon {
+  font-size: 20px;
 }
 
-.ai-modal-head button {
-  padding: 0 14px;
+.ai-modal-close {
+  border: 0;
+  background: transparent;
+  color: var(--text3);
+  font-size: 24px;
   cursor: pointer;
+  padding: 4px;
+  line-height: 1;
 }
 
-.ai-language {
-  display: block;
-  margin-top: 18px;
+.ai-modal-close:hover {
+  color: var(--text);
 }
 
-.ai-language span {
-  display: block;
-  margin-bottom: 8px;
-  font-weight: 700;
+.ai-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
 }
 
-.ai-language select {
-  width: 220px;
-  padding: 0 12px;
+.ai-modal-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 20px 24px;
+  border-top: 1px solid var(--border);
+}
+
+.ai-language-select,
+.ai-powered-by {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-language-label,
+.ai-powered-by {
+  color: var(--text3);
+  font-size: 12px;
+}
+
+.ai-language-select select {
+  min-width: 140px;
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  background: var(--bg3);
+  color: var(--text);
+  padding: 8px 12px;
+  font: inherit;
 }
 
 .ai-loading,
@@ -540,136 +500,71 @@ watch(
   white-space: pre-wrap;
 }
 
-.community-section {
-  margin-top: 28px;
-  border-top: 1px solid #2a2a2a;
-  padding-top: 24px;
+.ai-icon,
+.ai-subtext,
+.ai-note {
+  display: block;
 }
 
-.community-heading,
-.community-item,
-.community-form label {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
+.ai-icon {
+  margin-bottom: 8px;
+  font-size: 32px;
 }
 
-.community-heading {
-  align-items: flex-start;
+.ai-note,
+.ai-provider-note,
+.subgrades-header p {
+  color: #94a3b8;
+  font-size: 13px;
 }
 
-.community-heading p,
-.community-item p,
-.community-item span,
-.community-copy {
-  color: #999;
-}
-
-.community-heading p {
-  margin: 0 0 4px;
+.ai-subtext {
+  color: rgba(255, 255, 255, 0.8);
   font-size: 12px;
-  text-transform: uppercase;
+  font-weight: 500;
 }
 
-.community-heading h2,
-.community-list h3,
-.transfer-form h3 {
-  margin: 0;
-  font-size: 17px;
+.ai-note {
+  margin: 8px 0 12px;
+  text-align: center;
 }
 
-.community-owner {
-  border: 1px solid #333;
-  color: #ddd;
-  padding: 6px 9px;
-  font-size: 12px;
+.yt-btn {
+  margin-top: 12px;
+  background: linear-gradient(135deg, #e8394a, #b01020);
 }
 
-.community-form {
-  display: grid;
-  gap: 10px;
+.subgrades-header {
+  margin-bottom: 14px;
+}
+
+.subgrades-header p {
+  margin: 4px 0 0;
+}
+
+.merch-description-section {
+  margin-top: 24px;
+}
+
+.merch-description-section h2 {
+  margin-bottom: 8px;
+}
+
+.ai-provider-note {
   margin-top: 14px;
 }
 
-.community-form label {
-  flex-direction: column;
-  color: #bbb;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.community-form input,
-.community-form textarea,
-.community-form select {
-  width: 100%;
-  border: 1px solid #333;
-  background: #181818;
-  color: #fff;
-  padding: 10px;
-  font: inherit;
-}
-
-.community-form textarea {
-  min-height: 70px;
-  resize: vertical;
-}
-
-.community-button {
-  justify-self: start;
-  border: 1px solid #e94560;
-  background: #e94560;
-  color: #fff;
-  padding: 10px 14px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.community-button.secondary {
-  border-color: #444;
-  background: transparent;
-}
-
-.community-error {
-  color: #ff8ea0;
-  margin: 12px 0;
-}
-
-.community-list {
-  margin-top: 22px;
-}
-
-.community-list {
-  display: grid;
-  gap: 9px;
-}
-
-.community-item {
-  display: block;
-  border: 1px solid #292929;
-  padding: 12px;
-}
-
-.community-item strong,
-.community-item p,
-.community-item span {
-  display: block;
-}
-
-.community-item p {
-  margin: 6px 0;
-  line-height: 1.5;
-}
-
-.community-item span {
-  font-size: 12px;
-}
-
 @media (max-width: 720px) {
-  .ai-modal-head {
+  .ai-modal-footer {
+    align-items: stretch;
     flex-direction: column;
   }
 
-  .ai-language select {
+  .ai-language-select {
+    justify-content: space-between;
+  }
+
+  .ai-language-select select {
     width: 100%;
   }
 }
