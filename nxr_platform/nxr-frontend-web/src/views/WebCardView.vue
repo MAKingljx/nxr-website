@@ -66,6 +66,11 @@ const gradeText = computed(() => {
   return card.value ? pythonGradeText(card.value) : ''
 })
 
+const isPerfectGrade = computed(() => {
+  const normalized = gradeText.value.toLowerCase()
+  return normalized.includes('10 perfect') || normalized.includes('pristine 10')
+})
+
 const aiCopy = computed(() => pythonAiCopy(card.value?.cardCategory))
 const aiNotice = computed(() => aiProviderNotice(aiProvider.value, aiCached.value))
 const videoAction = computed(() => (card.value ? pythonVideoAction(card.value) : null))
@@ -147,29 +152,6 @@ const subgrades = computed(() => {
     },
   ].filter((item): item is { name: string; score: number; description: string } => item.score !== null)
 })
-
-const vintageClassifications = [
-  {
-    code: 'I',
-    name: 'Pristine',
-    description: 'Near-pristine vintage survivor. Almost no age-related patina. Sharp corners, crisp edges and clean surface. Free of creases, scuffs, stains and paper loss.',
-  },
-  {
-    code: 'II',
-    name: 'Nova',
-    description: 'Displays natural age patina matching its era. Minor soft corner rounding and trivial edge wear. No creases or tears. Card surface stays fully intact.',
-  },
-  {
-    code: 'III',
-    name: 'Legacy',
-    description: 'Noticeable corner rounding and edge wear with moderate age patina. Faint soft indentations may appear. No hard creases and no paper loss.',
-  },
-  {
-    code: 'IV',
-    name: 'Helix',
-    description: 'Carries honest traces of past collector enjoyment. Heavy corner and edge wear, together with rich age patina. Visible creases, surface scuffs and minor spots are acceptable. The card remains structurally complete, without major tears or missing pieces.',
-  },
-]
 
 function subgradeClass(score: number) {
   if (score >= 9.5) {
@@ -305,28 +287,11 @@ watch(
         <div class="product-type-label">{{ productProfile.label }}</div>
         <h1 class="card-title">{{ displayTitle }}</h1>
         <div class="card-cert">Certificate ID: {{ card.certId }}</div>
-        <div
-          v-if="productProfile.showClassification && (card.yearLabel || card.vintageClassification)"
-          class="vintage-classification"
-        >
-          <span v-if="card.yearLabel">{{ card.yearLabel }}</span>
-          <strong v-if="card.vintageClassification">{{ card.vintageClassification }}</strong>
+        <div v-if="productProfile.showClassification && card.vintageClassification" class="vintage-badge vintage-classification">
+          <span class="vintage-badge-label">Condition Grade</span>
+          <strong class="vintage-badge-value">{{ card.vintageClassification }}</strong>
         </div>
-        <div v-if="productProfile.showFinalGrade" class="grade-badge">Final Grade: {{ gradeText }}</div>
-
-        <section v-if="productProfile.showClassification" class="vintage-condition-guide">
-          <h2>NXR Vintage Card Classifications</h2>
-          <p class="vintage-condition-intro">Four archival classifications for vintage cards. Age-related patina is regarded as authentic character, not damage.</p>
-          <div class="vintage-condition-list">
-            <article v-for="classification in vintageClassifications" :key="classification.code" class="vintage-condition-item">
-              <div class="vintage-condition-code">{{ classification.code }}</div>
-              <div>
-                <div class="vintage-condition-name">{{ classification.name }}</div>
-                <p>{{ classification.description }}</p>
-              </div>
-            </article>
-          </div>
-        </section>
+        <div v-if="productProfile.showFinalGrade && gradeText" class="grade-badge" :class="{ 'perfect-10': isPerfectGrade }">Final Grade: {{ gradeText }}</div>
 
         <div class="detail-grid">
           <div v-for="row in detailRows" :key="row.key" class="detail-row">
@@ -346,14 +311,14 @@ watch(
             <p>Four critical components of the grade</p>
           </div>
           <div class="subgrades-grid">
-            <div v-for="item in subgrades" :key="item.name" class="subgrade-card">
-              <div class="subgrade-copy">
+            <div v-for="item in subgrades" :key="item.name" class="subgrade-card" :class="{ 'perfect-subgrade': isPerfectGrade && subgradeClass(item.score) === 'subgrade-perfect' }">
+              <div class="subgrade-header">
                 <div class="subgrade-name">{{ item.name }}</div>
-                <p class="subgrade-description">{{ item.description }}</p>
+                <div class="subgrade-score" :class="subgradeClass(item.score)">
+                  {{ Number(item.score).toFixed(1) }}
+                </div>
               </div>
-              <div class="subgrade-score" :class="subgradeClass(item.score)">
-                {{ Number(item.score).toFixed(1) }}
-              </div>
+              <p class="subgrade-description">{{ item.description }}</p>
             </div>
           </div>
         </section>
@@ -377,34 +342,39 @@ watch(
 
   <div v-if="isAiOpen" class="ai-modal-backdrop" @click.self="closeAiInfo">
     <section class="ai-modal">
-      <div class="ai-modal-head">
-        <div>
-          <p>{{ aiCopy.modal }}</p>
-          <h2>{{ displayTitle }}</h2>
+      <div class="ai-modal-header">
+        <div class="ai-modal-title">
+          <span class="icon">🤖</span>
+          <span>{{ aiCopy.modal }}</span>
         </div>
-        <button type="button" @click="closeAiInfo">Close</button>
+        <button class="ai-modal-close" type="button" aria-label="Close AI information" @click="closeAiInfo">×</button>
       </div>
 
-      <label class="ai-language">
-        <span>Language</span>
-        <select v-model="aiLanguage" @change="openAiInfo">
-          <option value="en">English</option>
-          <option value="zh-CN">中文</option>
-          <option value="ja">Japanese</option>
-          <option value="ko">Korean</option>
-          <option value="fr">French</option>
-          <option value="de">German</option>
-          <option value="es">Spanish</option>
-          <option value="it">Italian</option>
-          <option value="pt">Portuguese</option>
-        </select>
-      </label>
+      <div class="ai-modal-body">
+        <div v-if="isAiLoading && !aiStreamingText" class="ai-loading">Loading AI context...</div>
+        <div v-if="aiStreamingText" class="ai-character-info ai-character-info--streaming">{{ aiStreamingText }}</div>
+        <div v-else-if="aiError" class="ai-error">{{ aiError }}</div>
+        <div v-else-if="!isAiLoading" class="ai-character-info" v-html="aiHtml" />
+        <p v-if="!isAiLoading && aiNotice" class="ai-provider-note">{{ aiNotice }}</p>
+      </div>
 
-      <div v-if="isAiLoading && !aiStreamingText" class="ai-loading">Loading AI context...</div>
-      <div v-if="aiStreamingText" class="ai-character-info ai-character-info--streaming">{{ aiStreamingText }}</div>
-      <div v-else-if="aiError" class="ai-error">{{ aiError }}</div>
-      <div v-else-if="!isAiLoading" class="ai-character-info" v-html="aiHtml" />
-      <p v-if="!isAiLoading && aiNotice" class="ai-provider-note">{{ aiNotice }}</p>
+      <div class="ai-modal-footer">
+        <label class="ai-language-select">
+          <span class="ai-language-label">Language:</span>
+          <select v-model="aiLanguage" @change="openAiInfo">
+            <option value="en">English</option>
+            <option value="zh-CN">中文 (Chinese)</option>
+            <option value="ja">日本語 (Japanese)</option>
+            <option value="ko">한국어 (Korean)</option>
+            <option value="fr">Français (French)</option>
+            <option value="de">Deutsch (German)</option>
+            <option value="es">Español (Spanish)</option>
+            <option value="it">Italiano (Italian)</option>
+            <option value="pt">Português (Portuguese)</option>
+          </select>
+        </label>
+        <div class="ai-powered-by"><span class="icon">⚡</span><span>Powered by DeepSeek AI</span></div>
+      </div>
     </section>
   </div>
 
@@ -415,73 +385,104 @@ watch(
 .ai-modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 50;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(5, 10, 22, 0.58);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(10, 10, 10, 0.95);
+  backdrop-filter: blur(8px);
 }
 
 .ai-modal {
-  width: min(720px, 100%);
-  max-height: calc(100vh - 48px);
-  overflow: auto;
+  width: min(600px, 100%);
+  max-height: 80vh;
+  overflow: hidden;
   border-radius: 8px;
-  background: #fff;
-  padding: 24px;
-  color: #111827;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.26);
+  border: 1px solid var(--border2);
+  background: var(--bg2);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  animation: modalSlideIn .3s ease;
 }
 
-.ai-modal-head {
+@keyframes modalSlideIn {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.ai-modal-header {
   display: flex;
   justify-content: space-between;
-  gap: 16px;
-  align-items: flex-start;
+  align-items: center;
+  padding: 24px;
+  border-bottom: 1px solid var(--border);
 }
 
-.ai-modal-head p,
-.ai-modal-head h2 {
-  margin: 0;
-}
-
-.ai-modal-head p {
-  margin-bottom: 6px;
-  color: #55647f;
-  font-size: 12px;
-  letter-spacing: 0;
-  text-transform: uppercase;
+.ai-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 18px;
   font-weight: 700;
 }
 
-.ai-modal-head button,
-.ai-language select {
-  height: 42px;
-  border-radius: 8px;
-  border: 1px solid rgba(20, 32, 51, 0.12);
-  background: #fff;
-  font: inherit;
+.ai-modal-title .icon {
+  font-size: 20px;
 }
 
-.ai-modal-head button {
-  padding: 0 14px;
+.ai-modal-close {
+  border: 0;
+  background: transparent;
+  color: var(--text3);
+  font-size: 24px;
   cursor: pointer;
+  padding: 4px;
+  line-height: 1;
 }
 
-.ai-language {
-  display: block;
-  margin-top: 18px;
+.ai-modal-close:hover {
+  color: var(--text);
 }
 
-.ai-language span {
-  display: block;
-  margin-bottom: 8px;
-  font-weight: 700;
+.ai-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
 }
 
-.ai-language select {
-  width: 220px;
-  padding: 0 12px;
+.ai-modal-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 20px 24px;
+  border-top: 1px solid var(--border);
+}
+
+.ai-language-select,
+.ai-powered-by {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-language-label,
+.ai-powered-by {
+  color: var(--text3);
+  font-size: 12px;
+}
+
+.ai-language-select select {
+  min-width: 140px;
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  background: var(--bg3);
+  color: var(--text);
+  padding: 8px 12px;
+  font: inherit;
 }
 
 .ai-loading,
@@ -507,15 +508,20 @@ watch(
 
 .ai-icon {
   margin-bottom: 8px;
-  font-size: 24px;
+  font-size: 32px;
 }
 
-.ai-subtext,
 .ai-note,
 .ai-provider-note,
 .subgrades-header p {
   color: #94a3b8;
   font-size: 13px;
+}
+
+.ai-subtext {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .ai-note {
@@ -525,7 +531,7 @@ watch(
 
 .yt-btn {
   margin-top: 12px;
-  background: #b91c1c;
+  background: linear-gradient(135deg, #e8394a, #b01020);
 }
 
 .subgrades-header {
@@ -549,11 +555,16 @@ watch(
 }
 
 @media (max-width: 720px) {
-  .ai-modal-head {
+  .ai-modal-footer {
+    align-items: stretch;
     flex-direction: column;
   }
 
-  .ai-language select {
+  .ai-language-select {
+    justify-content: space-between;
+  }
+
+  .ai-language-select select {
     width: 100%;
   }
 }

@@ -37,10 +37,17 @@ test('local AI fallback is disclosed instead of being presented as generated con
 
 test('public Java card view follows the Python display boundary', () => {
   const view = readFileSync(new URL('../src/views/WebCardView.vue', import.meta.url), 'utf8')
+  const styles = readFileSync(new URL('../src/style.css', import.meta.url), 'utf8')
 
   assert.match(view, /pythonLanguageLabel\(detail\.languageCode\)/)
   assert.match(view, /Sub-Grades Breakdown/)
   assert.match(view, /v-if="videoAction"/)
   assert.match(view, /ai-provider-note/)
+  assert.match(view, /ai-modal-footer/)
+  assert.match(view, /perfect-10/)
+  assert.match(view, /vintage-badge/)
   assert.doesNotMatch(view, /Ownership History|Sign in to bind this card|transferCustomerCard/)
+  assert.match(styles, /\.grade-badge\.perfect-10/)
+  assert.match(styles, /\.perfect-subgrade::before/)
+  assert.match(styles, /\.ai-character-btn::before/)
 })
