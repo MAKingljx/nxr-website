@@ -103,6 +103,10 @@ public class DeepSeekAiClient {
         payload.put("messages", messages);
         payload.put("temperature", 0.2);
         payload.put("max_tokens", 700);
+        if ("deepseek-flash".equals(model)) {
+            // Card blurbs must reserve the response budget for their two visible paragraphs.
+            payload.put("thinking", Map.of("type", "disabled"));
+        }
         payload.put("stream", stream);
         return payload;
     }
