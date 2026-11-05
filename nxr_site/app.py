@@ -745,15 +745,24 @@ def iter_deepseek_stream_content(response):
         response.close()
 
 
-def stream_ai_character_payload(card_context, language):
+def build_ai_character_completion_payload(card_context, language, stream):
     model = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat").strip() or "deepseek-chat"
     payload = {
         "model": model,
         "messages": build_ai_character_messages(card_context, language),
         "temperature": 0.2,
         "max_tokens": 700,
-        "stream": True,
     }
+    if model == "deepseek-flash":
+        # Card blurbs need the visible two-paragraph answer, not a hidden reasoning pass.
+        payload["thinking"] = {"type": "disabled"}
+    if stream:
+        payload["stream"] = True
+    return payload, model
+
+
+def stream_ai_character_payload(card_context, language):
+    payload, model = build_ai_character_completion_payload(card_context, language, stream=True)
 
     response = post_deepseek_chat_completions(payload)
     if response is None:
@@ -765,13 +774,7 @@ def stream_ai_character_payload(card_context, language):
 
 
 def generate_ai_character_payload(card_context, language):
-    model = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat").strip() or "deepseek-chat"
-    payload = {
-        "model": model,
-        "messages": build_ai_character_messages(card_context, language),
-        "temperature": 0.2,
-        "max_tokens": 700,
-    }
+    payload, model = build_ai_character_completion_payload(card_context, language, stream=False)
 
     response = post_deepseek_chat_completions(payload)
     if response is None:
