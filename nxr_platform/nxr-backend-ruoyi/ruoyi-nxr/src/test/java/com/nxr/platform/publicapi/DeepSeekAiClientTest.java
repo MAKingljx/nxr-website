@@ -19,6 +19,7 @@ class DeepSeekAiClientTest {
 
     private HttpServer server;
     private DeepSeekAiClient client;
+    private String lastRequestBody;
 
     @BeforeEach
     void setUp() throws IOException {
@@ -39,7 +40,7 @@ class DeepSeekAiClientTest {
     }
 
     @Test
-    void supportsJsonAndRealSseGenerationPaths() {
+    void supportsJsonAndRealSseGenerationPaths() throws IOException {
         List<Map<String, String>> messages = List.of(
             Map.of("role", "user", "content", "Pikachu")
         );
@@ -52,10 +53,27 @@ class DeepSeekAiClientTest {
         assertThat(generated.model()).isEqualTo("deepseek-test");
         assertThat(chunks).containsExactly("First paragraph.", "\n\nSecond paragraph.");
         assertThat(streamed.content()).isEqualTo("First paragraph.\n\nSecond paragraph.");
+        assertThat(new ObjectMapper().readTree(lastRequestBody).has("thinking")).isFalse();
+    }
+
+    @Test
+    void disablesThinkingForFlashCardBlurbs() throws IOException {
+        client = new DeepSeekAiClient(
+            new ObjectMapper(),
+            "test-key",
+            "http://127.0.0.1:" + server.getAddress().getPort(),
+            "deepseek-flash"
+        );
+
+        client.generate(List.of(Map.of("role", "user", "content", "Pikachu")));
+
+        assertThat(new ObjectMapper().readTree(lastRequestBody)
+            .path("thinking").path("type").asText()).isEqualTo("disabled");
     }
 
     private void respond(HttpExchange exchange) throws IOException {
         String requestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        lastRequestBody = requestBody;
         assertThat(exchange.getRequestHeaders().getFirst("Authorization")).isEqualTo("Bearer test-key");
         if (requestBody.contains("\"stream\":true")) {
             write(
