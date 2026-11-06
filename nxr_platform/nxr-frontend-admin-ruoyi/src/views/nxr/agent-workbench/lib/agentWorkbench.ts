@@ -146,7 +146,7 @@ function post<T>(path: string, payload: object, requestKey: string) {
 }
 const fetchWorkbenchOrders = (query: Query = {}) => scopedRequest<AgentPage<WorkbenchOrder>>(`${base}/workbench-orders?${queryString(query)}`)
 const fetchWorkbenchOrder = (id: number) => scopedRequest<WorkbenchOrderDetail>(`${base}/workbench-orders/${id}`)
-const fetchOrderTrackingState = (id: number) => send<{active:boolean;version:number|null;legacyActive:boolean}>(`${base}/workbench-orders/${id}/tracking-token`)
+const fetchOrderTrackingState = (id: number) => send<{active:boolean;version:number|null;legacyActive:boolean;trackingUrl?:string|null}>(`${base}/workbench-orders/${id}/tracking-token`)
 const createOrderTrackingLink = (id: number) => send<{trackingUrl:string}>(`${base}/workbench-orders/${id}/tracking-token`, { method: 'post', data: { clientOrigin: window.location.origin } })
 const replaceOrderTrackingLink = (id: number, expectedVersion: number) => send<{trackingUrl:string}>(`${base}/workbench-orders/${id}/tracking-token/replace`, { method: 'post', data: { expectedVersion, clientOrigin: window.location.origin } })
 const revokeOrderTrackingLink = (id: number, expectedVersion: number) => send(`${base}/workbench-orders/${id}/tracking-token`, { method: 'delete', data: { expectedVersion } })
@@ -186,7 +186,7 @@ const uploadAgentCardPhoto = (id: number, side: 'front' | 'back', file: File) =>
   const fetchOperators = (query: Query = {}) => send<AgentPage<AgentOperator>>(`${base}/operators?${queryString(query)}`)
   const fetchOperatorCandidates = (query: Query = {}) => send<AgentPage<AgentOperatorCandidate>>(`${base}/operator-candidates?${queryString(query)}`)
   const updateOperator = (id: number, data: { merchantCustomerId: number; active: boolean }) => send<AgentOperator>(`${base}/operators/${id}`, { method: 'put', data })
-  const fetchApplicationConfig = () => send<{ maxCardsPerOrder: number; termsVersion: string; termsText: string; turnaroundText?: string }>(`${base}/order-admission/config`)
+  const fetchApplicationConfig = () => send<{ maxCardsPerOrder: number; termsVersion: string; termsText: string; turnaroundText?: string; receivingAddress?: string | null }>(`${base}/order-admission/config`)
   const fetchCustomerAddresses = () => send<CustomerAddress[]>(`${base}/addresses`)
   const saveAddress = async (id: number | null, data: object, key: string) => { const value = await send<CustomerAddress>(`${base}/addresses${id ? `/${id}` : ''}`, { method: id ? 'put' : 'post', data: { ...data, requestKey: key } }); addressVersion.value++; return value }
   const setDefaultAddress = async (id: number, key: string) => { const value = await post<CustomerAddress>(`/addresses/${id}/default`, {}, key); addressVersion.value++; return value }

@@ -27,14 +27,16 @@ public class AgentOrderTrackingService {
     @Value("${nxr.public-site.base-url:https://nxrgrading.com}") private String publicSiteBaseUrl="https://nxrgrading.com";
     public AgentOrderTrackingService(JdbcClient jdbc,MerchantBatchService batches,CustomerOrderPhotoService photos){this.jdbc=jdbc;this.batches=batches;this.photos=photos;}
 
-    public record State(boolean active,Long version,boolean legacyActive) {}
+    public record State(boolean active,Long version,boolean legacyActive,String trackingUrl) {
+        public State(boolean active,Long version,boolean legacyActive) { this(active,version,legacyActive,null); }
+    }
     public record CreateRequest(String clientOrigin) {}
     public record ExpectedVersion(Long expectedVersion,String clientOrigin) {}
     public record Link(String trackingUrl) {}
     public record Card(long id,String cardName,String brandName,String setName,String cardNumber,String languageCode,
                        String productType,String category,String statusCode,String certificateId,boolean hasFrontPhoto,boolean hasBackPhoto) {}
     private record Order(long id,long owner,String number,String status,Long gradingOrderId,LocalDateTime createdAt,LocalDateTime updatedAt) {}
-    private record Active(long id) {}
+    private record Active(long id,String tokenValue) {}
 
     private Order owned(long owner,long id,boolean lock) {
         if(lock)jdbc.sql("SELECT id FROM customer_account WHERE id=:owner FOR UPDATE").param("owner",owner).query(Long.class).optional().orElseThrow(AgentOrderTrackingService::missing);
@@ -43,8 +45,8 @@ public class AgentOrderTrackingService {
             .optional().orElseThrow(AgentOrderTrackingService::missing);
     }
     private Optional<Active> active(long owner,long id) {
-        return jdbc.sql("SELECT id FROM agent_order_tracking_token WHERE intake_id=:id AND merchant_customer_id=:owner AND status_code='active' ORDER BY id DESC LIMIT 1")
-            .param("id",id).param("owner",owner).query((rs,n)->new Active(rs.getLong(1))).optional();
+        return jdbc.sql("SELECT id, token_value FROM agent_order_tracking_token WHERE intake_id=:id AND merchant_customer_id=:owner AND status_code='active' ORDER BY id DESC LIMIT 1")
+            .param("id",id).param("owner",owner).query((rs,n)->new Active(rs.getLong("id"),rs.getString("token_value"))).optional();
     }
     private boolean legacyActive(long owner,long id) {
         return jdbc.sql("""
@@ -57,13 +59,24 @@ public class AgentOrderTrackingService {
             WHERE t.status_code='active' AND t.revoked_at IS NULL
             """).param("id",id).param("owner",owner).query(Integer.class).single()>0;
     }
-    public State state(long owner,long id){owned(owner,id,false);var current=active(owner,id);return new State(current.isPresent(),current.map(Active::id).orElse(null),legacyActive(owner,id));}
+    public State state(long owner,long id){owned(owner,id,false);var current=active(owner,id);return new State(current.isPresent(),current.map(Active::id).orElse(null),legacyActive(owner,id),current.map(a->publicUrl(a.tokenValue())).orElse(null));}
+    private String publicUrl(String tokenValue){if(tokenValue==null)return null;try{return validatedPublicBase()+"/track#"+tokenValue;}catch(ResponseStatusException e){return null;}}
     public MerchantBatchService.BatchDetail withWorkbenchOrderIds(long owner,MerchantBatchService.BatchDetail batch){
         var rows=batch.orders().stream().map(row -> {
             Long id=jdbc.sql("SELECT id FROM agent_intake WHERE merchant_customer_id=:owner AND order_id=:order AND batch_id=:batch")
                 .param("owner",owner).param("order",row.orderId()).param("batch",batch.id()).query(Long.class).optional().orElse(null);
             return row.withWorkbenchOrderId(id);
         }).toList();return batch.withOrders(rows);
+    }
+    /**
+     * Issue the customer link while the partner order is created. No browser origin is involved
+     * because the link is stored and shown to staff later. Existing legacy Submit links are left
+     * untouched so older links keep working.
+     */
+    @Transactional public void ensureForNewOrder(long owner,long id) {
+        owned(owner,id,true);
+        if(active(owner,id).isPresent())return;
+        issueToken(owner,id);
     }
     @Transactional public Link create(long owner,long id,CreateRequest request,String requestHost) {
         validateClientAddress(request==null?null:request.clientOrigin(),requestHost);
@@ -93,9 +106,10 @@ public class AgentOrderTrackingService {
         if(request==null || request.expectedVersion()==null || current.id()!=request.expectedVersion())throw conflict("Customer link changed; refresh before continuing");
     }
     private void revokeActive(long owner,long id){jdbc.sql("UPDATE agent_order_tracking_token SET status_code='revoked',revoked_at=CURRENT_TIMESTAMP WHERE intake_id=:id AND merchant_customer_id=:owner AND status_code='active'").param("id",id).param("owner",owner).update();}
-    private Link issue(long owner,long id){String base=validatedPublicBase();byte[] bytes=new byte[32];RANDOM.nextBytes(bytes);String raw=Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
-        jdbc.sql("INSERT INTO agent_order_tracking_token(intake_id,merchant_customer_id,token_hash,status_code) VALUES(:id,:owner,:hash,'active')")
-            .param("id",id).param("owner",owner).param("hash",hash(raw)).update();return new Link(base+"/track#"+raw);}
+    private Link issue(long owner,long id){String raw=issueToken(owner,id);return new Link(validatedPublicBase()+"/track#"+raw);}
+    private String issueToken(long owner,long id){byte[] bytes=new byte[32];RANDOM.nextBytes(bytes);String raw=Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+        jdbc.sql("INSERT INTO agent_order_tracking_token(intake_id,merchant_customer_id,token_hash,token_value,status_code) VALUES(:id,:owner,:hash,:value,'active')")
+            .param("id",id).param("owner",owner).param("hash",hash(raw)).param("value",raw).update();return raw;}
     private String validatedPublicBase(){
         try {
             String value=publicSiteBaseUrl==null?"":publicSiteBaseUrl.trim();java.net.URI uri=java.net.URI.create(value);
@@ -119,7 +133,7 @@ public class AgentOrderTrackingService {
     public Optional<MerchantBatchService.PublicTrackingResponse> publicView(String token){
         Optional<Order> resolved=resolve(token);if(resolved.isEmpty())return Optional.empty();Order order=resolved.get();
         List<Card> cards=agentCards(order);
-        if(order.gradingOrderId()!=null){var current=batches.publicTrackingForOrder(order.gradingOrderId());return Optional.of(new MerchantBatchService.PublicTrackingResponse(order.number(),order.number(),current.statusCode(),current.admissionStatus(),cards.size(),order.createdAt(),order.updatedAt(),current.timeline(),current.shipments(),current.returnParcels(),cards));}
+        if(order.gradingOrderId()!=null){var current=batches.publicTrackingForOrder(order.gradingOrderId());return Optional.of(new MerchantBatchService.PublicTrackingResponse(current.orderNo(),current.orderNo(),current.statusCode(),current.admissionStatus(),cards.size(),order.createdAt(),order.updatedAt(),current.timeline(),current.shipments(),current.returnParcels(),cards));}
         List<MerchantBatchService.PublicTimelineEvent> timeline=jdbc.sql("SELECT event_code,created_at FROM agent_event WHERE merchant_customer_id=:owner AND intake_id=:id AND event_code IN ('order_created','intake_order_received') ORDER BY created_at,id")
             .param("id",order.id()).param("owner",order.owner()).query((rs,n)->new MerchantBatchService.PublicTimelineEvent(rs.getString("event_code"),"intake_order_received".equals(rs.getString("event_code"))?"Intake received":"Order created",order.status(),rs.getObject("created_at",LocalDateTime.class))).list();
         return Optional.of(new MerchantBatchService.PublicTrackingResponse(order.number(),order.number(),order.status(),null,cards.size(),order.createdAt(),order.updatedAt(),timeline,List.of(),List.of(),cards));

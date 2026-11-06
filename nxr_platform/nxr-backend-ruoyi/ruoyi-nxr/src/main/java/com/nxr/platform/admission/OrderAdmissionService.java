@@ -67,13 +67,13 @@ public class OrderAdmissionService {
     public PublicConfig publicConfig() {
         Config value = config();
         return new PublicConfig(value.paymentDeadlineHours(), value.maxCardsPerOrder(), value.termsVersion(),
-            value.termsText(), value.turnaroundText());
+            value.termsText(), value.turnaroundText(), value.receivingAddress());
     }
 
     public PublicConfig merchantPublicConfig() {
         Config value = config();
         return new PublicConfig(value.paymentDeadlineHours(), value.maxCardsPerOrder(), value.termsVersion(),
-            serviceTerms(value.termsText(), true), value.turnaroundText());
+            serviceTerms(value.termsText(), true), value.turnaroundText(), value.receivingAddress());
     }
 
     /** Lock the displayed contract for the complete batch transaction. */
@@ -394,23 +394,28 @@ public class OrderAdmissionService {
     }
 
     private boolean isPartnerSubmitOrder(long orderId) {
-        return partnerSubmitBatchId(orderId) != null;
+        // Multi-order merchant batches must be decided as one Submit. A one-order
+        // batch is already the whole Submit, so the legacy single-order path stays valid.
+        Long batchId = partnerSubmitBatchId(orderId);
+        if (batchId == null) return false;
+        return jdbcClient.sql("SELECT COUNT(*) FROM merchant_order_batch_item WHERE batch_id=:batch")
+            .param("batch", batchId).query(Integer.class).single() > 1;
     }
 
     private Long partnerSubmitBatchId(long orderId) {
+        // Any merchant batch is reviewed as one Submit: platform staff and partner
+        // staff must approve the whole batch, not its individual child orders.
         return jdbcClient.sql("""
-            SELECT s.batch_id FROM merchant_order_batch_item bi
-            JOIN agent_submission s ON s.batch_id=bi.batch_id
+            SELECT bi.batch_id FROM merchant_order_batch_item bi
+            JOIN merchant_order_batch b ON b.id=bi.batch_id
+            JOIN customer_account c ON c.id=b.merchant_customer_id AND c.account_type_code='merchant'
             WHERE bi.order_id=:id
             """).param("id", orderId).query(Long.class).optional().orElse(null);
     }
 
     private List<Long> partnerSubmitOrders(long batchId, boolean forUpdate) {
-        var batch = jdbcClient.sql("""
-            SELECT b.id FROM merchant_order_batch b JOIN agent_submission s
-              ON s.batch_id=b.id AND s.merchant_customer_id=b.merchant_customer_id
-            WHERE b.id=:id
-            """ + (forUpdate ? " FOR UPDATE" : ""))
+        var batch = jdbcClient.sql("SELECT b.id FROM merchant_order_batch b WHERE b.id=:id"
+                + (forUpdate ? " FOR UPDATE" : ""))
             .param("id", batchId).query(Long.class).optional();
         if (batch.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Partner submission not found");
         List<Long> ids = jdbcClient.sql("SELECT order_id FROM merchant_order_batch_item WHERE batch_id=:id ORDER BY order_id")
@@ -422,18 +427,6 @@ public class OrderAdmissionService {
     }
 
     public PartnerSubmitAdmission requirePartnerSubmitAdmission(long batchId, LongConsumer checkAccess) {
-        boolean eligible = jdbcClient.sql("SELECT COUNT(*) FROM agent_submission WHERE batch_id=:id")
-            .param("id", batchId).query(Integer.class).single() > 0;
-        if (!eligible) {
-            boolean exists = jdbcClient.sql("SELECT COUNT(*) FROM merchant_order_batch WHERE id=:id")
-                .param("id", batchId).query(Integer.class).single() > 0;
-            if (!exists) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Partner submission not found");
-            List<Long> ids = jdbcClient.sql("SELECT order_id FROM merchant_order_batch_item WHERE batch_id=:id ORDER BY order_id")
-                .param("id", batchId).query(Long.class).list();
-            if (ids.isEmpty()) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Partner submission not found");
-            ids.forEach(checkAccess::accept);
-            return new PartnerSubmitAdmission(batchId, false, List.of());
-        }
         List<Long> ids = partnerSubmitOrders(batchId, false);
         ids.forEach(checkAccess::accept);
         return new PartnerSubmitAdmission(batchId, true, ids.stream().map(this::requireAdminAdmission).toList());
@@ -596,12 +589,17 @@ public class OrderAdmissionService {
         String version = requireText(request.termsVersion(), "Terms version", 64);
         String text = requireText(request.termsText(), "Terms text", 10000);
         String turnaround = requireText(request.turnaroundText(), "Turnaround text", 1000);
+        // Null keeps the stored address so older clients cannot clear it by omitting the field.
+        String requestedAddress = request.receivingAddress();
+        int keepAddress = requestedAddress == null ? 1 : 0;
+        String receivingAddress = requestedAddress == null ? "" : address(requestedAddress);
         configForUpdate();
         jdbcClient.sql(
                 """
                 UPDATE order_admission_config
                 SET payment_deadline_hours = :hours, max_cards_per_order = :maxCards,
                     terms_version = :version, terms_text = :text, turnaround_text = :turnaround,
+                    nxr_receiving_address = CASE WHEN :keepAddress = 1 THEN nxr_receiving_address ELSE :receivingAddress END,
                     config_version = config_version + 1, updated_by_user_id = :adminUserId,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE config_id = 1
@@ -612,6 +610,8 @@ public class OrderAdmissionService {
             .param("version", version)
             .param("text", text)
             .param("turnaround", turnaround)
+            .param("keepAddress", keepAddress)
+            .param("receivingAddress", receivingAddress)
             .param("adminUserId", adminUserId)
             .update();
         return config();
@@ -866,14 +866,14 @@ public class OrderAdmissionService {
         return jdbcClient.sql(
                 """
                 SELECT payment_deadline_hours, max_cards_per_order, terms_version, terms_text, turnaround_text,
-                       config_version, updated_at
+                       nxr_receiving_address, config_version, updated_at
                 FROM order_admission_config WHERE config_id = 1
                 """ + (forUpdate ? " FOR UPDATE" : "")
             )
             .query((rs, rowNum) -> new Config(
                 rs.getInt("payment_deadline_hours"), rs.getInt("max_cards_per_order"), rs.getString("terms_version"),
-                rs.getString("terms_text"), rs.getString("turnaround_text"), rs.getInt("config_version"),
-                rs.getObject("updated_at", LocalDateTime.class)
+                rs.getString("terms_text"), rs.getString("turnaround_text"), rs.getString("nxr_receiving_address"),
+                rs.getInt("config_version"), rs.getObject("updated_at", LocalDateTime.class)
             ))
             .optional()
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Order admission configuration is not installed"));
@@ -932,6 +932,14 @@ public class OrderAdmissionService {
         return normalized.substring(0, Math.min(normalized.length(), max));
     }
 
+    /** Addresses keep intentional line breaks; null means "leave the stored address unchanged". */
+    private static String address(String value) {
+        if (value == null) return null;
+        String normalized = value.replace("\r\n", "\n").replace('\r', '\n')
+            .replaceAll("[ \\t]+\\n", "\n").trim().replaceAll("\\n{3,}", "\n\n");
+        return normalized.length() > 2000 ? normalized.substring(0, 2000).trim() : normalized;
+    }
+
     private static ResponseStatusException badRequest(String message) {
         return new ResponseStatusException(HttpStatus.BAD_REQUEST, message);
     }
@@ -950,11 +958,12 @@ public class OrderAdmissionService {
 
     public record Config(
         int paymentDeadlineHours, int maxCardsPerOrder, String termsVersion, String termsText, String turnaroundText,
-        int configVersion, LocalDateTime updatedAt
+        String receivingAddress, int configVersion, LocalDateTime updatedAt
     ) { }
 
     public record PublicConfig(
-        int paymentDeadlineHours, int maxCardsPerOrder, String termsVersion, String termsText, String turnaroundText
+        int paymentDeadlineHours, int maxCardsPerOrder, String termsVersion, String termsText, String turnaroundText,
+        String receivingAddress
     ) { }
 
     public record MerchantTermsRequest(Boolean termsAccepted, String termsVersion, String termsText, String turnaroundText) { }
@@ -962,7 +971,8 @@ public class OrderAdmissionService {
     private record MerchantAcceptance(String termsVersion, String termsText, String turnaroundText, LocalDateTime acceptedAt) { }
 
     public record ConfigUpdate(
-        Integer paymentDeadlineHours, Integer maxCardsPerOrder, String termsVersion, String termsText, String turnaroundText
+        Integer paymentDeadlineHours, Integer maxCardsPerOrder, String termsVersion, String termsText, String turnaroundText,
+        String receivingAddress
     ) { }
 
     public record DecisionRequest(String decision, String note, Integer expectedRevision) { }

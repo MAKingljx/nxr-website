@@ -1379,7 +1379,15 @@ public class CustomerPortalService {
                     SELECT i.id, i.item_no, i.card_name, i.brand_name, i.year_label, i.rarity, i.product_type,
                            i.category, i.set_name, i.card_number, i.language_code, i.declared_value, i.item_note,
                            i.front_photo_id, i.back_photo_id, i.status_code, i.grading_submission_id,
-                           s.cert_id AS grading_cert_id, s.status_code AS grading_status_code
+                           s.cert_id AS grading_cert_id, s.status_code AS grading_status_code,
+                           (SELECT COUNT(*) FROM submission_media sm
+                             WHERE sm.submission_id = i.grading_submission_id
+                               AND sm.media_stage_code = 'published' AND sm.is_active = 1
+                               AND sm.media_side_code IN ('front', 'back')) AS published_media_sides,
+                           (SELECT COUNT(*) FROM submission_media sm
+                             WHERE sm.submission_id = i.grading_submission_id
+                               AND sm.media_stage_code = 'staged' AND sm.is_active = 1
+                               AND sm.media_side_code IN ('front', 'back')) AS staged_media_sides
                     FROM grading_order_item i
                     LEFT JOIN grading_submission s ON s.id = i.grading_submission_id
                     WHERE i.order_id = :orderId
@@ -1394,7 +1402,9 @@ public class CustomerPortalService {
                     rs.getBigDecimal("declared_value"), rs.getString("item_note"),
                     rs.getObject("front_photo_id", Long.class), rs.getObject("back_photo_id", Long.class),
                     rs.getString("status_code"), rs.getObject("grading_submission_id", Long.class),
-                    rs.getString("grading_cert_id"), rs.getString("grading_status_code")
+                    rs.getString("grading_cert_id"), rs.getString("grading_status_code"),
+                    cardWorkflowStatus(rs.getString("grading_status_code"), rs.getInt("published_media_sides")),
+                    cardImageStatus(rs.getInt("published_media_sides"), rs.getInt("staged_media_sides"))
                 ))
                 .list();
         }
@@ -1402,7 +1412,15 @@ public class CustomerPortalService {
                 """
                 SELECT i.id, i.item_no, i.card_name, i.brand_name, i.set_name, i.card_number, i.language_code,
                        i.declared_value, i.item_note, i.status_code, i.grading_submission_id,
-                       s.cert_id AS grading_cert_id, s.status_code AS grading_status_code
+                       s.cert_id AS grading_cert_id, s.status_code AS grading_status_code,
+                       (SELECT COUNT(*) FROM submission_media sm
+                         WHERE sm.submission_id = i.grading_submission_id
+                           AND sm.media_stage_code = 'published' AND sm.is_active = 1
+                           AND sm.media_side_code IN ('front', 'back')) AS published_media_sides,
+                       (SELECT COUNT(*) FROM submission_media sm
+                         WHERE sm.submission_id = i.grading_submission_id
+                           AND sm.media_stage_code = 'staged' AND sm.is_active = 1
+                           AND sm.media_side_code IN ('front', 'back')) AS staged_media_sides
                 FROM grading_order_item i
                 LEFT JOIN grading_submission s ON s.id = i.grading_submission_id
                 WHERE i.order_id = :orderId
@@ -1412,11 +1430,30 @@ public class CustomerPortalService {
             .param("orderId", orderId)
             .query((rs, rowNum) -> new OrderItemResponse(
                 rs.getLong("id"), rs.getInt("item_no"), rs.getString("card_name"), rs.getString("brand_name"),
-                rs.getString("set_name"), rs.getString("card_number"), rs.getString("language_code"),
-                rs.getBigDecimal("declared_value"), rs.getString("item_note"), rs.getString("status_code"),
-                rs.getObject("grading_submission_id", Long.class), rs.getString("grading_cert_id"), rs.getString("grading_status_code")
+                null, null, null, null, rs.getString("set_name"), rs.getString("card_number"), rs.getString("language_code"),
+                rs.getBigDecimal("declared_value"), rs.getString("item_note"), null, null, rs.getString("status_code"),
+                rs.getObject("grading_submission_id", Long.class), rs.getString("grading_cert_id"), rs.getString("grading_status_code"),
+                cardWorkflowStatus(rs.getString("grading_status_code"), rs.getInt("published_media_sides")),
+                cardImageStatus(rs.getInt("published_media_sides"), rs.getInt("staged_media_sides"))
             ))
             .list();
+    }
+
+    private static String cardWorkflowStatus(String gradingStatusCode, int publishedMediaSides) {
+        if (gradingStatusCode == null || gradingStatusCode.isBlank()) {
+            return "pending_grading";
+        }
+        if ("approved".equals(gradingStatusCode) || "published".equals(gradingStatusCode)) {
+            return publishedMediaSides >= 2 ? "graded" : "awaiting_images";
+        }
+        return "grading";
+    }
+
+    private static String cardImageStatus(int publishedMediaSides, int stagedMediaSides) {
+        if (publishedMediaSides >= 2) {
+            return "published";
+        }
+        return stagedMediaSides > 0 ? "staged" : "not_uploaded";
     }
 
     private List<PaymentRecord> listPayments(long orderId) {
@@ -2331,7 +2368,9 @@ public class CustomerPortalService {
         String statusCode,
         Long gradingSubmissionId,
         String gradingCertId,
-        String gradingStatusCode
+        String gradingStatusCode,
+        String cardWorkflowStatusCode,
+        String cardImageStatusCode
     ) {
         public OrderItemResponse(
             long id, int itemNo, String cardName, String brandName, String setName, String cardNumber,
@@ -2339,7 +2378,8 @@ public class CustomerPortalService {
             Long gradingSubmissionId, String gradingCertId, String gradingStatusCode
         ) {
             this(id, itemNo, cardName, brandName, null, null, null, null, setName, cardNumber, languageCode,
-                declaredValue, itemNote, null, null, statusCode, gradingSubmissionId, gradingCertId, gradingStatusCode);
+                declaredValue, itemNote, null, null, statusCode, gradingSubmissionId, gradingCertId, gradingStatusCode,
+                null, null);
         }
     }
 

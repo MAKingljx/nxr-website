@@ -39,7 +39,7 @@ export async function orderPhotoUrl(id: number) {
   return URL.createObjectURL(await response.blob())
 }
 
-export type AdmissionConfig = { paymentDeadlineHours: number; maxCardsPerOrder: number; termsVersion: string; termsText: string; turnaroundText?: string }
+export type AdmissionConfig = { paymentDeadlineHours: number; maxCardsPerOrder: number; termsVersion: string; termsText: string; turnaroundText?: string; receivingAddress?: string | null }
 export type Admission = {
   orderId: number; orderNo: string; admissionStatus: string | null; legacyOrder: boolean; decisionNote: string | null;
   submittedAt: string | null; decidedAt: string | null; paymentDueAt: string | null; paymentDueAtIso: string | null; paymentExpired: boolean;

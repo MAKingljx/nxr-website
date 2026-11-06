@@ -3,13 +3,13 @@
     <div class="panel-heading">
       <div>
         <div class="heading-line">
-          <strong>{{ $tx('Application Review') }}</strong>
+          <strong>{{ $tx(partnerSubmit ? 'Submit review' : 'Application Review') }}</strong>
           <el-tag v-if="admission" :type="statusType(admission.admissionStatus)">
-            {{ statusLabel(admission.admissionStatus) }}
+            {{ partnerSubmit ? submitStatusLabel(admission.admissionStatus) : statusLabel(admission.admissionStatus) }}
           </el-tag>
           <el-tag v-if="admission?.legacyOrder" type="info">{{ $tx('Legacy order') }}</el-tag>
         </div>
-        <p>{{ $tx(paymentRequired ? 'Approve the submitted card list and frozen quote before payment opens.' : 'Review the submitted card list and service terms.') }}</p>
+        <p>{{ $tx(partnerSubmit ? 'This order is reviewed together with its Submit. No separate order review is required.' : (paymentRequired ? 'Approve the submitted card list and frozen quote before payment opens.' : 'Review the submitted card list and service terms.')) }}</p>
       </div>
       <el-button icon="Refresh" plain :loading="loading" @click="load">{{ $tx('Refresh') }}</el-button>
     </div>
@@ -35,7 +35,7 @@
       <el-descriptions :column="3" border size="small">
         <el-descriptions-item :label="$tx('Review revision')">{{ admission.admissionRevision }}</el-descriptions-item>
         <el-descriptions-item :label="$tx('Submitted At')">{{ formatTime(admission.submittedAt) }}</el-descriptions-item>
-        <el-descriptions-item :label="$tx('Reviewed At')">{{ formatTime(admission.decidedAt) }}</el-descriptions-item>
+        <el-descriptions-item :label="$tx(partnerSubmit ? 'Submit review time' : 'Reviewed At')">{{ formatTime(admission.decidedAt) }}</el-descriptions-item>
         <el-descriptions-item v-if="paymentRequired" :label="$tx('Order quote')">
           {{ admission.quoteCurrency || currencyCode || '-' }} {{ money(admission.quoteAmount ?? orderAmount) }}
         </el-descriptions-item>
@@ -50,7 +50,7 @@
         <el-descriptions-item :label="$tx('Terms version')">{{ admission.termsVersion || '-' }}</el-descriptions-item>
         <el-descriptions-item :label="$tx('Accepted version')">{{ admission.acceptedTermsVersion || '-' }}</el-descriptions-item>
         <el-descriptions-item :label="$tx('Confirmed At')">{{ formatTime(admission.termsAcceptedAt) }}</el-descriptions-item>
-        <el-descriptions-item :label="$tx('Review note')" :span="3">{{ admission.decisionNote || '-' }}</el-descriptions-item>
+        <el-descriptions-item :label="$tx(partnerSubmit ? 'Submit review note' : 'Review note')" :span="3">{{ admission.decisionNote || '-' }}</el-descriptions-item>
         <el-descriptions-item :label="$tx('Turnaround statement')" :span="3">{{ localizeOrderTerms(admission.turnaroundText) || '-' }}</el-descriptions-item>
       </el-descriptions>
 
@@ -123,7 +123,7 @@
             :timestamp="formatTime(event.createdAt)"
             placement="top"
           >
-            <div class="history-title">{{ event.title ? $tx(event.title) : statusLabel(event.eventCode) }}</div>
+            <div class="history-title">{{ eventTitle(event) }}</div>
             <p v-if="event.detail">{{ localizeOrderEventDetail(event) }}</p>
             <small>{{ actorLabel(event.actorType) }}</small>
           </el-timeline-item>
@@ -150,6 +150,9 @@
           <el-form-item :label="$tx('Terms version')"><el-input v-model="configForm.termsVersion" maxlength="64" /></el-form-item>
           <el-form-item :label="$tx('Terms text')"><el-input v-model="configForm.termsText" type="textarea" :rows="5" maxlength="10000" show-word-limit /></el-form-item>
           <el-form-item :label="$tx('Turnaround statement')"><el-input v-model="configForm.turnaroundText" type="textarea" :rows="2" maxlength="1000" show-word-limit /></el-form-item>
+          <el-form-item :label="$tx('NXR receiving address')">
+            <el-input v-model="configForm.receivingAddress" type="textarea" :rows="3" maxlength="2000" show-word-limit :placeholder="$tx('Shown to partners and customers before they ship to NXR.')" />
+          </el-form-item>
           <el-button
             v-hasPermi="['nxr:order:config']"
             type="primary"
@@ -189,9 +192,10 @@ const savingDecision = ref('')
 const configLoading = ref(false)
 const configLoaded = ref(false)
 const savingConfig = ref(false)
-const configForm = reactive({ paymentDeadlineHours: 48, maxCardsPerOrder: 500, termsVersion: '', termsText: '', turnaroundText: '' })
+const configForm = reactive({ paymentDeadlineHours: 48, maxCardsPerOrder: 500, termsVersion: '', termsText: '', turnaroundText: '', receivingAddress: '' })
 
 const paymentRequired = computed(() => props.paymentRequired !== false && admission.value?.paymentRequired !== false)
+const partnerSubmit = computed(() => Boolean(admission.value?.partnerSubmitBatchId))
 const canDecide = computed(() => admission.value?.admissionStatus === 'pending_review' || (paymentRequired.value && admission.value?.paymentExpired))
 
 function statusLabel(value) {
@@ -206,6 +210,23 @@ function statusLabel(value) {
     terms_accepted: proxy.$tx('Terms confirmed'),
     payment_expired: proxy.$tx('Payment deadline expired')
   }[value] || value || proxy.$tx('Not available')
+}
+
+function submitStatusLabel(value) {
+  return {
+    pending_review: proxy.$tx('Submit pending review'),
+    approved: proxy.$tx('Submit approved'),
+    rejected: proxy.$tx('Submit rejected'),
+    needs_information: proxy.$tx('Submit needs information')
+  }[value] || statusLabel(value)
+}
+
+function eventTitle(event) {
+  if (partnerSubmit.value) {
+    if (event.eventCode === 'approved') return proxy.$tx('Approved with Submit')
+    if (event.eventCode === 'submitted' || event.eventCode === 'resubmitted') return proxy.$tx('Included in partner Submit')
+  }
+  return event.title ? proxy.$tx(event.title) : statusLabel(event.eventCode)
 }
 
 function statusType(value) {
@@ -277,7 +298,8 @@ async function loadConfig() {
       maxCardsPerOrder: value.maxCardsPerOrder,
       termsVersion: value.termsVersion || '',
       termsText: value.termsText || '',
-      turnaroundText: value.turnaroundText || ''
+      turnaroundText: value.turnaroundText || '',
+      receivingAddress: value.receivingAddress || ''
     })
     configLoaded.value = true
   } finally {

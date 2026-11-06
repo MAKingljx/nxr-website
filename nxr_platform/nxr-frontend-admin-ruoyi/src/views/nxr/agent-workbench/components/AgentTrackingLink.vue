@@ -7,13 +7,19 @@ import { privateTrackingUrl, useAgentApi } from '../lib/agentWorkbench'
 
 const props = defineProps<{ orderId: number }>()
 const api = useAgentApi()
-const state = ref<{ active: boolean; version: number | null; legacyActive: boolean } | null>(null)
+const state = ref<{ active: boolean; version: number | null; legacyActive: boolean; trackingUrl?: string | null } | null>(null)
 const link = ref(''), loading = ref(false), busy = ref(false), error = ref(''), message = ref('')
 let generation = 0
 async function load() {
   const current = ++generation, id = props.orderId
   loading.value = true; error.value = ''; state.value = null
-  try { const value = await api.fetchOrderTrackingState(id); if (current === generation) state.value = value }
+  try {
+    const value = await api.fetchOrderTrackingState(id)
+    if (current === generation) {
+      state.value = value
+      if (value.trackingUrl) link.value = privateTrackingUrl(value.trackingUrl)
+    }
+  }
   catch (e) { if (current === generation) error.value = e instanceof Error ? e.message : tx('Unable to load customer link status.') }
   finally { if (current === generation) loading.value = false }
 }
@@ -31,7 +37,7 @@ async function act(action: 'create' | 'replace' | 'revoke' | 'legacy') {
       const value = action === 'create' ? await api.createOrderTrackingLink(id) : await api.replaceOrderTrackingLink(id, snapshot.version!)
       if (current !== generation) return
       link.value = privateTrackingUrl(value.trackingUrl)
-      message.value = tx('Copy this link now. It cannot be shown again after closing this view.')
+      message.value = ''
     } else if (action === 'revoke') {
       await api.revokeOrderTrackingLink(id, snapshot.version!)
       if (current !== generation) return

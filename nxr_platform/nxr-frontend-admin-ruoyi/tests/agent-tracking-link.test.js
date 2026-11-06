@@ -30,6 +30,29 @@ test('existing link is never replaced merely by opening; cancelled replacement s
   finally { panel.stop() }
 })
 
+test('a freshly created order shows its generated link on open without creating, replacing or revoking', async () => {
+  // Order creation already issues the token, so the state read carries trackingUrl before any click.
+  const url = 'https://public.example/customer.portal/track/fresh-token'
+  const calls = []
+  const record = name => (...args) => { calls.push([name, ...args]) }
+  const api = {
+    fetchOrderTrackingState: async id => { calls.push(['fetch', id]); return { active: true, version: 1, legacyActive: false, trackingUrl: url } },
+    createOrderTrackingLink: record('create'), replaceOrderTrackingLink: record('replace'),
+    revokeOrderTrackingLink: record('revoke'), revokeLegacyOrderTrackingLink: record('revoke-legacy'),
+  }
+  const panel = setup(api)
+  try {
+    // Opening the panel runs only the state read; the link must appear without any click or auto-create.
+    await new Promise(resolve => setTimeout(resolve, 0))
+    assert.equal(panel.state.link.value, url)
+    assert.deepEqual(calls, [['fetch', 42]])
+    // An explicit refresh keeps the same link and still never issues another create/replace/revoke.
+    await panel.state.load()
+    assert.equal(panel.state.link.value, url)
+    assert.deepEqual(calls, [['fetch', 42], ['fetch', 42]])
+  } finally { panel.stop() }
+})
+
 test('new link uses create-only, subsequent replacement carries the checked version', async () => {
   let current = { active: false, version: 0, legacyActive: false }; const calls = []
   const api = { fetchOrderTrackingState: async () => current,

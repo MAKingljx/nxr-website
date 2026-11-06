@@ -44,6 +44,9 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class AdminMediaService {
 
+    @Autowired(required = false)
+    private OrderReturnReadinessService returnReadinessService;
+
     private static final Logger log = LoggerFactory.getLogger(AdminMediaService.class);
     private static final int MAX_BATCH_PUBLISH_ITEMS = 100;
 
@@ -765,6 +768,7 @@ public class AdminMediaService {
         deleteUnreferencedExistingMedia(publishResult.replacedBackMedia());
         deleteUnreferencedExistingMedia(stagedFront);
         deleteUnreferencedExistingMedia(stagedBack);
+        if (returnReadinessService != null) returnReadinessService.markReadyForReturn(submissionId, triggeredByUserId);
         return new MediaPublishResponse(submissionId, submission.certId(), "published", publishResult.publishedAt(),
             publishedFront.publicUrl(), publishedBack.publicUrl(), stagedVersion);
     }
@@ -1299,6 +1303,7 @@ public class AdminMediaService {
     private MediaPublishResponse completedResponse(AdminMediaPersistenceService.CompletedPublication completed) {
         // A completed retry never touches current staging. The successful
         // transaction already retired its exact pair; any newer pair is pending.
+        if (returnReadinessService != null) returnReadinessService.markReadyForReturn(completed.submissionId(), null);
         return new MediaPublishResponse(completed.submissionId(), completed.certId(), "published", completed.completedAt(),
             completed.publishedFrontUrl(), completed.publishedBackUrl(), completed.stagedVersion());
     }

@@ -4,7 +4,7 @@ CREATE TABLE agent_client (
  phone VARCHAR(64), email VARCHAR(191), active TINYINT, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE agent_intake (
- id BIGINT PRIMARY KEY, merchant_customer_id BIGINT, client_id BIGINT, intake_no VARCHAR(48),
+ id BIGINT PRIMARY KEY, merchant_customer_id BIGINT, client_id BIGINT, intake_no VARCHAR(48), reserved_order_no VARCHAR(32),
  carrier_name VARCHAR(128), tracking_number VARCHAR(255), expected_card_count INT, status_code VARCHAR(32),
  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

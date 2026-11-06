@@ -67,17 +67,16 @@ public class ScopedOrderSubmissionService {
     }
 
     private void requireOwnedIntakeSession(long userId, long orderId, long itemId) {
-        WorkbenchLock lock = jdbcClient.sql("""
-            SELECT id,locked_by_user_id FROM order_workbench_session
+        jdbcClient.sql("""
+            SELECT id FROM order_workbench_session
             WHERE order_id=:orderId AND active_order_id=:orderId AND status_code='active'
             FOR UPDATE
             """).param("orderId", orderId)
-            .query((rs, n) -> new WorkbenchLock(rs.getLong("id"), rs.getLong("locked_by_user_id")))
+            .query(Long.class)
             .optional().orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT,
                 "Start and lock this order in the workbench before grading entry"));
-        if (lock.userId() != userId) {
-            throw new ResponseStatusException(HttpStatus.CONFLICT, "This order is locked by another workbench user");
-        }
+        // Grading entry is not restricted to the staff member who locked the
+        // workbench: any authorized grader may create the record for a scanned card.
         int intakeScans = jdbcClient.sql("""
             SELECT COUNT(*) FROM order_physical_item p
             JOIN order_workbench_scan s
@@ -101,7 +100,6 @@ public class ScopedOrderSubmissionService {
     }
 
     private record LockedItem(String origin, Long businessLineId, Long workCenterId, Long submissionId) {}
-    private record WorkbenchLock(long id, long userId) {}
     public record CreatedOrderSubmission(long orderId, long itemId,
                                          AdminSubmissionService.SubmissionDetailResponse submission) {}
 }
