@@ -19,12 +19,16 @@ import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.core.simple.SimpleJdbcInsert;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class AdminSubmissionService {
+
+    @Autowired(required = false)
+    private OrderReturnReadinessService returnReadinessService;
 
     private static final int MAX_PAGE_SIZE = 500;
 
@@ -756,6 +760,7 @@ public class AdminSubmissionService {
             ))
             .update();
 
+        if (returnReadinessService != null) returnReadinessService.markReadyForReturn(submissionId, userId);
         return loadSubmission(submissionId)
             .orElseThrow(() -> new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Submission load failed"));
     }
@@ -779,6 +784,7 @@ public class AdminSubmissionService {
         LocalDateTime approvedAt = LocalDateTime.now();
         long nextSequence = nextApprovalSequence();
         int updated = 0;
+        List<Long> approvedIds = new ArrayList<>();
         for (Long submissionId : distinctIds) {
             int rowCount = jdbcClient.sql(
                     """
@@ -802,8 +808,10 @@ public class AdminSubmissionService {
             if (rowCount > 0) {
                 updated += 1;
                 nextSequence += 1;
+                approvedIds.add(submissionId);
             }
         }
+        if (returnReadinessService != null) approvedIds.forEach(id -> returnReadinessService.markReadyForReturn(id, userId));
 
         return new BatchApprovalResponse(true, updated, approvedAt, distinctIds);
     }

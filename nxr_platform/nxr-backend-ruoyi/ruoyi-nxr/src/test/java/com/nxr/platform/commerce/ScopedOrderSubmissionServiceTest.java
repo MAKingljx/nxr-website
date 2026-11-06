@@ -74,8 +74,10 @@ class ScopedOrderSubmissionServiceTest {
     }
 
     @Test
-    void requiresTheCurrentWorkbenchOwnerAndAnIntakeScan() {
-        assertThrows(ResponseStatusException.class, () -> service.create(8, 10, 11, requestWithActor(999)));
+    void anyStaffMayCreateTheRecordButAnIntakeScanIsStillRequired() {
+        // Another authorized user may grade a card while the workbench session is locked by someone else.
+        service.create(8, 10, 11, requestWithActor(999));
+        // The card still has to be scanned into the order first.
         assertThrows(ResponseStatusException.class, () -> service.create(7, 10, 13, requestWithActor(999)));
     }
 

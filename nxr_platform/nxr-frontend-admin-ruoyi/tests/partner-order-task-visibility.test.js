@@ -36,7 +36,7 @@ test('B order workbench hides scan guidance and identity scan controls while kee
   assert.ok(heading && guard(heading))
   assert.ok(identity && guard(identity))
   assert.ok(scan && guard(scan))
-  assert.match(source, /v-if="orderReturnMode \|\| \(ownsActiveSession && scope\.row\.intakeScannedAt\)"/)
+  assert.match(source, /v-if="orderReturnMode \|\| scope\.row\.intakeScannedAt"/)
 })
 
 test('B order receipt uses non-scan copy while the legacy receipt keeps its existing text', () => {

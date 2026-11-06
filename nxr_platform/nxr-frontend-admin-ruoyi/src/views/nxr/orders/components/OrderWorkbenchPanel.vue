@@ -23,7 +23,7 @@
       <el-table-column v-if="!orderReturnMode" :label="$tx('Current label barcode')" min-width="300"><template #default="scope"><template v-if="scope.row.labelBarcode"><code>{{ scope.row.labelBarcode }}</code><el-button link type="primary" @click="copyLabelBarcode(scope.row.labelBarcode)">{{ $tx('Copy') }}</el-button></template><span v-else>-</span></template></el-table-column>
       <el-table-column :label="$tx('Card')" prop="cardName" min-width="160" />
       <el-table-column :label="$tx('Result / Cert')" min-width="180"><template #default="scope">{{ scope.row.finalGradeLabel || scope.row.finalGradeValue || scope.row.vintageClassification || scope.row.merchDescription || scope.row.productType || '-' }} · {{ scope.row.certId || '-' }}</template></el-table-column>
-      <el-table-column :label="$tx('Grading Record')" min-width="190"><template #default="scope"><template v-if="!scope.row.gradingSubmissionId"><el-button v-if="orderReturnMode || (ownsActiveSession && scope.row.intakeScannedAt)" v-hasPermi="['nxr:order:grading']" link type="primary" :disabled="orderReturnMode && Boolean(partnerGradingBlock(orderStatus, scope.row.statusCode))" :data-testid="`order-grade-card-${scope.row.orderItemId}`" @click="openSubmission(scope.row)">{{ $tx('Create for card') }}</el-button><span v-else>{{ $tx('Scan intake first') }}</span><small v-if="orderReturnMode && partnerGradingBlock(orderStatus, scope.row.statusCode)" class="grading-block">{{ $tx(partnerGradingBlock(orderStatus, scope.row.statusCode)) }}</small></template><el-button v-else-if="scope.row.gradingStatusCode === 'pending'" v-hasPermi="['nxr:entry:approve']" link type="warning" :loading="approvingSubmissionId === scope.row.gradingSubmissionId" @click="approve(scope.row)">{{ $tx('Approve result') }}</el-button><el-tag v-else :type="['approved','published'].includes(scope.row.gradingStatusCode) ? 'success' : 'info'">{{ $tx(({ pending: 'Pending', approved: 'Approved', published: 'Published', rejected: 'Rejected', draft: 'Draft', cancelled: 'Cancelled' })[scope.row.gradingStatusCode] || scope.row.gradingStatusCode) }}</el-tag></template></el-table-column>
+      <el-table-column :label="$tx('Grading Record')" min-width="190"><template #default="scope"><template v-if="!scope.row.gradingSubmissionId"><el-button v-if="orderReturnMode || scope.row.intakeScannedAt" v-hasPermi="['nxr:order:grading']" link type="primary" :disabled="orderReturnMode && Boolean(partnerGradingBlock(orderStatus, scope.row.statusCode))" :data-testid="`order-grade-card-${scope.row.orderItemId}`" @click="openSubmission(scope.row)">{{ $tx('Create for card') }}</el-button><span v-else>{{ $tx('Scan intake first') }}</span><small v-if="orderReturnMode && partnerGradingBlock(orderStatus, scope.row.statusCode)" class="grading-block">{{ $tx(partnerGradingBlock(orderStatus, scope.row.statusCode)) }}</small></template><el-button v-else-if="scope.row.gradingStatusCode === 'pending'" v-hasPermi="['nxr:entry:approve']" link type="warning" :loading="approvingSubmissionId === scope.row.gradingSubmissionId" @click="approve(scope.row)">{{ $tx('Approve result') }}</el-button><el-tag v-else :type="['approved','published'].includes(scope.row.gradingStatusCode) ? 'success' : 'info'">{{ $tx(({ pending: 'Pending', approved: 'Graded', published: 'Graded', rejected: 'Rejected', draft: 'Draft', cancelled: 'Cancelled' })[scope.row.gradingStatusCode] || scope.row.gradingStatusCode) }}</el-tag></template></el-table-column>
       <el-table-column v-if="!orderReturnMode" :label="$tx('Intake')" width="80" align="center"><template #default="scope"><el-icon :color="scope.row.intakeScannedAt ? '#16a34a' : '#9ca3af'"><CircleCheck /></el-icon></template></el-table-column>
       <el-table-column v-if="!orderReturnMode" :label="$tx('Label')" width="80" align="center"><template #default="scope"><el-icon :color="scope.row.labelScannedAt ? '#16a34a' : '#9ca3af'"><CircleCheck /></el-icon></template></el-table-column>
       <el-table-column v-if="!orderReturnMode" :label="$tx('Packing')" width="80" align="center"><template #default="scope"><el-icon :color="scope.row.packingScannedAt ? '#16a34a' : '#9ca3af'"><CircleCheck /></el-icon></template></el-table-column>
@@ -93,6 +93,7 @@ import { ElMessage } from 'element-plus'
 import { copyText } from '@/utils/copyText'
 import { approveSubmission, calculateGrade, generateCertId } from '@/api/nxr/entries'
 import useUserStore from '@/store/modules/user'
+import auth from '@/plugins/auth'
 import {
   completeOrderPackingCheck, createOrderItemSubmission, exportOrderLabels, exportOrderManifest,
   getOrderWorkbench, scanOrderWorkbench, startOrderWorkbench
@@ -113,7 +114,6 @@ function loadIdentities(value) {
   if (value.items.every(card => card.physicalBarcode) && snapshot.value?.items?.length !== value.items.length) void load()
 }
 const userStore = useUserStore()
-const ownsActiveSession = computed(() => Number(snapshot.value?.activeSession?.lockedByUserId) === Number(userStore.id))
 const isGradedSubmission = computed(() => submissionForm.value.productType === 'graded_card')
 const stage = ref('intake')
 const barcode = ref('')
@@ -202,7 +202,13 @@ async function createSubmission() {
   if (!await submissionFormRef.value?.validate().catch(() => false)) return
   creatingSubmission.value = true
   try {
-    await createOrderItemSubmission(props.orderId, activeWorkbenchItem.value.orderItemId, submissionPayload(submissionForm.value))
+    const created = await createOrderItemSubmission(props.orderId, activeWorkbenchItem.value.orderItemId, submissionPayload(submissionForm.value))
+    // Grading entry is the completion point: approve the new record immediately so the
+    // card shows as graded instead of asking staff to click "Approve result" again.
+    const createdId = created?.data?.submission?.id ?? created?.submission?.id
+    if (createdId && auth.hasPermi('nxr:entry:approve')) {
+      try { await approveSubmission(createdId) } catch { /* keep pending; the approve button remains available */ }
+    }
     submissionOpen.value = false
     if (props.orderReturnMode) emit('changed'); else await load()
   } finally { creatingSubmission.value = false }

@@ -1,7 +1,7 @@
 <template>
   <el-card shadow="never" class="mb12">
     <template #header><div class="batch-heading"><strong>{{ $tx('Partner shipment batches') }}</strong><el-button icon="Refresh" circle :loading="loading" @click="load()" /></div></template>
-    <el-form inline @submit.prevent="load(true)"><el-form-item :label="$tx('Find a batch')"><el-input v-model="query" clearable :placeholder="$tx('Batch number or name')" /></el-form-item><el-form-item><el-button native-type="submit" :loading="loading">{{ $tx('Search') }}</el-button></el-form-item></el-form>
+    <el-form inline @submit.prevent="load(true)"><el-form-item :label="$tx('Find a batch')"><el-input v-model="query" clearable :placeholder="$tx('Batch number or name')" /></el-form-item><el-form-item :label="$tx('Status')"><el-select v-model="statusCode" clearable style="width: 190px" @change="load(true)"><el-option value="" :label="$tx('All statuses')" /><el-option v-for="option in batchStatusOptions" :key="option.value" :value="option.value" :label="$tx(option.label)" /></el-select></el-form-item><el-form-item><el-button native-type="submit" :loading="loading">{{ $tx('Search') }}</el-button><el-button :disabled="loading" @click="query = ''; statusCode = ''; load(true)">{{ $tx('Reset') }}</el-button></el-form-item></el-form>
     <el-alert v-if="loadError" :title="loadError" type="error" :closable="false" />
     <el-table v-loading="loading" :data="rows" size="small">
       <el-table-column :label="$tx('Submit ID')" prop="batchNo" min-width="170" />
@@ -58,10 +58,19 @@ const statusLabels = {
 defineExpose({ open })
 function statusLabel(value) { return proxy.$tx(statusLabels[value] || value || 'Pending') }
 function batchStatusLabel(value) { return value === 'delivered' ? tx('Sub-agent received batch') : statusLabel(value) }
+const batchStatusOptions = [
+  { value: 'open', label: 'Batch in preparation' },
+  { value: 'inbound_shipped', label: 'In transit to NXR' },
+  { value: 'received', label: 'Received by NXR' },
+  { value: 'return_shipped', label: 'Returned to sub-agent' },
+  { value: 'delivered', label: 'Sub-agent received batch' },
+  { value: 'cancelled', label: 'Cancelled' }
+]
+const statusCode = ref('')
 const rows = ref([]); const detail = ref(null); const loading = ref(false); const openDialog = ref(false); const shipping = ref(false)
 const shipment = ref({ carrierName: '', trackingNumber: '', note: '' })
 onDeactivated(() => { detailGeneration++; openDialog.value = false })
-async function load(reset=false){if(!canView)return;if(reset===true)page.value=1;loading.value=true;loadError.value='';try{const result=(await listMerchantBatches({page:page.value,pageSize:pageSize.value,query:query.value})).data;rows.value=result.items;total.value=result.total}catch(e){loadError.value=e.message||tx('Unable to load batches.')}finally{loading.value=false}}
+async function load(reset=false){if(!canView)return;if(reset===true)page.value=1;loading.value=true;loadError.value='';try{const result=(await listMerchantBatches({page:page.value,pageSize:pageSize.value,query:query.value,status:statusCode.value||undefined})).data;rows.value=result.items;total.value=result.total}catch(e){loadError.value=e.message||tx('Unable to load batches.')}finally{loading.value=false}}
 async function open(id){if(!canView)return;const current=++detailGeneration;detail.value=null;loadError.value='';try{const value=(await getMerchantBatch(id)).data;if(current===detailGeneration){detail.value=value;openDialog.value=true;void hydrateTrackingLinks()}}catch(e){if(current===detailGeneration)loadError.value=e.message||tx('Unable to load batch details.')}}
 async function refreshReview(){const id=detail.value?.id;if(!id)return;const current=++detailGeneration;try{const value=(await getMerchantBatch(id)).data;if(current===detailGeneration){detail.value=value;reviewGeneration.value++}await load()}catch(e){if(current===detailGeneration)loadError.value=e.message||tx('Unable to load batch details.')}}
 async function rotateTrackingLink(row, confirm = true) {

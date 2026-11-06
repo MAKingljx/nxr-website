@@ -52,7 +52,10 @@ public class AgentOrderController {
     @GetMapping("/workbench-orders/{id}/tracking-token")
     public AgentOrderTrackingService.State trackingState(@RequestHeader(name=COMPANY,required=false) Long company,@PathVariable long id){return tracking().state(scope.currentMerchant(company),id);}
     @PostMapping("/workbench-orders/{id}/tracking-token")
-    public AgentOrderTrackingService.Link createTracking(@RequestHeader(name=COMPANY,required=false) Long company,@PathVariable long id,@RequestBody AgentOrderTrackingService.CreateRequest request,jakarta.servlet.http.HttpServletRequest http){return tracking().create(scope.currentMerchant(company),id,request,http.getServerName());}
+    public AgentOrderTrackingService.Link createTracking(@RequestHeader(name=COMPANY,required=false) Long company,@PathVariable long id,@RequestBody AgentOrderTrackingService.CreateRequest request,jakarta.servlet.http.HttpServletRequest http){
+        long owner=scope.currentMerchant(company);
+        return tracking().create(owner,id,request,http.getServerName());
+    }
     @PostMapping("/workbench-orders/{id}/tracking-token/replace")
     public AgentOrderTrackingService.Link replaceTracking(@RequestHeader(name=COMPANY,required=false) Long company,@PathVariable long id,@RequestBody AgentOrderTrackingService.ExpectedVersion request,jakarta.servlet.http.HttpServletRequest http){return tracking().replace(scope.currentMerchant(company),id,request,http.getServerName());}
     @DeleteMapping("/workbench-orders/{id}/tracking-token")

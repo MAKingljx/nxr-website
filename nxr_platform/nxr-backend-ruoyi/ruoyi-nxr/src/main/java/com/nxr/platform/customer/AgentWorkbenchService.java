@@ -372,6 +372,12 @@ public class AgentWorkbenchService {
         for(int index=0;index<intakes.size();index++) {
             Intake intake=intakes.get(index); var row=batch.rows().get(index);
             if(row.orderId()==null || row.orderNo()==null || !row.orderNo().equals(row.clientReference())) throw new IllegalStateException("Batch intake mapping is inconsistent");
+            if(intake.intakeNo()!=null && intake.intakeNo().matches("NXR\\d{12}")){
+                jdbc.sql("UPDATE grading_order SET order_no=:number,updated_at=CURRENT_TIMESTAMP WHERE id=:orderId AND customer_id=:owner")
+                    .params(params("number",intake.intakeNo(),"orderId",row.orderId(),"owner",owner)).update();
+                jdbc.sql("UPDATE merchant_order_batch_item SET client_reference=:number WHERE batch_id=:batch AND order_id=:orderId")
+                    .params(params("number",intake.intakeNo(),"batch",batch.batchId(),"orderId",row.orderId())).update();
+            }
             List<Long> orderItems=jdbc.sql("""
                 SELECT oi.id FROM grading_order_item oi JOIN grading_order o ON o.id=oi.order_id
                 WHERE oi.order_id=:orderId AND o.customer_id=:owner ORDER BY oi.item_no,oi.id

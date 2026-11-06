@@ -88,6 +88,17 @@ CREATE TABLE merchant_order_batch (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE submission_media (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    submission_id BIGINT,
+    media_side_code VARCHAR(16),
+    storage_key VARCHAR(255),
+    checksum_sha256 VARCHAR(64),
+    public_url VARCHAR(255),
+    is_active INT DEFAULT 1,
+    media_stage_code VARCHAR(16) DEFAULT 'staged'
+);
+
 CREATE TABLE merchant_order_batch_item (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     batch_id BIGINT NOT NULL,

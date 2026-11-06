@@ -111,7 +111,7 @@ class AgentWorkbenchServiceTest {
     @Test void completeCustomerOrderCreatesReadyInventoryWithPermanentNumberAndIndependentSnapshot() throws Exception {
         var first=createOrder(1,orderRequest(1,"customer-order-1"));
         var second=createOrder(1,orderRequest(1,"customer-order-2"));
-        assertThat(first.order().orderNo()).isEqualTo("NXR-"+String.format(java.util.Locale.ROOT,"%06d",first.order().id()));
+        assertThat(first.order().orderNo()).matches("NXR\\d{12}");
         assertThat(first.order().statusCode()).isEqualTo("ready");
         assertThat(first.order().canSubmit()).isTrue(); assertThat(first.order().legacy()).isFalse();
         assertThat(first.order().gradingOrderId()).isNull();
@@ -172,7 +172,7 @@ class AgentWorkbenchServiceTest {
     }
 
     @Test void customerOrderLinkIsPrivateStableAndVersionedAcrossSubmission() throws Exception {
-        jdbc.execute("CREATE TABLE agent_order_tracking_token(id BIGINT AUTO_INCREMENT PRIMARY KEY,intake_id BIGINT NOT NULL,merchant_customer_id BIGINT NOT NULL,token_hash CHAR(64) UNIQUE,status_code VARCHAR(16),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,revoked_at TIMESTAMP)");
+        jdbc.execute("CREATE TABLE agent_order_tracking_token(id BIGINT AUTO_INCREMENT PRIMARY KEY,intake_id BIGINT NOT NULL,merchant_customer_id BIGINT NOT NULL,token_hash CHAR(64) UNIQUE,token_value VARCHAR(64),status_code VARCHAR(16),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,revoked_at TIMESTAMP)");
         jdbc.execute("ALTER TABLE grading_order_item ADD COLUMN product_type VARCHAR(64)");
         jdbc.execute("ALTER TABLE grading_order_item ADD COLUMN category VARCHAR(64)");
         var original=createOrder(1,orderRequest(1,"private-customer-order"));
@@ -196,7 +196,9 @@ class AgentWorkbenchServiceTest {
         assertThatThrownBy(()->tx.execute(s->links.replace(1,id,new AgentOrderTrackingService.ExpectedVersion(state.version(),"http://192.0.2.10:3001"),"localhost"))).hasMessageContaining("not reachable");
         assertThat(links.publicView(token)).isPresent();
         var submitted=submit(service.intakeDetail(1,id),"private-submit");
-        assertThat(links.publicView(token).orElseThrow().orderNo()).isEqualTo(original.order().orderNo());
+        String gradedOrderNo=orders.detail(1,id).order().gradingOrderNo();
+        assertThat(links.publicView(token).orElseThrow().orderNo()).isEqualTo(gradedOrderNo);
+        assertThat(links.publicView(token).orElseThrow().clientReference()).isEqualTo(gradedOrderNo);
         assertThat(links.photo(token,card,"back").exists()).isTrue();
         submit(service.intakeDetail(1,other.order().id()),"other-private-submit");
         Long otherItem=service.intakeDetail(1,other.order().id()).cards().get(0).orderItemId();
@@ -221,8 +223,29 @@ class AgentWorkbenchServiceTest {
         assertThatThrownBy(()->links.photo(newToken,card,"front")).hasMessageContaining("404");
     }
 
+    @Test void newPartnerOrderAutomaticallyGetsACopyablePrivateLink() throws Exception {
+        jdbc.execute("CREATE TABLE agent_order_tracking_token(id BIGINT AUTO_INCREMENT PRIMARY KEY,intake_id BIGINT NOT NULL,merchant_customer_id BIGINT NOT NULL,token_hash CHAR(64) UNIQUE,token_value VARCHAR(64),status_code VARCHAR(16),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,revoked_at TIMESTAMP)");
+        var links=new AgentOrderTrackingService(JdbcClient.create(jdbc),batches,photos);
+        org.springframework.test.util.ReflectionTestUtils.setField(links,"publicSiteBaseUrl","http://127.0.0.1:3000");
+        org.springframework.test.util.ReflectionTestUtils.setField(orders,"tracking",links);
+        var request=orderRequest(1,"auto-private-link");
+        var created=createOrder(1,request);
+        var state=links.state(1,created.order().id());
+        assertThat(state.active()).isTrue();
+        assertThat(state.legacyActive()).isFalse();
+        assertThat(state.trackingUrl()).startsWith("http://127.0.0.1:3000/track#");
+        String token=state.trackingUrl().substring(state.trackingUrl().lastIndexOf('#')+1);
+        assertThat(token).hasSize(43);
+        assertThat(links.publicView(token)).isPresent();
+        assertThat(links.publicView(token).orElseThrow().orderNo()).isEqualTo(created.order().orderNo());
+        // Replaying the same creation request reuses the order and must not issue another link.
+        assertThat(createOrder(1,request).order().id()).isEqualTo(created.order().id());
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM agent_order_tracking_token",Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM agent_order_tracking_token WHERE token_value=?",Integer.class,token)).isEqualTo(1);
+    }
+
     @Test void simultaneousLinkCreationDoesNotReplaceTheWinningLink() throws Exception {
-        jdbc.execute("CREATE TABLE agent_order_tracking_token(id BIGINT AUTO_INCREMENT PRIMARY KEY,intake_id BIGINT NOT NULL,merchant_customer_id BIGINT NOT NULL,token_hash CHAR(64) UNIQUE,status_code VARCHAR(16),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,revoked_at TIMESTAMP)");
+        jdbc.execute("CREATE TABLE agent_order_tracking_token(id BIGINT AUTO_INCREMENT PRIMARY KEY,intake_id BIGINT NOT NULL,merchant_customer_id BIGINT NOT NULL,token_hash CHAR(64) UNIQUE,token_value VARCHAR(64),status_code VARCHAR(16),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,revoked_at TIMESTAMP)");
         long id=createOrder(1,orderRequest(1,"concurrent-private-link")).order().id();
         var links=new AgentOrderTrackingService(JdbcClient.create(jdbc),batches,photos);
         org.springframework.test.util.ReflectionTestUtils.setField(links,"publicSiteBaseUrl","https://nxrgrading.com/x7k9m2q4r8v6c3p1");
@@ -240,7 +263,7 @@ class AgentWorkbenchServiceTest {
     }
 
     @Test void customerTimelineShowsOrderReceiptWithoutExposingPrivateNotes() throws Exception {
-        jdbc.execute("CREATE TABLE agent_order_tracking_token(id BIGINT AUTO_INCREMENT PRIMARY KEY,intake_id BIGINT NOT NULL,merchant_customer_id BIGINT NOT NULL,token_hash CHAR(64) UNIQUE,status_code VARCHAR(16),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,revoked_at TIMESTAMP)");
+        jdbc.execute("CREATE TABLE agent_order_tracking_token(id BIGINT AUTO_INCREMENT PRIMARY KEY,intake_id BIGINT NOT NULL,merchant_customer_id BIGINT NOT NULL,token_hash CHAR(64) UNIQUE,token_value VARCHAR(64),status_code VARCHAR(16),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,revoked_at TIMESTAMP)");
         var intake=createIntake(1,createClient(1,"TIMELINE").id(),1,"timeline-intake");
         tx.execute(s->service.receiveOrder(1,intake.intake().id(),new ReceiveOrderRequest(1,"private receipt note",false)));
         var links=new AgentOrderTrackingService(JdbcClient.create(jdbc),batches,photos);
@@ -252,7 +275,7 @@ class AgentWorkbenchServiceTest {
     }
 
     @Test void customerLinksRequireMatchingContactAndAuthorizationForDetailsAndPhotos() throws Exception {
-        jdbc.execute("CREATE TABLE agent_order_tracking_token(id BIGINT AUTO_INCREMENT PRIMARY KEY,intake_id BIGINT NOT NULL,merchant_customer_id BIGINT NOT NULL,token_hash CHAR(64) UNIQUE,status_code VARCHAR(16),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,revoked_at TIMESTAMP)");
+        jdbc.execute("CREATE TABLE agent_order_tracking_token(id BIGINT AUTO_INCREMENT PRIMARY KEY,intake_id BIGINT NOT NULL,merchant_customer_id BIGINT NOT NULL,token_hash CHAR(64) UNIQUE,token_value VARCHAR(64),status_code VARCHAR(16),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,revoked_at TIMESTAMP)");
         jdbc.execute("ALTER TABLE grading_order_item ADD COLUMN product_type VARCHAR(64)");
         jdbc.execute("ALTER TABLE grading_order_item ADD COLUMN category VARCHAR(64)");
         var original=createOrder(1,orderRequest(1,"verified-customer-order"));
@@ -279,7 +302,8 @@ class AgentWorkbenchServiceTest {
         assertThatThrownBy(()->controller.tracking(second,proof.accessToken())).hasMessageContaining("401");
         assertThatThrownBy(()->controller.photo(other.cards().get(0).id(),"front",first,proof.accessToken())).hasMessageContaining("404");
         var submitted=submit(service.intakeDetail(1,original.order().id()),"verified-submit");
-        assertThat(controller.tracking(first,proof.accessToken()).getBody().orderNo()).isEqualTo(original.order().orderNo());
+        assertThat(controller.tracking(first,proof.accessToken()).getBody().orderNo())
+            .isEqualTo(orders.detail(1,original.order().id()).order().gradingOrderNo());
         var old=batches.rotateTrackingToken(1,submitted.batchNo(),orders.detail(1,original.order().id()).order().gradingOrderNo());
         assertThatThrownBy(()->controller.tracking(old.trackingToken(),null)).hasMessageContaining("401");
         Long item=service.intakeDetail(1,original.order().id()).cards().get(0).orderItemId();
@@ -306,7 +330,7 @@ class AgentWorkbenchServiceTest {
     }
 
     @Test void customerLinksFailClosedForMissingContactAndCancelledOrders() throws Exception {
-        jdbc.execute("CREATE TABLE agent_order_tracking_token(id BIGINT AUTO_INCREMENT PRIMARY KEY,intake_id BIGINT NOT NULL,merchant_customer_id BIGINT NOT NULL,token_hash CHAR(64) UNIQUE,status_code VARCHAR(16),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,revoked_at TIMESTAMP)");
+        jdbc.execute("CREATE TABLE agent_order_tracking_token(id BIGINT AUTO_INCREMENT PRIMARY KEY,intake_id BIGINT NOT NULL,merchant_customer_id BIGINT NOT NULL,token_hash CHAR(64) UNIQUE,token_value VARCHAR(64),status_code VARCHAR(16),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,revoked_at TIMESTAMP)");
         var original=createOrder(1,orderRequest(1,"no-contact-private-order"));
         var links=new AgentOrderTrackingService(JdbcClient.create(jdbc),batches,photos);
         String token=tx.execute(s->links.create(1,original.order().id(),new AgentOrderTrackingService.CreateRequest("http://localhost:3001"),"localhost")).trackingUrl().split("#")[1];
@@ -324,7 +348,7 @@ class AgentWorkbenchServiceTest {
     }
 
     @Test void phoneMatchingIgnoresFormattingButNeverUsesSuffixOrAcceptsInvalidCharacters() throws Exception {
-        jdbc.execute("CREATE TABLE agent_order_tracking_token(id BIGINT AUTO_INCREMENT PRIMARY KEY,intake_id BIGINT NOT NULL,merchant_customer_id BIGINT NOT NULL,token_hash CHAR(64) UNIQUE,status_code VARCHAR(16),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,revoked_at TIMESTAMP)");
+        jdbc.execute("CREATE TABLE agent_order_tracking_token(id BIGINT AUTO_INCREMENT PRIMARY KEY,intake_id BIGINT NOT NULL,merchant_customer_id BIGINT NOT NULL,token_hash CHAR(64) UNIQUE,token_value VARCHAR(64),status_code VARCHAR(16),created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,revoked_at TIMESTAMP)");
         var original=createOrder(1,orderRequest(1,"formatted-phone-order"));
         jdbc.update("UPDATE agent_intake SET client_phone_snapshot='+1 (123)-456' WHERE id=?",original.order().id());
         var links=new AgentOrderTrackingService(JdbcClient.create(jdbc),batches,photos);
@@ -437,8 +461,8 @@ class AgentWorkbenchServiceTest {
             ALTER TABLE grading_order_item ADD year_label VARCHAR(32);
             ALTER TABLE grading_order_item ADD rarity VARCHAR(128);
             CREATE TABLE order_admission_config(config_id INT PRIMARY KEY,payment_deadline_hours INT,max_cards_per_order INT,
-                terms_version VARCHAR(64),terms_text CLOB,turnaround_text VARCHAR(1000),config_version INT,updated_at TIMESTAMP);
-            INSERT INTO order_admission_config VALUES(1,48,200,'service-v1','Partner service terms','Estimated turnaround',1,CURRENT_TIMESTAMP);
+                terms_version VARCHAR(64),terms_text CLOB,turnaround_text VARCHAR(1000),nxr_receiving_address VARCHAR(2000),config_version INT,updated_at TIMESTAMP);
+            INSERT INTO order_admission_config(config_id,payment_deadline_hours,max_cards_per_order,terms_version,terms_text,turnaround_text,config_version,updated_at) VALUES(1,48,200,'service-v1','Partner service terms','Estimated turnaround',1,CURRENT_TIMESTAMP);
             CREATE TABLE order_terms_acceptance(id BIGINT AUTO_INCREMENT PRIMARY KEY,order_id BIGINT,customer_id BIGINT,
                 terms_version VARCHAR(64),accepted_quote_amount DECIMAL(12,2),accepted_quote_currency VARCHAR(8),
                 terms_text CLOB,turnaround_text VARCHAR(1000),item_snapshot_hash CHAR(64) NOT NULL DEFAULT '',
@@ -540,7 +564,7 @@ class AgentWorkbenchServiceTest {
         });
         var after=orders.detail(1,created.order().id());
         assertThat(after.order().orderNo()).isEqualTo(created.order().orderNo());
-        assertThat(after.order().gradingOrderNo()).startsWith("NXR-TEST-");
+        assertThat(after.order().gradingOrderNo()).isEqualTo(created.order().orderNo());
         assertThat(after.order().statusCode()).isEqualTo("admission_review"); assertThat(after.order().canSubmit()).isFalse();
         assertThat(after.order().batchId()).isEqualTo(saved.batchId());
         var card=after.cards().get(0);

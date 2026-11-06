@@ -59,7 +59,7 @@ const recordId=computed(()=>{const id=Number(route.query.record);return Number.i
 .agent-workbench :deep(.agent-results-table thead th){position:sticky;top:0;z-index:1;background:var(--el-fill-color-light);font-weight:600;white-space:nowrap}
 .agent-workbench :deep(.agent-results-table tr:last-child > :is(td,th)){border-bottom:0}
 .agent-workbench :deep(.agent-results-table tbody tr:hover > :is(td,th)){background:var(--el-fill-color-lighter)}
-.agent-workbench :deep(.agent-results-table .agent-row-selected > :is(td,th)){background:var(--el-color-primary-light-9)}
+.agent-workbench :deep(.agent-results-table .agent-row-selected > :is(td,th)){background:var(--nxr-accent-soft)}
 .agent-workbench :deep(.agent-results-table small){display:block;margin-top:4px;color:var(--text2);font-size:12px}
 .agent-workbench :deep(.agent-results-table .text-button){padding:0;text-align:left;line-height:inherit}
 .agent-workbench :deep(.agent-results-table td:last-child){white-space:nowrap}

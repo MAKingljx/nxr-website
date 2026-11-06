@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS agent_intake (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     merchant_customer_id BIGINT NOT NULL,
     intake_no VARCHAR(48) NOT NULL UNIQUE,
+    reserved_order_no VARCHAR(32) UNIQUE,
     client_id BIGINT NOT NULL,
     carrier_name VARCHAR(128), tracking_number VARCHAR(255),
     expected_card_count INT NOT NULL,

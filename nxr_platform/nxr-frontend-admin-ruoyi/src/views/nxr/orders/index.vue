@@ -73,7 +73,7 @@
           <el-tab-pane :label="$tx('Review & Terms')" name="admission">
 
         <order-admission-panel v-if="detail?.id" v-hasPermi="['nxr:order:admission','nxr:order:manage']" :order-id="detail.id" :order-amount="detail.totalAmount" :currency-code="detail.currencyCode" :payment-required="!isPartnerOrder(detail)" :show-config="false" @changed="refreshDetail" />
-        <el-alert v-if="awaitingFulfillment" type="info" :closable="false" show-icon :title="$tx(isPartnerOrder(detail) ? 'Complete application review and service terms confirmation before warehouse or grading work begins.' : 'Complete application review, terms confirmation, and payment before warehouse or grading work begins.')" />
+        <el-alert v-if="awaitingFulfillment" type="info" :closable="false" show-icon :title="$tx(isPartnerOrder(detail) ? 'Submit review must be completed before warehouse or grading work begins.' : 'Complete application review, terms confirmation, and payment before warehouse or grading work begins.')" />
 
           </el-tab-pane>
           <el-tab-pane :label="$tx('Warehouse')" name="warehouse">
@@ -102,7 +102,8 @@
           <el-table-column :label="$tx('Card Name')" prop="cardName" min-width="180" />
           <el-table-column :label="$tx('Application Details')" min-width="240"><template #default="scope">{{ [scope.row.brandName, scope.row.setName, scope.row.cardNumber, scope.row.year, scope.row.rarity, localizeOrderCode('productType', scope.row.productType), localizeOrderCode('cardCategory', scope.row.category), scope.row.languageCode].filter(Boolean).join(' · ') || '-' }}</template></el-table-column>
           <el-table-column :label="$tx('Application Photos')" min-width="210"><template #default="scope"><order-application-photo v-if="scope.row.frontPhotoId" :photo-id="scope.row.frontPhotoId" :order-id="detail.id" :label="$tx('Front')" /><order-application-photo v-if="scope.row.backPhotoId" :photo-id="scope.row.backPhotoId" :order-id="detail.id" :label="$tx('Back')" /><span v-if="!scope.row.frontPhotoId && !scope.row.backPhotoId">-</span></template></el-table-column>
-          <el-table-column :label="$tx('Item Status')" width="130"><template #default="scope"><el-tag>{{ labelStatus(scope.row.statusCode) }}</el-tag></template></el-table-column>
+          <el-table-column :label="$tx('Item Status')" width="140"><template #default="scope"><el-tag :type="cardWorkflowType(scope.row.cardWorkflowStatusCode)">{{ cardWorkflowLabel(scope.row.cardWorkflowStatusCode) }}</el-tag></template></el-table-column>
+          <el-table-column :label="$tx('Card Images')" width="150"><template #default="scope"><el-tag :type="cardImageType(scope.row.cardImageStatusCode)">{{ cardImageLabel(scope.row.cardImageStatusCode) }}</el-tag></template></el-table-column>
           <el-table-column :label="$tx('Grading Entry')" min-width="220"><template #default="scope"><span v-if="scope.row.gradingSubmissionId">#{{ scope.row.gradingSubmissionId }} · {{ scope.row.gradingCertId }} · {{ labelStatus(scope.row.gradingStatusCode) }}</span><div v-else-if="fulfillmentOpen" class="link-submission"><el-input-number v-model="submissionLinks[scope.row.id]" :min="1" :controls="false" :placeholder="$tx('Entry ID')" /><el-button v-hasPermi="['nxr:order:manage','nxr:order:grading']" link type="primary" :disabled="detail.partnerCardReturnEligible === true && Boolean(partnerGradingBlock(detail.statusCode, scope.row.statusCode))" :loading="linkingItemId === scope.row.id" @click="linkSubmission(scope.row)">{{ $tx('Link') }}</el-button></div><span v-else>-</span></template></el-table-column>
         </el-table>
 
@@ -322,7 +323,9 @@ const fulfillmentOpen = computed(() => ![
 ].includes(detail.value?.statusCode))
 
 const awaitingFulfillment = computed(() => ['admission_review', 'terms_confirmation', 'payment_expired', 'awaiting_payment', 'payment_review', 'payment_exception'].includes(detail.value?.statusCode))
-const manualStatusOptions = computed(() => orderManualStatuses(statusOptions.value, detail.value?.merchantBatch))
+// Grading/QC stages are advanced from the cards & grading workflow, never from the shipping tab.
+const manualStatusOptions = computed(() => orderManualStatuses(statusOptions.value, detail.value?.merchantBatch)
+  .filter(option => !['review', 'quality_check', 'quality_hold'].includes(option.value)))
 
 const taskTypeOptions = computed(() => [
   { value: 'preprocess', label: tx('Card Preprocessing') }, { value: 'vision', label: tx('Machine Vision Inspection') },
@@ -362,6 +365,21 @@ function displayOrderStatus(order) { return order?.statusCode === 'admission_rev
 function businessOrderNumber(order) {
   const reference = order?.orderReference || order?.merchantBatch?.clientReference
   return /^NXR-\d{6,}$/.test(reference || '') ? reference : order?.orderNo || ''
+}
+function cardWorkflowLabel(value) {
+  return proxy.$tx({ pending_grading: 'Pending grading', grading: 'Grading', awaiting_images: 'Awaiting images', graded: 'Graded' }[value] || value || 'Pending grading')
+}
+function cardWorkflowType(value) {
+  if (value === 'graded') return 'success'
+  if (value === 'awaiting_images') return 'warning'
+  if (value === 'grading') return 'primary'
+  return 'info'
+}
+function cardImageLabel(value) {
+  return proxy.$tx({ not_uploaded: 'Not uploaded', staged: 'Uploaded, awaiting publish', published: 'Published' }[value] || value || 'Not uploaded')
+}
+function cardImageType(value) {
+  return value === 'published' ? 'success' : value === 'staged' ? 'warning' : 'info'
 }
 function taskLabel(value) { return taskTypeOptions.value.find((item) => item.value === value)?.label || value }
 function statusType(value) { if (['completed', 'delivered'].includes(value)) return 'success'; if (['cancelled', 'rejected', 'payment_expired'].includes(value)) return 'danger'; if (['payment_review', 'payment_exception', 'review', 'needs_information', 'terms_confirmation'].includes(value)) return 'warning'; return 'info' }

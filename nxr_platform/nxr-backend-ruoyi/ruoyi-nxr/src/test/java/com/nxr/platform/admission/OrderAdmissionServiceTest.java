@@ -45,7 +45,7 @@ class OrderAdmissionServiceTest {
             CREATE TABLE order_admission_config (
               config_id TINYINT PRIMARY KEY, payment_deadline_hours INT NOT NULL, max_cards_per_order INT NOT NULL,
               terms_version VARCHAR(64) NOT NULL, terms_text CLOB NOT NULL, turnaround_text VARCHAR(1000) NOT NULL,
-              config_version INT NOT NULL, updated_by_user_id BIGINT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              nxr_receiving_address VARCHAR(2000), config_version INT NOT NULL, updated_by_user_id BIGINT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
               updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE order_admission_event (
@@ -304,11 +304,15 @@ class OrderAdmissionServiceTest {
     }
 
     @Test
-    void regularMerchantBatchKeepsSingleOrderAdmission() {
+    void merchantBatchUsesSubmitReviewAndPropagatesTheDecision() {
         merchantOrder();
-        assertThat(service.requirePartnerSubmitAdmission(1,id -> {}).eligible()).isFalse();
-        assertThat(service.requireAdminAdmission(10).partnerSubmitBatchId()).isNull();
-        assertThat(tx(() -> service.decide(10,9,new OrderAdmissionService.DecisionRequest("reject","Declined",1))).admissionStatus()).isEqualTo("rejected");
+        assertThat(service.requirePartnerSubmitAdmission(1,id -> {}).eligible()).isTrue();
+        assertThat(service.requireAdminAdmission(10).partnerSubmitBatchId()).isEqualTo(1L);
+        var request = new OrderAdmissionService.PartnerSubmitDecision("reject","Declined",
+            java.util.List.of(new OrderAdmissionService.PartnerSubmitOrderRevision(10L,1)));
+        var result = tx(() -> service.decidePartnerSubmit(1,9,request,id -> {}));
+        assertThat(result.eligible()).isTrue();
+        assertThat(result.orders()).hasSize(1).allSatisfy(order -> assertThat(order.admissionStatus()).isEqualTo("rejected"));
     }
 
     @Test
@@ -581,6 +585,30 @@ class OrderAdmissionServiceTest {
         OrderAdmissionService.AdmissionResponse paid = tx(() -> service.requireCustomerAdmission(7L, "NXR-LEGACY"));
         assertThat(paid.legacyOrder()).isTrue();
         assertThat(paid.canPay()).isFalse();
+    }
+
+    @Test
+    void receivingAddressIsOptionalAndKeepsLineBreaksWhenConfigured() {
+        var initial = service.getConfig();
+        assertThat(initial.receivingAddress()).isNull();
+        String address = "NXR Receiving Warehouse\nRoom 1203, Building A\n123 Example Road\nShenzhen, Guangdong 518000\nChina";
+        var saved = tx(() -> service.updateConfig(new OrderAdmissionService.ConfigUpdate(
+            initial.paymentDeadlineHours(), initial.maxCardsPerOrder(), initial.termsVersion(),
+            initial.termsText(), initial.turnaroundText(), address), 9L));
+        assertThat(saved.receivingAddress()).isEqualTo(address);
+        assertThat(service.merchantPublicConfig().receivingAddress()).isEqualTo(address);
+        assertThat(service.publicConfig().receivingAddress()).isEqualTo(address);
+        // An older client that omits the field must not clear the stored address.
+        var kept = tx(() -> service.updateConfig(new OrderAdmissionService.ConfigUpdate(
+            initial.paymentDeadlineHours(), initial.maxCardsPerOrder(), initial.termsVersion(),
+            initial.termsText(), initial.turnaroundText(), null), 9L));
+        assertThat(kept.receivingAddress()).isEqualTo(address);
+        // An explicit empty value clears the address.
+        var cleared = tx(() -> service.updateConfig(new OrderAdmissionService.ConfigUpdate(
+            initial.paymentDeadlineHours(), initial.maxCardsPerOrder(), initial.termsVersion(),
+            initial.termsText(), initial.turnaroundText(), "  "), 9L));
+        assertThat(cleared.receivingAddress()).isEmpty();
+        assertThat(service.merchantPublicConfig().receivingAddress()).isEmpty();
     }
 
     private <T> T tx(Supplier<T> action) {

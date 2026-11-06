@@ -4,7 +4,7 @@ import OrderProgress from '../components/OrderProgress.vue'
 import OrderPayment from '../components/OrderPayment.vue'
 import OrderAdmission from '../components/OrderAdmission.vue'
 import PrivateOrderPhoto from '../components/PrivateOrderPhoto.vue'
-import type { Admission } from '../lib/orderApplication'
+import { fetchApplicationConfig, type Admission } from '../lib/orderApplication'
 import PortalQrCode from '../components/PortalQrCode.vue'
 import OrderCardIdentity from '../components/OrderCardIdentity.vue'
 import { formatMoney, orderStatusLabel, orderDisplayStatus } from '../lib/orderProgress'
@@ -49,6 +49,7 @@ let refreshTimer: number | undefined
 
 const payment = computed(() => order.value?.payments.find((item) => item.directionCode === 'receivable' && item.paymentTypeCode === 'grading_fee') || null)
 const admission = ref<Admission | null>(null)
+const receivingAddress = ref('')
 const canSubmitPayment = computed(() => Boolean(admission.value?.canPay) && ['awaiting_payment', 'payment_review'].includes(order.value?.statusCode || ''))
 const canAddInboundShipment = computed(() => !operations.value?.merchantBatchNo && ['awaiting_inbound', 'inbound_shipped'].includes(order.value?.statusCode || ''))
 const canRequestShippingChange = computed(() => Boolean(order.value && !operations.value?.merchantBatchNo && !order.value.shippingLabelCreatedAt && payment.value?.statusCode === 'confirmed' && ['awaiting_inbound', 'inbound_shipped', 'received', 'grading', 'review', 'completed'].includes(order.value.statusCode)))
@@ -182,8 +183,14 @@ watch(() => props.orderNo, async () => {
 }, { immediate: true })
 
 onMounted(() => {
+  void loadReceivingAddress()
   if (customerSession.value?.customer.accountTypeCode === 'customer') void router.replace('/account/cards')
 })
+
+async function loadReceivingAddress() {
+  try { const config = await fetchApplicationConfig(); receivingAddress.value = typeof config.receivingAddress === 'string' ? config.receivingAddress.trim() : '' }
+  catch { receivingAddress.value = '' }
+}
 
 function refreshWhenVisible() { if (!document.hidden && !refreshing.value) void refreshOrder() }
 onMounted(() => document.addEventListener('visibilitychange', refreshWhenVisible))
@@ -246,6 +253,11 @@ onBeforeUnmount(() => {
       <section v-if="canAddInboundShipment" class="form-section action-section no-print">
         <h2>Register shipment to NXR</h2>
         <p>After posting your parcel, add the carrier and tracking number for the warehouse team.</p>
+        <div v-if="receivingAddress" class="receiving-address">
+          <strong>NXR receiving address</strong>
+          <p>Send the parcel to this address:</p>
+          <p class="receiving-address-value">{{ receivingAddress }}</p>
+        </div>
         <form class="portal-form compact-form" @submit.prevent="saveInboundShipment"><div class="form-grid"><label>Carrier<input v-model="shipmentForm.carrierName" required maxlength="128" /></label><label>Tracking number<input v-model="shipmentForm.trackingNumber" required maxlength="255" /></label></div><label>Shipment note<textarea v-model="shipmentForm.note" maxlength="1000" /></label><button class="btn-primary form-submit" :disabled="savingShipment">{{ savingShipment ? 'Saving...' : 'Add inbound tracking' }}</button></form>
       </section>
 
@@ -281,3 +293,10 @@ onBeforeUnmount(() => {
   </main>
   <LegacySiteFooter />
 </template>
+
+<style scoped>
+.receiving-address { margin: 0 0 16px; padding: 12px 16px; border: 1px solid var(--border2); background: var(--bg2); }
+.receiving-address strong { display: block; margin-bottom: 4px; color: var(--text); }
+.receiving-address p { margin: 0 0 4px; color: var(--text2); font-size: 13px; }
+.receiving-address .receiving-address-value { white-space: pre-line; overflow-wrap: anywhere; color: var(--text); font-size: 14px; }
+</style>

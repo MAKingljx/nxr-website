@@ -16,6 +16,9 @@
       <el-form-item :label="$tx('Terms version')"><el-input v-model="form.termsVersion" maxlength="64" /></el-form-item>
       <el-form-item :label="$tx('Terms text')"><el-input v-model="form.termsText" type="textarea" :rows="6" maxlength="10000" show-word-limit /></el-form-item>
       <el-form-item :label="$tx('Turnaround statement')"><el-input v-model="form.turnaroundText" type="textarea" :rows="3" maxlength="1000" show-word-limit /></el-form-item>
+      <el-form-item :label="$tx('NXR receiving address')">
+        <el-input v-model="form.receivingAddress" type="textarea" :rows="3" maxlength="2000" show-word-limit :placeholder="$tx('Shown to partners and customers before they ship to NXR.')" />
+      </el-form-item>
       <el-button v-hasPermi="['nxr:order:config']" type="primary" :loading="saving" @click="save">{{ $tx('Save admission configuration') }}</el-button>
       <p>{{ $tx('Configuration changes apply only to later approvals. Existing approved orders keep their frozen terms and quote.') }}</p>
     </el-form>
@@ -29,7 +32,7 @@ import { getOrderAdmissionConfig, updateOrderAdmissionConfig } from '@/api/nxr/o
 const { proxy } = getCurrentInstance()
 const loading = ref(false)
 const saving = ref(false)
-const form = reactive({ paymentDeadlineHours: 48, maxCardsPerOrder: 100, termsVersion: '', termsText: '', turnaroundText: '' })
+const form = reactive({ paymentDeadlineHours: 48, maxCardsPerOrder: 100, termsVersion: '', termsText: '', turnaroundText: '', receivingAddress: '' })
 
 async function load() {
   loading.value = true

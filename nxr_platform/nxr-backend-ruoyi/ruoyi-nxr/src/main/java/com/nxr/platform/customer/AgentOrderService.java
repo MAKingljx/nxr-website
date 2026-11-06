@@ -8,6 +8,7 @@ import com.nxr.platform.shared.ProductTypePolicy;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HexFormat;
@@ -17,6 +18,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -40,6 +43,7 @@ public class AgentOrderService {
     private final SimpleJdbcInsert clientInsert;
     private final SimpleJdbcInsert intakeInsert;
     private final SimpleJdbcInsert cardInsert;
+    @Autowired(required=false) private AgentOrderTrackingService tracking;
 
     public AgentOrderService(JdbcClient jdbc, JdbcTemplate template, AgentWorkbenchService workbench,
         OrderFulfillmentService fulfillment, CustomerOrderPhotoService photos, OrderAdmissionService admission,
@@ -221,13 +225,11 @@ public class AgentOrderService {
             "address_line1",address.addressLine1(),"address_line2",address.addressLine2(),"city",address.city(),
             "region",address.region(),"postal_code",address.postalCode(),"country",address.country(),"active",1)).longValue();
         LocalDateTime now=jdbc.sql("SELECT CURRENT_TIMESTAMP").query((rs,n)->rs.getObject(1,LocalDateTime.class)).single();
-        long id=intakeInsert.executeAndReturnKey(params("merchant_customer_id",owner,"intake_no",temporary,
+        String orderNo=generateOrderNo();
+        long id=intakeInsert.executeAndReturnKey(params("merchant_customer_id",owner,"intake_no",orderNo,
             "client_id",clientId,"expected_card_count",cards.size(),"status_code","ready","notes",notes,
             "request_key",key,"request_hash",hash,"received_at",now,"partner_order_version",1,
             "client_name_snapshot",name,"client_phone_snapshot",phone,"client_email_snapshot",email)).longValue();
-        String orderNo="NXR-"+String.format(Locale.ROOT,"%06d",id);
-        jdbc.sql("UPDATE agent_intake SET intake_no=:number WHERE id=:id AND merchant_customer_id=:owner")
-            .params(params("number",orderNo,"id",id,"owner",owner)).update();
         jdbc.sql("UPDATE agent_client SET reference=:number WHERE id=:id AND merchant_customer_id=:owner")
             .params(params("number",orderNo,"id",clientId,"owner",owner)).update();
         for(CardInput card:cards) {
@@ -239,7 +241,23 @@ public class AgentOrderService {
         }
         jdbc.sql("INSERT INTO agent_event(merchant_customer_id,client_id,intake_id,event_code,note) VALUES(:owner,:client,:intake,'order_created',:note)")
             .params(params("owner",owner,"client",clientId,"intake",id,"note",notes)).update();
+        // The customer query link is part of the order itself: issue it immediately so
+        // staff can copy it from the order view without a separate create step.
+        if(tracking!=null)tracking.ensureForNewOrder(owner,id);
         return detail(owner,id);
+    }
+
+    private String generateOrderNo() {
+        String prefix="NXR"+LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyMMdd"));
+        for(int attempt=0;attempt<20;attempt+=1){
+            String candidate=prefix+String.format(Locale.ROOT,"%06d",ThreadLocalRandom.current().nextInt(1_000_000));
+            Integer grading=jdbc.sql("SELECT COUNT(*) FROM grading_order WHERE order_no=:no")
+                .param("no",candidate).query(Integer.class).single();
+            Integer existing=jdbc.sql("SELECT COUNT(*) FROM agent_intake WHERE intake_no=:no")
+                .param("no",candidate).query(Integer.class).single();
+            if((grading==null||grading==0)&&(existing==null||existing==0))return candidate;
+        }
+        throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,"Unable to allocate an order number");
     }
 
     private static String controlled(List<Option> options,String raw,String label) {

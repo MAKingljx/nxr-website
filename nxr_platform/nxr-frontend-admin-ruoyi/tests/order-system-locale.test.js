@@ -235,7 +235,7 @@ test('order-page status, task and tracking options follow live locale without ch
   assert.equal(page.labelStatus('constructor'), 'constructor')
   assert.equal(page.taskLabel('custom_task'), 'custom_task')
   detail.value = {merchantBatch:{batchId:42}}
-  assert.deepEqual(Array.from(page.manualStatusOptions.value, item => item.value), english.statusOptions.filter(item => !paymentOrderStatuses.has(item.value) && !['inbound_shipped','return_shipped','delivered'].includes(item.value)).map(item => item.value))
+  assert.deepEqual(Array.from(page.manualStatusOptions.value, item => item.value), english.statusOptions.filter(item => !paymentOrderStatuses.has(item.value) && !['inbound_shipped','return_shipped','delivered','review','quality_check','quality_hold'].includes(item.value)).map(item => item.value))
   context.queryParams.orderChannel = 'partner'
   assert.equal(page.filterStatusOptions.value.some(item => paymentOrderStatuses.has(item.value)), false)
   context.queryParams.orderChannel = 'individual'
